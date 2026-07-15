@@ -202,6 +202,49 @@ def build_master_dataset():
         })
     pd.DataFrame(top250_rows).to_csv(VALIDATION_DIR / "top_250_adp_coverage_report.csv", index=False)
 
+    print("Step 8: Building match_precision_report.csv (quality dashboard)...")
+    # A dedicated, ongoing quality metric per season -- separate from
+    # season_coverage_report's "did it match at all" and
+    # top_250_adp_coverage_report's "did the drafted population match."
+    # This one tracks HOW each match was made, so a future source change
+    # that suddenly doubles the fuzzy-match rate or collision count gets
+    # caught immediately rather than silently degrading match quality
+    # while the raw match-rate percentage looks unchanged.
+    precision_rows = []
+    all_seasons = sorted(set(adp_scoped_seasons := adp[adp["position"].isin(skill_positions)]["season"].unique()))
+    for season in all_seasons:
+        season_matched = matched[matched["season"] == season]
+        season_missing = missing[missing["season"] == season] if len(missing) else missing
+        season_dupes = dupes[dupes["season"] == season] if len(dupes) else dupes
+        season_collisions = dup_player_season[dup_player_season["season"] == season] if len(dup_player_season) else dup_player_season
+
+        total_attempted = len(season_matched) + len(season_missing)
+        counts = season_matched["match_type"].value_counts().to_dict() if len(season_matched) else {}
+
+        precision_rows.append({
+            "season": season,
+            "total_attempted": total_attempted,
+            "exact_name_position": counts.get("exact_name_position", 0),
+            "exact_name_position_mismatch": counts.get("exact_name_position_mismatch", 0),
+            "manual_override": counts.get("manual_override", 0),
+            "fuzzy_high_confidence": counts.get("fuzzy_high_confidence", 0),
+            "fuzzy_low_confidence": counts.get("fuzzy_low_confidence", 0),
+            "missing_no_match": len(season_missing),
+            "duplicate_needs_override": len(season_dupes),
+            "collision_excluded_from_join": len(season_collisions),
+            "clean_match_pct": (
+                round(counts.get("exact_name_position", 0) / total_attempted * 100, 1)
+                if total_attempted else 0
+            ),
+            "needs_review_pct": (
+                round((counts.get("exact_name_position_mismatch", 0)
+                       + counts.get("fuzzy_low_confidence", 0)
+                       + len(season_dupes) + len(season_collisions)) / total_attempted * 100, 1)
+                if total_attempted else 0
+            ),
+        })
+    pd.DataFrame(precision_rows).to_csv(VALIDATION_DIR / "match_precision_report.csv", index=False)
+
     print(f"\nDone. Master Historical Database: {len(master_final)} rows -> {csv_path}")
     print(f"Seasons covered: {sorted(master_final['season'].unique().tolist())}")
 
