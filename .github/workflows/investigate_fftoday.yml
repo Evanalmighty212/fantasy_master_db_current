@@ -1,0 +1,32 @@
+name: Investigate FFToday ADP Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  investigate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run investigation
+        run: python scripts/ci_investigate_fftoday.py
+
+      - name: Upload raw HTML as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fftoday-raw-html
+          path: data/raw/adp_investigation/
+          retention-days: 14
