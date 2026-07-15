@@ -1,0 +1,55 @@
+name: Run Full Pipeline (ADP + Stats + Master DB)
+
+# Manual trigger only -- click "Run workflow" on the Actions tab.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install pandas requests openpyxl rapidfuzz nfl_data_py
+
+      - name: Step 1 - Fetch fresh FFC ADP data (Phase 1)
+        run: python scripts/ci_fetch_adp_phase1.py
+
+      - name: Step 2 - Clean ADP (02_clean_adp.py)
+        run: python scripts/02_clean_adp.py
+
+      - name: Step 3 - Download nflverse stats, build season results (03_download_stats.py)
+        run: python scripts/03_download_stats.py
+
+      - name: Step 4 - Build Master Historical Database (runs player matching internally)
+        run: python scripts/04_build_master_dataset.py
+
+      - name: Show final summary
+        run: |
+          echo "=== Season coverage ==="
+          cat data/exports/validation/season_coverage_report.csv
+          echo ""
+          echo "=== Top-250 ADP coverage ==="
+          cat data/exports/validation/top_250_adp_coverage_report.csv
+
+      - name: Upload all results as one artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fantasy-master-db-results
+          path: |
+            data/master/
+            data/processed/
+            data/exports/validation/
+            data/raw/nflverse/
+          retention-days: 14
