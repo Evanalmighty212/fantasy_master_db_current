@@ -1,0 +1,41 @@
+name: Fetch ADP Data (Phase 1 - FFC)
+
+# Manual trigger only -- click "Run workflow" on the Actions tab.
+# Not scheduled, since FFC's free API asks for max 1 call/day and this
+# makes ~20 calls in one run; run it deliberately, not automatically.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-adp:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run Phase 1 fetcher (FFC API, 2007-2025)
+        run: python scripts/ci_fetch_adp_phase1.py
+
+      - name: Show summary
+        run: cat data/raw/adp/ffc_fetch_summary.csv
+
+      - name: Commit and push results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/raw/adp/
+          git diff --staged --quiet && echo "No changes to commit" && exit 0
+          git commit -m "Fetch ADP data (Phase 1: FFC API) via GitHub Actions"
+          git push
+          
