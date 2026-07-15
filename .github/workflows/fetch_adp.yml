@@ -1,0 +1,24 @@
+name: Fetch ADP Data (Phase 1 - FFC)
+
+# Manual trigger only -- click "Run workflow" on the Actions tab.
+# Not scheduled, since FFC's free API asks for max 1 call/day and this
+# makes ~20 calls in one run; run it deliberately, not automatically.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-adp:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      -
