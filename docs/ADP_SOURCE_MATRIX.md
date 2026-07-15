@@ -397,3 +397,4 @@ Every major source evaluation should be documented with:
 - Decision
 - Confidence level
 - Next experiment
+- The goal is to preserve engineering reasoning so future work never repeats previous investigations.
