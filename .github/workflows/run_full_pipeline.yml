@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - - name: Install dependencies
+       - name: Install dependencies
         run: |
           pip install --only-binary=:all: pandas requests openpyxl rapidfuzz nfl_data_py
 
