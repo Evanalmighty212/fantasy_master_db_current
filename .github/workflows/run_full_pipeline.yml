@@ -19,9 +19,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - - name: Install dependencies
         run: |
-          pip install pandas requests openpyxl rapidfuzz nfl_data_py
+          pip install --only-binary=:all: pandas requests openpyxl rapidfuzz nfl_data_py
 
       - name: Step 1 - Fetch fresh FFC ADP data (Phase 1)
         run: python scripts/ci_fetch_adp_phase1.py
