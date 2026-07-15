@@ -1,0 +1,4 @@
+SEASONS = list(range(2006, 2026))
+SCORING_FORMATS = ["ppr"]
+TEAMS = 12
+TOP_N_ADP = 250

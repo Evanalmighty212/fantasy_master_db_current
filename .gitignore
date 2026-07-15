@@ -1,0 +1,16 @@
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
+
+data/raw/
+data/processed/
+data/master/
+data/exports/
+# data/manual/ is intentionally NOT ignored - hand-maintained source data
+outputs/
+
+*.log
+.ipynb_checkpoints/
+.pytest_cache/
