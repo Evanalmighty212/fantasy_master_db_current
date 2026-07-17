@@ -30,9 +30,27 @@ Fixes applied (Priority 1 audit, see docs/ or PR notes):
    (season, player_id), any player_id appearing more than once in a
    season (e.g. inconsistent player_display_name/position across weeks)
    is flagged to a CSV instead of silently passing through.
+6. Also emits a weekly-level output (weekly_results_ppr_*.csv) alongside
+   the season-level table, closing the data gap identified in
+   docs/METRIC_SPECIFICATION.md -- two LWI components (Playoff
+   Performance, Consistency) are inherently weekly-pattern metrics and
+   can't be computed from season totals alone.
+7. "Played" definition broadened after finding a real gap while testing
+   #6: attempts+carries+targets > 0 alone missed weeks where a player
+   scored ENTIRELY via a special-teams return touchdown (zero passing/
+   rushing/receiving touches, but real points on the board -- e.g.
+   Jeremy Ross, week 14 2013: 0/0/0 attempts/carries/targets, but 12.0
+   fantasy points from two return TDs). That week is a real played
+   game and was being wrongly excluded from games_played, which both
+   undercounted games_played and overstated ppg_ppr for every player
+   who ever had a scoring week like this. Fixed by broadening "played"
+   to: (attempts+carries+targets > 0) OR (fantasy_points_ppr != 0) --
+   fully general rather than enumerating every possible scoring
+   category (return TDs, two-point conversion returns, etc.) by name.
 
 Input:  config.SEASONS
 Output: data/raw/nflverse/season_results_ppr_<start>_<end>.csv
+        data/raw/nflverse/weekly_results_ppr_<start>_<end>.csv
         data/raw/nflverse/weekly_download_failures.csv
         data/raw/nflverse/season_player_duplicates.csv
 """
@@ -104,7 +122,12 @@ def build_season_results():
 
     print("Step 3: Computing official games_played (weeks with real offensive involvement)...")
     involvement = weekly[INVOLVEMENT_COLS].fillna(0).sum(axis=1)
-    played = weekly[involvement > 0].copy()
+    # Broadened per fix #7 (see module docstring): attempts+carries+targets
+    # alone misses weeks where a player scored entirely via a special-teams
+    # return TD (zero offensive touches, but real points). Any nonzero
+    # fantasy_points_ppr is itself proof of a real played week.
+    scored_points = weekly["fantasy_points_ppr"].fillna(0) != 0
+    played = weekly[(involvement > 0) | scored_points].copy()
 
     games_played = (
         played.groupby(GROUP_KEY, dropna=False)["week"]
@@ -208,6 +231,49 @@ def build_season_results():
     print(f"Rows: {len(season)}")
     print(f"Seasons covered: {season['season'].min()}-{season['season'].max()}")
     print(f"Duplicate player-seasons flagged: {len(dupes)}")
+
+    print("\nStep 8: Writing weekly-level results (for Playoff Performance / "
+          "Consistency in the LWI -- see docs/METRIC_SPECIFICATION.md)...")
+    # Reuses the SAME "played" filter (Step 3, broadened per fix #7) --
+    # deliberately, so a week counts here iff it counted toward
+    # games_played. This is also exactly the bye-week exclusion the
+    # Consistency spec calls for.
+    #
+    # De-dup guard: nflverse's own raw data occasionally has TWO rows
+    # for the same (season, player_id, week) -- found while testing
+    # this (Matthew Stafford, 2010, week 8: one row with real passing
+    # stats, a second with all-zero stats but 2.0 fantasy points,
+    # apparently a correction/revision artifact in their source, not
+    # anything in this script's logic). Left un-deduped, that would
+    # silently double-count one week in any Consistency calculation
+    # built on this table. Summing collapses it to one row per week
+    # with the correct total, matching games_played's nunique()-based
+    # count exactly.
+    weekly_raw = played[
+        GROUP_KEY + ["week", "player_display_name", "position", "recent_team", "fantasy_points_ppr"]
+    ]
+    dup_weeks = weekly_raw[weekly_raw.duplicated(subset=GROUP_KEY + ["week"], keep=False)]
+    if len(dup_weeks) > 0:
+        print(f"  NOTE: {len(dup_weeks)} raw rows found sharing a (season, "
+              f"player_id, week) key -- nflverse source data artifact, not "
+              f"a bug here. Summing fantasy_points_ppr within each "
+              f"duplicated week so it counts once, matching games_played.")
+
+    weekly_out = (
+        weekly_raw.groupby(GROUP_KEY + ["week"], as_index=False)
+        .agg(
+            player_display_name=("player_display_name", "first"),
+            position=("position", "first"),
+            recent_team=("recent_team", "first"),
+            fantasy_points_ppr=("fantasy_points_ppr", "sum"),
+        )
+        .sort_values(GROUP_KEY + ["week"])
+    )
+
+    weekly_out_path = RAW_DIR / f"weekly_results_ppr_{SEASONS[0]}_{SEASONS[-1]}.csv"
+    weekly_out.to_csv(weekly_out_path, index=False)
+    print(f"Created {weekly_out_path}")
+    print(f"Rows: {len(weekly_out)} (player-weeks with real offensive involvement)")
 
     return season
 
