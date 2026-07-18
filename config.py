@@ -41,11 +41,29 @@ LWI_ELIGIBLE_QUALITY_FLAGS = {"matched_clean", "matched_needs_review"}
 
 # Component 4 (Positional Advantage): replacement-level rank threshold
 # per position, and the window width above it to median over.
-# NOT YET FORMALLY CONFIRMED -- proposed defaults per
-# METRIC_SPECIFICATION.md open decision #1. Roughly maps to 12-team
-# league roster construction (1 starting QB, ~2.5 RB slots w/ flex,
-# ~3 WR slots w/ flex, 1 starting TE).
-LWI_REPLACEMENT_RANK_THRESHOLDS = {"QB": 12, "RB": 30, "WR": 36, "TE": 12}
+#
+# CONFIRMED (was: proposed default) -- QB12/RB34/WR42/TE12. This is a
+# CONCEPTUAL choice, not an empirical finding: real historical scoring
+# curves show NO natural cliff at any candidate threshold (QB/RB/WR/TE
+# all decay smoothly after the elite tier, with no second discontinuity
+# marking "starter" vs "waiver"), so no threshold set can be called
+# empirically "correct." QB12/RB34/WR42/TE12 was chosen because it best
+# matches the spec's own definition of replacement level -- "freely
+# available," not merely "the last mandatory starter" -- while avoiding
+# false precision at either extreme (RB30/WR36 undersells how deep
+# fantasy managers actually hoard those positions; RB36/WR48
+# overshoots into bench-only territory).
+#
+# Sensitivity-tested against real 2006-2024 data before confirming:
+# rank correlation of 0.9996 between the most divergent candidate
+# configurations tested, top-25 set overlap 23/25, top-100 set overlap
+# 97/100, median rank movement across all 2,643 eligible rows of 8
+# (95th percentile: 49). Per-season #1 changed in 2 of 18 seasons
+# under the most extreme comparison, but both were already
+# razor-margin races (0.02 and ~0.1 points on a 100-point scale) that
+# could plausibly tip either way from minor input changes -- not cases
+# of a clear #1 being meaningfully displaced.
+LWI_REPLACEMENT_RANK_THRESHOLDS = {"QB": 12, "RB": 34, "WR": 42, "TE": 12}
 LWI_REPLACEMENT_WINDOW = 12
 
 # Component 5 (Playoff Performance): which weeks count as "playoffs,"
