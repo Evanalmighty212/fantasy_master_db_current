@@ -15,10 +15,13 @@ matched_needs_review) AND games_played >= 8 are eligible. Everyone
 else gets lwi_score = null with a reason, not a score computed from
 data that can't support it.
 
-Open decisions from the spec that this implementation makes a default
-choice on -- FLAGGED here and in the output, not buried:
-  - Component 4 replacement-level rank thresholds: QB12/RB30/WR36/TE12
-    (proposed in spec, not yet formally confirmed).
+Component 4 replacement-level rank thresholds (QB12/RB34/WR42/TE12)
+are CONFIRMED -- a conceptual definition choice, sensitivity-tested
+against real data but not itself an empirical finding. See
+docs/METRIC_SPECIFICATION.md Component 4 for the full reasoning and
+the distinction between "robust to threshold choice" (tested, true)
+and "this specific threshold is empirically correct" (not a
+meaningful claim, since no natural cliff exists in the data).
 
 Input:  data/master/master_historical_db_<start>_<end>.csv
         data/raw/nflverse/weekly_results_ppr_<start>_<end>.csv
@@ -319,14 +322,6 @@ def calculate_lwi():
         "positional_advantage_component", "playoff_performance_component",
         "consistency_component",
     ]
-    # Component availability policy (docs/METRIC_SPECIFICATION.md):
-    # never silently redistribute a missing component's weight, and
-    # never let an incomplete score masquerade as a normal one. Moot
-    # today (every eligible row has all 6 components computed), but
-    # this guard makes that an enforced invariant rather than an
-    # assumption -- if a future data-source change ever breaks one
-    # component again the way the weekly-data gap did, this catches it
-    # instead of silently producing a misleadingly-normal-looking score.
     n_available = eligible[component_cols].notna().sum(axis=1)
     is_complete = n_available == len(component_cols)
 
@@ -353,11 +348,6 @@ def calculate_lwi():
               f"a labeled partial score if needed, but these should be excluded from "
               f"any ranking output by default.")
 
-    # Scoring-version metadata: "LWI 82.4" means something different
-    # under a different config, so every row records which formula
-    # version and exact config produced it. Two files with the same
-    # fingerprint used an identical formula; a version bump without a
-    # fingerprint change would itself be a bug worth catching.
     fingerprint = config_fingerprint()
     eligible["lwi_version"] = LWI_VERSION
     eligible["lwi_config_fingerprint"] = fingerprint
@@ -366,43 +356,4 @@ def calculate_lwi():
                 "ppg_component", "positional_advantage_component",
                 "playoff_performance_component", "consistency_component",
                 "playoff_games_played", "playoff_availability",
-                "lwi_component_coverage", "lwi_version", "lwi_config_fingerprint"]:
-        if col not in ineligible.columns:
-            ineligible[col] = None
-
-    final = pd.concat([eligible, ineligible], ignore_index=True).sort_values(
-        ["season", "overall_finish_ppr"]
-    )
-
-    print("Step 9: Writing output...")
-    MASTER_DIR.mkdir(parents=True, exist_ok=True)
-    out_csv = MASTER_DIR / f"master_historical_db_with_lwi_{SEASONS[0]}_{SEASONS[-1]}.csv"
-    final.to_csv(out_csv, index=False)
-    try:
-        final.to_excel(MASTER_DIR / f"master_historical_db_with_lwi_{SEASONS[0]}_{SEASONS[-1]}.xlsx", index=False)
-    except Exception as e:
-        print(f"  xlsx export skipped ({e})")
-
-    VALIDATION_DIR.mkdir(parents=True, exist_ok=True)
-    elig_report = (
-        master.groupby(["season", "lwi_eligibility_flag"]).size()
-        .reset_index(name="row_count")
-    )
-    elig_report.to_csv(VALIDATION_DIR / "lwi_eligibility_report.csv", index=False)
-
-    print(f"\nDone. {len(eligible)} rows scored, {len(ineligible)} rows ineligible.")
-    print(f"Master DB with LWI -> {out_csv}")
-    print(f"Eligibility report -> {VALIDATION_DIR / 'lwi_eligibility_report.csv'}")
-    print(f"\nNOTE: Component 4 uses UNCONFIRMED replacement-level rank "
-          f"thresholds ({REPLACEMENT_RANK_THRESHOLDS}) -- see "
-          f"docs/METRIC_SPECIFICATION.md open decision #1.")
-
-    return final
-
-
-def main():
-    calculate_lwi()
-
-
-if __name__ == "__main__":
-    main()
+                "lwi_component_coverage", "lwi_version", "lwi_config_fingerprint"]
