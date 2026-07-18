@@ -332,8 +332,6 @@ def calculate_lwi():
     # instead of silently producing a misleadingly-normal-looking score.
     n_available = eligible[component_cols].notna().sum(axis=1)
     is_complete = n_available == len(component_cols)
-    n_available = eligible[component_cols].notna().sum(axis=1)
-    is_complete = n_available == len(component_cols)
 
     eligible["lwi_score_diagnostic"] = (
         WEIGHTS["adp_value"] * eligible["adp_value_component"].fillna(0)
@@ -358,14 +356,12 @@ def calculate_lwi():
               f"a labeled partial score if needed, but these should be excluded from "
               f"any ranking output by default.")
 
-   f"any ranking output by default.")
-
     # Scoring-version metadata: "LWI 82.4" means something different
     # under a different config, so every row records which formula
     # version and exact config produced it. Two files with the same
     # fingerprint used an identical formula; a version bump without a
     # fingerprint change would itself be a bug worth catching.
-    fingerprint = config_fingerprint() fingerprint = config_fingerprint()
+    fingerprint = config_fingerprint()
     eligible["lwi_version"] = LWI_VERSION
     eligible["lwi_config_fingerprint"] = fingerprint
 
