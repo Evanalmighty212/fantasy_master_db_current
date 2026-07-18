@@ -322,6 +322,16 @@ def calculate_lwi():
         "positional_advantage_component", "playoff_performance_component",
         "consistency_component",
     ]
+    # Component availability policy (docs/METRIC_SPECIFICATION.md):
+    # never silently redistribute a missing component's weight, and
+    # never let an incomplete score masquerade as a normal one. Moot
+    # today (every eligible row has all 6 components computed), but
+    # this guard makes that an enforced invariant rather than an
+    # assumption -- if a future data-source change ever breaks one
+    # component again the way the weekly-data gap did, this catches it
+    # instead of silently producing a misleadingly-normal-looking score.
+    n_available = eligible[component_cols].notna().sum(axis=1)
+    is_complete = n_available == len(component_cols)
     n_available = eligible[component_cols].notna().sum(axis=1)
     is_complete = n_available == len(component_cols)
 
@@ -348,7 +358,14 @@ def calculate_lwi():
               f"a labeled partial score if needed, but these should be excluded from "
               f"any ranking output by default.")
 
-    fingerprint = config_fingerprint()
+   f"any ranking output by default.")
+
+    # Scoring-version metadata: "LWI 82.4" means something different
+    # under a different config, so every row records which formula
+    # version and exact config produced it. Two files with the same
+    # fingerprint used an identical formula; a version bump without a
+    # fingerprint change would itself be a bug worth catching.
+    fingerprint = config_fingerprint() fingerprint = config_fingerprint()
     eligible["lwi_version"] = LWI_VERSION
     eligible["lwi_config_fingerprint"] = fingerprint
 
