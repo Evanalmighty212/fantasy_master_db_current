@@ -34,31 +34,22 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd
 
-from config import SEASONS
+from config import (
+    SEASONS,
+    LWI_WEIGHTS as WEIGHTS,
+    LWI_MIN_GAMES as MIN_GAMES,
+    LWI_ELIGIBLE_QUALITY_FLAGS as ELIGIBLE_QUALITY_FLAGS,
+    LWI_REPLACEMENT_RANK_THRESHOLDS as REPLACEMENT_RANK_THRESHOLDS,
+    LWI_REPLACEMENT_WINDOW as REPLACEMENT_WINDOW,
+    LWI_PLAYOFF_WEEKS_16_GAME_ERA,
+    LWI_PLAYOFF_WEEKS_17_GAME_ERA,
+    LWI_PLAYOFF_ERA_CUTOFF_SEASON,
+)
 
 MASTER_PATH = Path(f"data/master/master_historical_db_{SEASONS[0]}_{SEASONS[-1]}.csv")
 WEEKLY_PATH = Path(f"data/raw/nflverse/weekly_results_ppr_{SEASONS[0]}_{SEASONS[-1]}.csv")
 MASTER_DIR = Path("data/master")
 VALIDATION_DIR = Path("data/exports/validation")
-
-MIN_GAMES = 8
-ELIGIBLE_QUALITY_FLAGS = {"matched_clean", "matched_needs_review"}
-
-# Component 4: replacement-level rank window, per position. NOT yet
-# formally confirmed per docs/METRIC_SPECIFICATION.md open decision #1
-# -- using the spec's own proposed defaults. Flagged in output via
-# REPLACEMENT_RANK_THRESHOLDS being echoed into the eligibility report.
-REPLACEMENT_RANK_THRESHOLDS = {"QB": 12, "RB": 30, "WR": 36, "TE": 12}
-REPLACEMENT_WINDOW = 12  # rank window width, per spec: [THRESHOLD, THRESHOLD+12]
-
-WEIGHTS = {
-    "adp_value": 0.46,
-    "fantasy_finish": 0.18,
-    "ppg": 0.17,
-    "positional_advantage": 0.12,
-    "playoff_performance": 0.04,
-    "consistency": 0.03,
-}
 
 
 def minmax_normalize_within_group(df, value_col, group_cols):
@@ -83,8 +74,12 @@ def percentile_rank_within_group(df, value_col, group_cols):
 
 def get_playoff_weeks(season: int):
     """Per docs/METRIC_SPECIFICATION.md Component 5 -- resolved
-    empirically against actual max-week-per-season in the real data."""
-    return [14, 15, 16] if season <= 2020 else [15, 16, 17]
+    empirically against actual max-week-per-season in the real data.
+    Values live in config.py, not hardcoded here."""
+    return (
+        LWI_PLAYOFF_WEEKS_16_GAME_ERA if season <= LWI_PLAYOFF_ERA_CUTOFF_SEASON
+        else LWI_PLAYOFF_WEEKS_17_GAME_ERA
+    )
 
 
 def compute_component_1_adp_value(df):
