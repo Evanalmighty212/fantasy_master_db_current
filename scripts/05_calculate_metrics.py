@@ -26,6 +26,8 @@ Output: data/master/master_historical_db_with_lwi_<start>_<end>.csv (+.xlsx)
         data/exports/validation/lwi_eligibility_report.csv
 """
 
+import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -44,12 +46,36 @@ from config import (
     LWI_PLAYOFF_WEEKS_16_GAME_ERA,
     LWI_PLAYOFF_WEEKS_17_GAME_ERA,
     LWI_PLAYOFF_ERA_CUTOFF_SEASON,
+    LWI_VERSION,
+    validate_lwi_config,
 )
 
 MASTER_PATH = Path(f"data/master/master_historical_db_{SEASONS[0]}_{SEASONS[-1]}.csv")
 WEEKLY_PATH = Path(f"data/raw/nflverse/weekly_results_ppr_{SEASONS[0]}_{SEASONS[-1]}.csv")
 MASTER_DIR = Path("data/master")
 VALIDATION_DIR = Path("data/exports/validation")
+
+
+def config_fingerprint():
+    """
+    Deterministic hash of every LWI_* config value that affects the
+    calculation. Two output files with the same fingerprint were
+    produced by an identical formula; different fingerprints mean the
+    scores are not directly comparable even if lwi_version matches
+    (e.g. during iteration before a version bump).
+    """
+    payload = {
+        "weights": WEIGHTS,
+        "min_games": MIN_GAMES,
+        "eligible_quality_flags": sorted(ELIGIBLE_QUALITY_FLAGS),
+        "replacement_thresholds": REPLACEMENT_RANK_THRESHOLDS,
+        "replacement_window": REPLACEMENT_WINDOW,
+        "playoff_weeks_16_game_era": LWI_PLAYOFF_WEEKS_16_GAME_ERA,
+        "playoff_weeks_17_game_era": LWI_PLAYOFF_WEEKS_17_GAME_ERA,
+        "playoff_era_cutoff_season": LWI_PLAYOFF_ERA_CUTOFF_SEASON,
+    }
+    serialized = json.dumps(payload, sort_keys=True)
+    return hashlib.sha256(serialized.encode()).hexdigest()[:12]
 
 
 def minmax_normalize_within_group(df, value_col, group_cols):
@@ -97,7 +123,27 @@ def compute_component_3_ppg(df):
 
 def compute_component_4_positional_advantage(df):
     """Replacement level = median ppg_ppr of players ranked
-    [threshold, threshold+window] at that position+season, per spec."""
+    [threshold, threshold+window] at that position+season, per spec.
+
+    IMPORTANT, found via testing (see docs/METRIC_SPECIFICATION.md):
+    the normalization step groups by SEASON ONLY, not (season,
+    position). Grouping by position here was a real bug -- subtracting
+    a per-position CONSTANT (the replacement level) and then min-max
+    normalizing WITHIN THAT SAME POSITION GROUP mathematically erases
+    the constant entirely (min-max normalization only depends on
+    relative spacing, which a uniform shift doesn't change). That made
+    this component silently identical to Component 3 for every row,
+    regardless of what REPLACEMENT_RANK_THRESHOLDS was set to. The
+    whole point of a replacement-level comparison is to let value be
+    compared ACROSS positions on a shared baseline-adjusted scale (the
+    same idea as "Value Over Replacement Player" in other sports
+    analytics) -- grouping by position again defeats that structurally.
+    Verified via direct test: after this fix, changing
+    REPLACEMENT_RANK_THRESHOLDS actually changes the output; before it,
+    it provably did not, for any normalization method (min-max,
+    z-score, or percentile all share this same constant-shift-invariance
+    property within a group).
+    """
     replacement_lookup = {}
     for (season, position), group in df.groupby(["season", "position"]):
         threshold = REPLACEMENT_RANK_THRESHOLDS.get(position)
@@ -116,7 +162,10 @@ def compute_component_4_positional_advantage(df):
         lambda r: replacement_lookup.get((r["season"], r["position"])), axis=1
     )
     df["positional_advantage_raw"] = df["ppg_ppr"] - df["_replacement_level_ppg"]
-    result = minmax_normalize_within_group(df, "positional_advantage_raw", ["season", "position"])
+    # Grouped by ["season"] only -- NOT ["season", "position"]. See
+    # docstring above for why grouping by position defeats the whole
+    # purpose of this component.
+    result = minmax_normalize_within_group(df, "positional_advantage_raw", ["season"])
     df.drop(columns=["_replacement_level_ppg"], inplace=True)
     return result
 
@@ -210,6 +259,9 @@ def compute_component_6_consistency(df, weekly):
 
 
 def calculate_lwi():
+    print("Step 0: Validating LWI configuration...")
+    validate_lwi_config()  # raises ValueError and halts on any invalid config -- not a warning
+
     if not MASTER_PATH.exists() or not WEEKLY_PATH.exists():
         raise FileNotFoundError(
             f"Need both {MASTER_PATH} (from 04_build_master_dataset.py) and "
@@ -262,21 +314,59 @@ def calculate_lwi():
     eligible["consistency_component"] = compute_component_6_consistency(eligible, weekly_scoped)
 
     print("Step 8: Calculating final LWI score...")
-    eligible["lwi_score"] = (
-        WEIGHTS["adp_value"] * eligible["adp_value_component"]
-        + WEIGHTS["fantasy_finish"] * eligible["fantasy_finish_component"]
-        + WEIGHTS["ppg"] * eligible["ppg_component"]
-        + WEIGHTS["positional_advantage"] * eligible["positional_advantage_component"]
-        + WEIGHTS["playoff_performance"] * eligible["playoff_performance_component"]
-        + WEIGHTS["consistency"] * eligible["consistency_component"]
-    ).round(2)
-    eligible["lwi_component_coverage"] = "complete_6_of_6"
+    component_cols = [
+        "adp_value_component", "fantasy_finish_component", "ppg_component",
+        "positional_advantage_component", "playoff_performance_component",
+        "consistency_component",
+    ]
+    # Component availability policy (docs/METRIC_SPECIFICATION.md):
+    # never silently redistribute a missing component's weight, and
+    # never let an incomplete score masquerade as a normal one. Moot
+    # today (every eligible row has all 6 components computed), but
+    # this guard makes that an enforced invariant rather than an
+    # assumption -- if a future data-source change ever breaks one
+    # component again the way the weekly-data gap did, this catches it
+    # instead of silently producing a misleadingly-normal-looking score.
+    n_available = eligible[component_cols].notna().sum(axis=1)
+    is_complete = n_available == len(component_cols)
 
-    for col in ["lwi_score", "adp_value_component", "fantasy_finish_component",
+    eligible["lwi_score_diagnostic"] = (
+        WEIGHTS["adp_value"] * eligible["adp_value_component"].fillna(0)
+        + WEIGHTS["fantasy_finish"] * eligible["fantasy_finish_component"].fillna(0)
+        + WEIGHTS["ppg"] * eligible["ppg_component"].fillna(0)
+        + WEIGHTS["positional_advantage"] * eligible["positional_advantage_component"].fillna(0)
+        + WEIGHTS["playoff_performance"] * eligible["playoff_performance_component"].fillna(0)
+        + WEIGHTS["consistency"] * eligible["consistency_component"].fillna(0)
+    ).round(2)
+
+    eligible["lwi_score"] = eligible["lwi_score_diagnostic"].where(is_complete)
+    eligible["lwi_component_coverage"] = np.where(
+        is_complete, "complete_6_of_6",
+        "incomplete_" + n_available.astype(str) + "_of_" + str(len(component_cols)),
+    )
+
+    n_incomplete = (~is_complete).sum()
+    if n_incomplete > 0:
+        print(f"  WARNING: {n_incomplete} eligible rows have an incomplete component "
+              f"set -- lwi_score left null for these, per the component availability "
+              f"policy in docs/METRIC_SPECIFICATION.md. See lwi_score_diagnostic for "
+              f"a labeled partial score if needed, but these should be excluded from "
+              f"any ranking output by default.")
+
+    # Scoring-version metadata: "LWI 82.4" means something different
+    # under a different config, so every row records which formula
+    # version and exact config produced it. Two files with the same
+    # fingerprint used an identical formula; a version bump without a
+    # fingerprint change would itself be a bug worth catching.
+    fingerprint = config_fingerprint()
+    eligible["lwi_version"] = LWI_VERSION
+    eligible["lwi_config_fingerprint"] = fingerprint
+
+    for col in ["lwi_score", "lwi_score_diagnostic", "adp_value_component", "fantasy_finish_component",
                 "ppg_component", "positional_advantage_component",
                 "playoff_performance_component", "consistency_component",
                 "playoff_games_played", "playoff_availability",
-                "lwi_component_coverage"]:
+                "lwi_component_coverage", "lwi_version", "lwi_config_fingerprint"]:
         if col not in ineligible.columns:
             ineligible[col] = None
 
