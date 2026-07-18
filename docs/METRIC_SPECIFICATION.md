@@ -363,40 +363,6 @@ would look identical in a leaderboard, even though they're different
 measurements built on different information. Silence there is worse
 than an honest gap.
 
----
-
-## Component availability policy
-
-Moot today (all 6 components are implemented, and every eligible row
-gets a real value for each one), but the policy is stated here now, in
-case a future data-source change ever breaks one component again the
-way the weekly-data gap did:
-
-- Never silently redistribute a missing component's weight. A score
-  computed from 5 of 6 components is a DIFFERENT measurement than one
-  computed from all 6 -- re-weighting to still land on a 0-100 scale
-  would make the two look directly comparable when they aren't.
-- Incomplete scores are never shown in the ordinary `lwi_score`
-  column. That column means "the real, complete score" or nothing. An
-  incomplete row gets `lwi_score = null` and `lwi_component_coverage`
-  set to something other than `complete_6_of_6` (e.g.
-  `incomplete_5_of_6`), not a number that looks like a normal score.
-- Incomplete rows are excluded from rankings by default. Any future
-  ranking/leaderboard output (`06_generate_rankings.py`) should filter
-  to `lwi_component_coverage == complete_6_of_6` unless diagnostics
-  are explicitly requested.
-- A diagnostic partial score MAY be retained separately, clearly
-  labeled with its component coverage (e.g. a `lwi_score_diagnostic`
-  column noting `5/6 components available`), for someone who wants to
-  look anyway -- but never in the main column, and never silently
-  treated as equivalent to a complete score.
-
-The failure mode this policy exists to prevent: a score of 78
-calculated from six components and a score of 78 calculated from five
-would look identical in a leaderboard, even though they're different
-measurements built on different information. Silence there is worse
-than an honest gap.
-
 ## Output schema (proposed)
 
 Per (season, player_id) row, in addition to everything already in
