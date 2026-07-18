@@ -16,4 +16,95 @@ TOP_N_ADP = 250
 
 # --- League Winner Index (LWI) parameters ---
 # See docs/METRIC_SPECIFICATION.md for the full formula writeup and
-# rationale
+# rationale behind each of these. Anything marked "not yet formally
+# confirmed" in that document is a real open decision, not a
+# throwaway default -- change it here if/when it gets confirmed.
+
+# The core formula weights (46/18/17/12/4/3), from VERSION_1_SCOPE.md.
+LWI_WEIGHTS = {
+    "adp_value": 0.46,
+    "fantasy_finish": 0.18,
+    "ppg": 0.17,
+    "positional_advantage": 0.12,
+    "playoff_performance": 0.04,
+    "consistency": 0.03,
+}
+
+# Minimum games played for a player-season to be eligible for an LWI
+# score at all (see METRIC_SPECIFICATION.md "Scope" section).
+LWI_MIN_GAMES = 8
+
+# data_quality_flag values (from 04_build_master_dataset.py) that
+# qualify a row for LWI scoring -- a row needs a real ADP match to
+# have a "value over draft cost" score at all.
+LWI_ELIGIBLE_QUALITY_FLAGS = {"matched_clean", "matched_needs_review"}
+
+# Component 4 (Positional Advantage): replacement-level rank threshold
+# per position, and the window width above it to median over.
+# NOT YET FORMALLY CONFIRMED -- proposed defaults per
+# METRIC_SPECIFICATION.md open decision #1. Roughly maps to 12-team
+# league roster construction (1 starting QB, ~2.5 RB slots w/ flex,
+# ~3 WR slots w/ flex, 1 starting TE).
+LWI_REPLACEMENT_RANK_THRESHOLDS = {"QB": 12, "RB": 30, "WR": 36, "TE": 12}
+LWI_REPLACEMENT_WINDOW = 12
+
+# Component 5 (Playoff Performance): which weeks count as "playoffs,"
+# split by NFL season length era. Verified against actual
+# max-week-per-season in the real data -- see METRIC_SPECIFICATION.md
+# Component 5 for the full rationale. LWI_PLAYOFF_ERA_CUTOFF_SEASON is
+# the last season using the shorter (16-game) week set; anything after
+# it uses the 17-game week set.
+LWI_PLAYOFF_WEEKS_16_GAME_ERA = [14, 15, 16]
+LWI_PLAYOFF_WEEKS_17_GAME_ERA = [15, 16, 17]
+LWI_PLAYOFF_ERA_CUTOFF_SEASON = 2020
+
+# Version identifier for the LWI formula itself. Bump this any time any
+# LWI_* value above changes -- "LWI 82.4" means something different
+# under a different config, and output files should always be able to
+# say which formula version produced them (see calculate_lwi()'s
+# lwi_version / lwi_config_fingerprint output columns).
+LWI_VERSION = "1.0"
+
+
+def validate_lwi_config():
+    """
+    Fail loudly on an invalid LWI configuration rather than silently
+    calculating plausible-looking scores from bad inputs. Called at
+    the start of 05_calculate_metrics.py -- not optional, not a
+    warning. A centralized config file also centralizes the
+    opportunity for someone to enter a bad value; this is the guard
+    against that.
+    """
+    errors = []
+
+    weight_sum = sum(LWI_WEIGHTS.values())
+    if abs(weight_sum - 1.0) > 1e-6:
+        errors.append(f"LWI_WEIGHTS must sum to 1.0 (100%), got {weight_sum}")
+    for name, w in LWI_WEIGHTS.items():
+        if w < 0:
+            errors.append(f"LWI_WEIGHTS['{name}'] is negative ({w})")
+
+    if not isinstance(LWI_MIN_GAMES, int) or not (1 <= LWI_MIN_GAMES <= 17):
+        errors.append(f"LWI_MIN_GAMES must be an integer in [1, 17], got {LWI_MIN_GAMES}")
+
+    for pos, threshold in LWI_REPLACEMENT_RANK_THRESHOLDS.items():
+        if not isinstance(threshold, int) or threshold <= 0:
+            errors.append(f"LWI_REPLACEMENT_RANK_THRESHOLDS['{pos}'] must be a "
+                           f"positive integer, got {threshold}")
+    if not isinstance(LWI_REPLACEMENT_WINDOW, int) or LWI_REPLACEMENT_WINDOW <= 0:
+        errors.append(f"LWI_REPLACEMENT_WINDOW must be a positive integer, "
+                       f"got {LWI_REPLACEMENT_WINDOW}")
+
+    for era_name, weeks in [("LWI_PLAYOFF_WEEKS_16_GAME_ERA", LWI_PLAYOFF_WEEKS_16_GAME_ERA),
+                             ("LWI_PLAYOFF_WEEKS_17_GAME_ERA", LWI_PLAYOFF_WEEKS_17_GAME_ERA)]:
+        if not weeks or any((not isinstance(w, int) or w < 1 or w > 22) for w in weeks):
+            errors.append(f"{era_name} must be a non-empty list of valid week "
+                           f"numbers (1-22), got {weeks}")
+    if not isinstance(LWI_PLAYOFF_ERA_CUTOFF_SEASON, int):
+        errors.append(f"LWI_PLAYOFF_ERA_CUTOFF_SEASON must be an integer season, "
+                       f"got {LWI_PLAYOFF_ERA_CUTOFF_SEASON}")
+
+    if errors:
+        raise ValueError(
+            "Invalid LWI configuration in config.py:\n  - " + "\n  - ".join(errors)
+        )
