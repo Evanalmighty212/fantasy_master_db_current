@@ -142,13 +142,11 @@ replacement_level_ppg = median(ppg_ppr) for all players at this
                          position+season with position_finish_ppr
                          between [RANK_THRESHOLD] and [RANK_THRESHOLD + 12]
 positional_advantage_raw = ppg_ppr - replacement_level_ppg
-`RANK_THRESHOLD` (the "replacement level" cutoff rank) should be set
-per position based on typical league roster construction -- this needs
-one explicit decision before implementation, e.g.: QB12, RB30, WR36,
-TE12 (rough 12-team-league-with-2-flex-ish starting-slot assumptions).
-**This threshold is a real design choice, not a technical detail --
-flag it for review before implementation rather than picking a number
-silently.**
+`RANK_THRESHOLD` (the "replacement level" cutoff rank) -- CONFIRMED:
+QB12 / RB34 / WR42 / TE12. This is a CONCEPTUAL definition choice, not
+an empirical finding -- see the note below the normalization section
+for why, and why it should not be described as "empirically
+validated."
 
 **Normalization -- CORRECTED, real bug found and fixed via testing**:
 min-max scale `positional_advantage_raw` to 0-100 across ALL positions
@@ -168,13 +166,65 @@ compared ACROSS positions on a shared baseline-adjusted scale (the
 same idea as "Value Over Replacement Player" in other sports
 analytics) -- grouping by position again defeats that structurally.
 
-Verified against real data after the fix: the correlation between
-Component 3 and Component 4 dropped from a perfect 1.0 (proving they
-were mathematically identical before) to 0.86-0.99 depending on
-position. The real top-10 LWI list shifted meaningfully once fixed --
-several historically-scarce TE seasons (Gronkowski 2011, Jordan Reed
-2015) moved up, which is the expected, correct behavior of a
-positional-scarcity-aware metric, not noise.
+Verified against real data after the fix (this finding is about the
+GROUPING bug specifically, independent of which threshold values are
+used -- see below for the separate threshold-choice discussion): the
+correlation between Component 3 and Component 4 dropped from a
+perfect 1.0 (proving they were mathematically identical before) to
+0.86-0.99 depending on position. The real top-10 LWI list shifted
+meaningfully once fixed -- several historically-scarce TE seasons
+(Gronkowski 2011, Jordan Reed 2015) moved up, which is the expected,
+correct behavior of a positional-scarcity-aware metric, not noise.
+
+**Replacement thresholds -- how QB12/RB34/WR42/TE12 was chosen, and
+why "empirically validated" is the WRONG way to describe it.** Real
+historical scoring-by-rank curves (2006-2024) show NO natural cliff at
+any candidate threshold for any position -- every position decays
+steeply through its elite tier, then smoothly and continuously, with
+no second discontinuity marking "starter" vs. "waiver level." That
+means no threshold choice can be empirically PROVEN correct; the
+choice is fundamentally conceptual (what does "freely available"
+mean?), not something the data can settle on its own.
+
+The conceptual reasoning for QB12/RB34/WR42/TE12: QB and TE both have
+fast-replenishing replacement pools (streaming QBs, thin but
+undifferentiated TE waiver options), so the "last mandatory starter"
+and "freely available player" roughly coincide at rank 12 for both.
+RB and WR do not -- fantasy managers systematically hoard bench RBs
+(handcuffs, committees, injury insurance) and rosterable WRs (bye-week
+streaming, PPR floor plays) well past their teams' mandatory starting
+slots, so a "last starter" cutoff (RB30, WR36) understates how deep
+"not actually available on waivers" goes. RB34/WR42 sit deeper than
+the naive starter-slot count without overshooting into pure
+bench-filler territory -- this is a working compromise between
+plausible interpretations, not a hidden true value.
+
+**What WAS empirically tested, and should be described this way**:
+whether the LWI model's overall behavior is stable across reasonable
+alternative threshold choices -- not whether any specific threshold is
+"correct." Tested QB12/RB30/WR36/TE12 (starter-level) against
+QB12/RB34/WR42/TE12 (the chosen compromise) and QB12/RB36/WR42/TE12
+(deeper waiver-level), using real 2006-2024 data:
+- Rank correlation between the two most divergent configurations:
+  0.9996.
+- Top-25 set overlap: 23 of 25 players identical.
+- Top-100 set overlap: 97 of 100 players identical.
+- Median rank movement across all 2,643 eligible player-seasons: 8
+  places (95th percentile: 49).
+- Per-season #1 (the literal "league winner" identification) changed
+  in 2 of 18 seasons under the most extreme comparison -- but both
+  were already razor-margin races (0.02 and ~0.1 points on a 100-point
+  scale, e.g. DeAngelo Williams vs. Steve Slaton in 2008) that could
+  plausibly tip either way from minor input changes, not cases of a
+  clear #1 being meaningfully displaced.
+
+**Correct framing for this decision**: replacement thresholds are
+defined as QB12/RB34/WR42/TE12 based on a conceptual reading of
+"freely available" under typical 12-team PPR roster construction.
+Sensitivity testing across reasonable alternatives showed LWI rankings
+are highly robust to the specific thresholds chosen. These are two
+separate claims -- the first is a judgment call, the second is a
+tested fact -- and neither should be used to imply the other.
 
 ---
 
@@ -384,8 +434,22 @@ consistency_component            (null until weekly data exists)
 
 ## Open decisions requiring explicit sign-off before implementation
 
-1. Replacement-level rank threshold per position (Component 4) --
-   proposed QB12/RB30/WR36/TE12, not yet confirmed.
+1. ~~Replacement-level rank threshold per position (Component 4)~~ --
+   CONFIRMED: QB12/RB34/WR42/TE12. Important distinction in how this
+   is described (a real correction made during review -- an earlier
+   draft of this section incorrectly called QB12/RB30/WR36/TE12
+   "empirically validated," which conflated two different claims):
+   the specific threshold values are a CONCEPTUAL choice based on what
+   "freely available" means under typical 12-team PPR roster
+   construction -- real scoring data shows no natural cliff at any
+   candidate value, so no threshold can be empirically proven correct.
+   What WAS empirically tested and confirmed is that the LWI model's
+   overall behavior is robust to reasonable alternative choices (0.9996
+   rank correlation between the most divergent configurations tested,
+   23/25 and 97/100 top-25/top-100 set overlap, 2/18 season-winner
+   flips and both were already razor-margin races). See Component 4
+   above for the full writeup and the reasoning for RB34/WR42 over the
+   originally-proposed RB30/WR36.
 2. ~~Playoff week definition (Component 5)~~ -- RESOLVED: weeks 14-16
    for 2006-2020 seasons, weeks 15-17 for 2021-2024 seasons, verified
    against actual max-week-per-season in the real weekly data.
