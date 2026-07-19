@@ -66,6 +66,54 @@ LWI_ELIGIBLE_QUALITY_FLAGS = {"matched_clean", "matched_needs_review"}
 LWI_REPLACEMENT_RANK_THRESHOLDS = {"QB": 12, "RB": 34, "WR": 42, "TE": 12}
 LWI_REPLACEMENT_WINDOW = 12
 
+# Component 1 (ADP Value): if a player's overall finish was WORSE than
+# their own overall ADP, their Component 1 score is capped at this
+# value (out of 100) regardless of how favorably they scored against
+# the historical expected-finish baseline (EVA). Verified via real-data
+# testing: without this cap, EVA alone could score a player positively
+# for beating a bad historical baseline (early picks bust often) even
+# when they genuinely underperformed the actual pick spent on them --
+# real case: Arian Foster 2012 (drafted 1.4 overall, finished 12th).
+# 40 is comfortably below the 50-midpoint "met expectation" range,
+# ensuring a real underperformer cannot reach the top of the LWI
+# leaderboard through this component alone.
+LWI_ADP_UNDERPERFORM_CAP = 40
+
+# --- Undrafted player representation (verified-undrafted proxy ADP) ---
+# Product decision: a metric called "League Winner Index" must be able
+# to recognize genuinely undrafted breakout players (James Robinson
+# 2020, Victor Cruz 2011, etc.) -- excluding them entirely would make
+# the metric measure something narrower than its own name implies.
+# ONE unified acquisition model, not a separate scoring path: a
+# verified-undrafted player gets a MODELED overall/positional ADP
+# (see 04_build_master_dataset.py's apply_undrafted_proxy_adp) and
+# then flows through the exact same Component 1-6 pipeline as every
+# drafted player.
+#
+# Proxy formula: GLOBAL maximum observed ADP (across all 2006-2025
+# seasons combined) + 1 -- NOT each season's own deepest pick + 1.
+# Rationale: a player taken with the literal last pick of a draft and
+# one who goes undrafted are usually separated by one manager's
+# last-round decision, not a fundamentally different acquisition
+# mechanism -- the proxy should reflect that continuity. Using each
+# season's OWN source depth instead would unfairly reward players from
+# seasons where the ADP source happened to be shallower (e.g. 2022's
+# 146-player depth vs 2010's 214), which is a property of the SOURCE,
+# not the player's real draft standing.
+#
+# THESE ARE FIXED CONSTANTS, not dynamically recomputed each pipeline
+# run. If they were recalculated automatically whenever new ADP data
+# is added, every previously-scored undrafted player's modeled ADP
+# would silently shift, breaking reproducibility across output
+# versions. Computed once from the real 2006-2025 dataset (verified
+# directly): global max overall_adp = 193.5 (so proxy = 194.5); global
+# max positional_adp by position from the matched master dataset:
+# QB=30 (proxy=31), RB=64 (proxy=65), WR=73 (proxy=74), TE=60 (proxy=61).
+# Revisit deliberately (not automatically) if a future season's real
+# ADP data ever exceeds these depths.
+LWI_GLOBAL_MAX_OVERALL_ADP = 193.5
+LWI_GLOBAL_MAX_POSITIONAL_ADP = {"QB": 30, "RB": 64, "WR": 73, "TE": 60}
+
 # Component 5 (Playoff Performance): which weeks count as "playoffs,"
 # split by NFL season length era. Verified against actual
 # max-week-per-season in the real data -- see METRIC_SPECIFICATION.md
@@ -81,7 +129,47 @@ LWI_PLAYOFF_ERA_CUTOFF_SEASON = 2020
 # under a different config, and output files should always be able to
 # say which formula version produced them (see calculate_lwi()'s
 # lwi_version / lwi_config_fingerprint output columns).
-LWI_VERSION = "1.0"
+#
+# v2.0: major formula redesign after extensive real-data testing --
+# Component 1 changed from positional/overall ADP comparison to
+# leave-one-season-out (LOSO) monotonic EVA + an overall-ADP-
+# underperformance cap; Component 2 changed to total points above
+# replacement (cross-position); Component 3 reverted to positional PPG
+# percentile (found to be mathematically identical to Component 4 when
+# also made replacement-adjusted). See docs/METRIC_SPECIFICATION.md
+# for the full history of this redesign.
+# v2.1: Component 4 redesigned to STANDARDIZED positional advantage
+# (PPG above replacement / IQR of starter-tier PPG at that position)
+# after finding v2.0's Component 4 was mathematically identical to
+# Component 3 once Component 3 was also made replacement-adjusted
+# (both were literally the same formula, weighted twice). An
+# intermediate fallback (reverting Component 3 to positional
+# percentile) fixed the duplication but reintroduced TE over-
+# representation (15% of a real top-100, vs 5% for the original,
+# fully-redundant version). Standardizing Component 4 by the
+# position's own scoring spread instead resolved BOTH problems:
+# 25% unique variance (vs 0% when unstandardized) and 7% TE share
+# (vs 5-16% for every other variant tested). Component 3 restored to
+# replacement-adjusted since it no longer duplicates the redesigned
+# Component 4. See docs/METRIC_SPECIFICATION.md for the full history.
+# v2.1: FINAL. Confirmed via release verification -- production output
+# reproduces the tested winsor-5/95 formula almost exactly (false-
+# positive median 596 exact match, unique variance 15.46% vs tested
+# 15.5%, Component3-4 correlation 0.942 vs tested 0.942). Fixed a real
+# outlier-sensitivity bug in Component 4's final normalization along
+# the way (rc2): plain min-max (used through v2.1-rc1) is highly
+# sensitive to its own extremes -- verified directly that a single
+# wild outlier in ONE position's data could shift an UNRELATED
+# player's score in a DIFFERENT position by 60+ points, since the
+# final cross-position normalization shares one range across all 4
+# positions within a season. Fixed by winsorizing (5th/95th percentile
+# clip) before scaling -- tested head-to-head against plain min-max,
+# percentile rank, and 2.5/97.5 winsorizing; 5/95 gave the best
+# combination of outlier robustness (0.0 point shift in the same test
+# that showed 60+ before) and retained discriminative power. See
+# docs/METRIC_SPECIFICATION.md Component 4 and docs/LWI_MODEL_CARD.md
+# for full details.
+LWI_VERSION = "2.1"
 
 
 def validate_lwi_config():
@@ -112,6 +200,18 @@ def validate_lwi_config():
     if not isinstance(LWI_REPLACEMENT_WINDOW, int) or LWI_REPLACEMENT_WINDOW <= 0:
         errors.append(f"LWI_REPLACEMENT_WINDOW must be a positive integer, "
                        f"got {LWI_REPLACEMENT_WINDOW}")
+
+    if not isinstance(LWI_ADP_UNDERPERFORM_CAP, (int, float)) or not (0 <= LWI_ADP_UNDERPERFORM_CAP <= 100):
+        errors.append(f"LWI_ADP_UNDERPERFORM_CAP must be a number in [0, 100], "
+                       f"got {LWI_ADP_UNDERPERFORM_CAP}")
+
+    if not isinstance(LWI_GLOBAL_MAX_OVERALL_ADP, (int, float)) or LWI_GLOBAL_MAX_OVERALL_ADP <= 0:
+        errors.append(f"LWI_GLOBAL_MAX_OVERALL_ADP must be a positive number, "
+                       f"got {LWI_GLOBAL_MAX_OVERALL_ADP}")
+    for pos, val in LWI_GLOBAL_MAX_POSITIONAL_ADP.items():
+        if not isinstance(val, (int, float)) or val <= 0:
+            errors.append(f"LWI_GLOBAL_MAX_POSITIONAL_ADP['{pos}'] must be a "
+                           f"positive number, got {val}")
 
     for era_name, weeks in [("LWI_PLAYOFF_WEEKS_16_GAME_ERA", LWI_PLAYOFF_WEEKS_16_GAME_ERA),
                              ("LWI_PLAYOFF_WEEKS_17_GAME_ERA", LWI_PLAYOFF_WEEKS_17_GAME_ERA)]:

@@ -1,5 +1,23 @@
-pandas
-requests
-openpyxl
-rapidfuzz
-nfl_data_py
+# Pinned to versions confirmed working end-to-end against this project's
+# actual pipeline (installed via `pip install --only-binary=:all:` on
+# both local testing and GitHub Actions runners -- see
+# .github/workflows/run_full_pipeline.yml). Bump deliberately, not
+# automatically; re-run the full pipeline and confirm the validation
+# reports still look right before committing a version bump.
+pandas==3.0.3
+requests==2.34.2
+openpyxl==3.1.5
+rapidfuzz==3.14.5
+nfl_data_py==0.3.2
+numpy==2.4.4
+scikit-learn==1.5.2
+
+# Used only by scripts/parse_fftoday_adp.py (one-off historical
+# extraction, not part of the regular pipeline run) -- not needed for
+# run_full_pipeline.yml, but pinned here too so the whole repo installs
+# from one file.
+beautifulsoup4==4.14.3
+lxml==6.0.2
+
+# Test suite only (see tests/)
+pytest==8.3.4
