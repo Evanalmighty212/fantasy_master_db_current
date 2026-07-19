@@ -47,8 +47,25 @@ Fixes applied (Priority 1 audit, see docs/ or PR notes):
    to: (attempts+carries+targets > 0) OR (fantasy_points_ppr != 0) --
    fully general rather than enumerating every possible scoring
    category (return TDs, two-point conversion returns, etc.) by name.
+8. Position override table: found via a real audit (ChatGPT flagged
+   Jordan Matthews and Devin Funchess appearing as TE in the master
+   DB) that nflverse's OWN raw weekly data mislabels a small number of
+   position-ambiguous "tweener" players -- Jordan Matthews and Devin
+   Funchess are tagged TE for their ENTIRE careers in nflverse's source
+   data despite playing WR; N'Keal Harry is even tagged inconsistently
+   WITHIN his own career by nflverse itself (TE 2019-2020, WR 2021-
+   2022). This is not a bug in this script's aggregation logic (mode()
+   correctly reflects whatever nflverse says) -- it's an upstream data
+   quality issue, confirmed narrow in scope (3 of 2,617 players show
+   cross-season inconsistency; Matthews/Funchess are consistently
+   wrong all career, which is a different, harder-to-self-detect
+   failure mode). Fixed the same way player-name matching issues are
+   fixed -- data/manual/position_overrides.csv, a persistent,
+   hand-maintained override table checked before falling back to
+   nflverse's own position value.
 
 Input:  config.SEASONS
+        data/manual/position_overrides.csv (optional, hand-maintained)
 Output: data/raw/nflverse/season_results_ppr_<start>_<end>.csv
         data/raw/nflverse/weekly_results_ppr_<start>_<end>.csv
         data/raw/nflverse/weekly_download_failures.csv
@@ -84,6 +101,55 @@ INVOLVEMENT_COLS = ["attempts", "carries", "targets"]
 # that kind of inconsistency is instead caught by the duplicate check
 # below and surfaced for review, not silently multiplied.
 GROUP_KEY = ["season", "player_id"]
+
+POSITION_OVERRIDES_PATH = Path("data/manual/position_overrides.csv")
+
+
+def load_position_overrides():
+    """
+    Persistent, hand-maintained override table for known nflverse
+    position-tagging errors (see fix #8 in the module docstring).
+    Columns: player_id, season, correct_position, notes.
+    season may be blank/empty to mean "all seasons for this player_id"
+    (used for players like Jordan Matthews/Devin Funchess who are
+    mislabeled their ENTIRE career, not just specific seasons).
+    Created empty with headers if it doesn't exist yet.
+    """
+    if POSITION_OVERRIDES_PATH.exists():
+        df = pd.read_csv(POSITION_OVERRIDES_PATH, dtype=str)
+        return df
+    POSITION_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    empty = pd.DataFrame(columns=["player_id", "season", "correct_position", "notes"])
+    empty.to_csv(POSITION_OVERRIDES_PATH, index=False)
+    print(f"No position override table found -- created an empty one at {POSITION_OVERRIDES_PATH}")
+    return empty
+
+
+def apply_position_overrides(season_df, overrides_df):
+    """Applies position_overrides.csv on top of the mode()-derived
+    position. All-season overrides (blank season column) take effect
+    for every row for that player_id; season-specific overrides only
+    affect that one row."""
+    if overrides_df.empty:
+        return season_df
+
+    applied = 0
+    for _, r in overrides_df.iterrows():
+        pid = r["player_id"]
+        correct_pos = r["correct_position"]
+        season_val = r.get("season", "")
+        if pd.isna(season_val) or str(season_val).strip() == "":
+            mask = season_df["player_id"] == pid
+        else:
+            mask = (season_df["player_id"] == pid) & (season_df["season"] == int(season_val))
+        n = mask.sum()
+        if n > 0:
+            season_df.loc[mask, "position"] = correct_pos
+            applied += n
+
+    if applied > 0:
+        print(f"  Applied {applied} position overrides from {POSITION_OVERRIDES_PATH}")
+    return season_df
 
 
 def build_season_results():
@@ -186,6 +252,14 @@ def build_season_results():
         else pd.NA,
         axis=1,
     )
+
+    print("Step 5b: Applying position overrides (see fix #8 in module docstring)...")
+    # MUST happen before Step 6's ranking -- position_finish_ppr is
+    # computed per (season, position) group, so overrides need to be
+    # applied first or a corrected player would still be ranked within
+    # their WRONG position group.
+    position_overrides = load_position_overrides()
+    season = apply_position_overrides(season, position_overrides)
 
     print("Step 6: Ranking overall and positional finishes...")
     season["overall_finish_ppr"] = (

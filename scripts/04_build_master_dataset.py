@@ -41,13 +41,18 @@ sys.path.append(str(Path(__file__).resolve().parent))
 
 import pandas as pd
 
-from config import SEASONS, TOP_N_ADP
+from config import (
+    SEASONS, TOP_N_ADP,
+    LWI_GLOBAL_MAX_OVERALL_ADP,
+    LWI_GLOBAL_MAX_POSITIONAL_ADP,
+)
 import player_matching
 
 RESULTS_PATH = Path(f"data/raw/nflverse/season_results_ppr_{SEASONS[0]}_{SEASONS[-1]}.csv")
 ADP_PATH = Path(f"data/processed/adp_clean_{SEASONS[0]}_{SEASONS[-1]}.csv")
 MASTER_DIR = Path("data/master")
 VALIDATION_DIR = Path("data/exports/validation")
+ADP_VERIFICATION_PATH = Path("data/manual/adp_status_verification.csv")
 
 FINAL_COLUMNS = [
     "season", "player_id", "player_name", "position", "team",
@@ -55,6 +60,10 @@ FINAL_COLUMNS = [
     "overall_finish_ppr", "position_finish_ppr",
     "overall_adp", "positional_adp", "adp_source", "adp_rank",
     "data_quality_flag",
+    "overall_adp_observed", "positional_adp_observed",
+    "overall_adp_model", "positional_adp_model",
+    "adp_status", "verification_status",
+    "adp_proxy_used", "adp_proxy_reason",
 ]
 
 
@@ -64,6 +73,89 @@ def flag_row(r):
     if r.get("match_type") in ("fuzzy_low_confidence", "exact_name_position_mismatch"):
         return "matched_needs_review"
     return "matched_clean"
+
+
+def load_adp_verification():
+    """
+    Hand-maintained, persistent table (same pattern as
+    player_name_overrides.csv and position_overrides.csv) recording
+    which no_adp_match players have been researched and confirmed as
+    genuinely undrafted (vs. drafted-but-missing-from-our-current-
+    source). A player not in this table is "unresolved" -- NOT
+    assumed undrafted, per the explicit product decision that
+    "unknown" and "undrafted" must never be conflated. Created empty
+    with headers if it doesn't exist yet.
+    """
+    if ADP_VERIFICATION_PATH.exists():
+        return pd.read_csv(ADP_VERIFICATION_PATH, dtype=str)
+    ADP_VERIFICATION_PATH.parent.mkdir(parents=True, exist_ok=True)
+    empty = pd.DataFrame(columns=["player_id", "season", "adp_status", "verification_status", "notes"])
+    empty.to_csv(ADP_VERIFICATION_PATH, index=False)
+    return empty
+
+
+def apply_adp_status_and_proxy(master, verification_df):
+    """
+    Populate the observed/modeled ADP schema for every row:
+
+    - Drafted (real ADP match): observed = model = the real matched
+      value. adp_status='drafted', verification_status='verified'.
+    - Verified undrafted (found in adp_status_verification.csv with
+      verification_status='verified', adp_status='undrafted'):
+      observed=null, model = LWI_GLOBAL_MAX_*_ADP + 1 (the fixed,
+      documented proxy -- see config.py for the full reasoning).
+    - Everyone else (no ADP match, not yet researched): observed=null,
+      model=null, adp_status=null, verification_status='unresolved'.
+      These remain ineligible for LWI, identically to today's
+      no_adp_match behavior -- NOT assumed undrafted just because
+      they're currently unmatched.
+    """
+    master = master.copy()
+    master["overall_adp_observed"] = master["overall_adp"]
+    master["positional_adp_observed"] = master["positional_adp"]
+    master["overall_adp_model"] = master["overall_adp"]
+    master["positional_adp_model"] = master["positional_adp"]
+    master["adp_status"] = None
+    master["verification_status"] = "unresolved"
+    master["adp_proxy_used"] = False
+    master["adp_proxy_reason"] = None
+
+    drafted_mask = master["data_quality_flag"].isin(["matched_clean", "matched_needs_review"])
+    master.loc[drafted_mask, "adp_status"] = "drafted"
+    master.loc[drafted_mask, "verification_status"] = "verified"
+
+    if not verification_df.empty:
+        verified_undrafted = verification_df[
+            (verification_df["verification_status"] == "verified")
+            & (verification_df["adp_status"] == "undrafted")
+        ]
+        applied = 0
+        for _, row in verified_undrafted.iterrows():
+            pid = row["player_id"]
+            season_val = row.get("season", "")
+            if pd.isna(season_val) or str(season_val).strip() == "":
+                mask = master["player_id"] == pid
+            else:
+                mask = (master["player_id"] == pid) & (master["season"] == int(season_val))
+            n = mask.sum()
+            if n == 0:
+                continue
+            positions_hit = master.loc[mask, "position"].unique()
+            for pos in positions_hit:
+                pos_mask = mask & (master["position"] == pos)
+                pos_max = LWI_GLOBAL_MAX_POSITIONAL_ADP.get(pos)
+                master.loc[pos_mask, "overall_adp_model"] = LWI_GLOBAL_MAX_OVERALL_ADP + 1
+                master.loc[pos_mask, "positional_adp_model"] = (pos_max + 1) if pos_max is not None else None
+                master.loc[pos_mask, "adp_status"] = "undrafted"
+                master.loc[pos_mask, "verification_status"] = "verified"
+                master.loc[pos_mask, "adp_proxy_used"] = True
+                master.loc[pos_mask, "adp_proxy_reason"] = "global_max_adp_plus_one"
+            applied += n
+        if applied > 0:
+            print(f"  Applied {applied} verified-undrafted proxy ADP assignments "
+                  f"from {ADP_VERIFICATION_PATH}")
+
+    return master
 
 
 def build_master_dataset():
@@ -140,6 +232,10 @@ def build_master_dataset():
         "player_display_name": "player_name",
         "primary_team": "team",
     })
+
+    print("Step 4b: Applying ADP status classification and undrafted-player proxy...")
+    verification_df = load_adp_verification()
+    master = apply_adp_status_and_proxy(master, verification_df)
 
     missing_cols = [c for c in FINAL_COLUMNS if c not in master.columns]
     if missing_cols:

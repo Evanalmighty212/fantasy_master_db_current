@@ -38,6 +38,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
+from sklearn.isotonic import IsotonicRegression
 
 from config import (
     SEASONS,
@@ -46,6 +47,7 @@ from config import (
     LWI_ELIGIBLE_QUALITY_FLAGS as ELIGIBLE_QUALITY_FLAGS,
     LWI_REPLACEMENT_RANK_THRESHOLDS as REPLACEMENT_RANK_THRESHOLDS,
     LWI_REPLACEMENT_WINDOW as REPLACEMENT_WINDOW,
+    LWI_ADP_UNDERPERFORM_CAP,
     LWI_PLAYOFF_WEEKS_16_GAME_ERA,
     LWI_PLAYOFF_WEEKS_17_GAME_ERA,
     LWI_PLAYOFF_ERA_CUTOFF_SEASON,
@@ -73,6 +75,7 @@ def config_fingerprint():
         "eligible_quality_flags": sorted(ELIGIBLE_QUALITY_FLAGS),
         "replacement_thresholds": REPLACEMENT_RANK_THRESHOLDS,
         "replacement_window": REPLACEMENT_WINDOW,
+        "adp_underperform_cap": LWI_ADP_UNDERPERFORM_CAP,
         "playoff_weeks_16_game_era": LWI_PLAYOFF_WEEKS_16_GAME_ERA,
         "playoff_weeks_17_game_era": LWI_PLAYOFF_WEEKS_17_GAME_ERA,
         "playoff_era_cutoff_season": LWI_PLAYOFF_ERA_CUTOFF_SEASON,
@@ -111,66 +114,197 @@ def get_playoff_weeks(season: int):
     )
 
 
-def compute_component_1_adp_value(df):
-    df["adp_value_raw"] = df["positional_adp"] - df["position_finish_ppr"]
-    return minmax_normalize_within_group(df, "adp_value_raw", ["season", "position"])
-
-
-def compute_component_2_fantasy_finish(df):
-    return minmax_normalize_within_group(df, "fantasy_points_ppr", ["season", "position"])
-
-
-def compute_component_3_ppg(df):
-    return minmax_normalize_within_group(df, "ppg_ppr", ["season", "position"])
-
-
-def compute_component_4_positional_advantage(df):
-    """Replacement level = median ppg_ppr of players ranked
-    [threshold, threshold+window] at that position+season, per spec.
-
-    IMPORTANT, found via testing (see docs/METRIC_SPECIFICATION.md):
-    the normalization step groups by SEASON ONLY, not (season,
-    position). Grouping by position here was a real bug -- subtracting
-    a per-position CONSTANT (the replacement level) and then min-max
-    normalizing WITHIN THAT SAME POSITION GROUP mathematically erases
-    the constant entirely (min-max normalization only depends on
-    relative spacing, which a uniform shift doesn't change). That made
-    this component silently identical to Component 3 for every row,
-    regardless of what REPLACEMENT_RANK_THRESHOLDS was set to. The
-    whole point of a replacement-level comparison is to let value be
-    compared ACROSS positions on a shared baseline-adjusted scale (the
-    same idea as "Value Over Replacement Player" in other sports
-    analytics) -- grouping by position again defeats that structurally.
-    Verified via direct test: after this fix, changing
-    REPLACEMENT_RANK_THRESHOLDS actually changes the output; before it,
-    it provably did not, for any normalization method (min-max,
-    z-score, or percentile all share this same constant-shift-invariance
-    property within a group).
+def compute_replacement_level(df, value_col):
     """
-    replacement_lookup = {}
+    Shared helper: for each (season, position), the replacement level
+    is the median of value_col among players ranked
+    [REPLACEMENT_RANK_THRESHOLDS[position], +REPLACEMENT_WINDOW] by
+    position_finish_ppr. Used by BOTH Component 2 (total points above
+    replacement) and Component 4 (PPG above replacement / VORP) --
+    extracted into one shared function specifically so the two
+    components can never silently drift into being the same formula
+    on different columns without it being obvious in one place.
+    """
+    lookup = {}
     for (season, position), group in df.groupby(["season", "position"]):
         threshold = REPLACEMENT_RANK_THRESHOLDS.get(position)
         if threshold is None:
-            replacement_lookup[(season, position)] = np.nan
+            lookup[(season, position)] = np.nan
             continue
         window = group[
             (group["position_finish_ppr"] >= threshold)
             & (group["position_finish_ppr"] <= threshold + REPLACEMENT_WINDOW)
         ]
-        replacement_lookup[(season, position)] = (
-            window["ppg_ppr"].median() if len(window) > 0 else np.nan
-        )
+        lookup[(season, position)] = window[value_col].median() if len(window) > 0 else np.nan
+    return df.apply(lambda r: lookup.get((r["season"], r["position"])), axis=1)
 
-    df["_replacement_level_ppg"] = df.apply(
-        lambda r: replacement_lookup.get((r["season"], r["position"])), axis=1
-    )
-    df["positional_advantage_raw"] = df["ppg_ppr"] - df["_replacement_level_ppg"]
-    # Grouped by ["season"] only -- NOT ["season", "position"]. See
-    # docstring above for why grouping by position defeats the whole
-    # purpose of this component.
-    result = minmax_normalize_within_group(df, "positional_advantage_raw", ["season"])
-    df.drop(columns=["_replacement_level_ppg"], inplace=True)
-    return result
+
+def compute_component_1_adp_value(df):
+    """ADP Value -- LOSO monotonic EVA (Expected Value Added) plus an
+    overall-ADP-underperformance cap. Final structure per extensive
+    real-data testing -- see docs/METRIC_SPECIFICATION.md Component 1
+    for the full history (positional-only -> blended -> pure overall
+    min-max -> this).
+
+    EVA: instead of comparing a player to this SEASON's own ADP
+    distribution (which changes meaning year to year), build an
+    empirical "expected finish given overall ADP" curve from the
+    OTHER 18 seasons (leave-one-season-out, avoiding circularity --
+    a player-season never influences its own baseline), smoothed
+    with isotonic (monotonic) regression so noise never lets an
+    earlier pick have a WORSE expected finish than a later one purely
+    by sampling artifact. EVA = expected_finish - actual_finish
+    (positive = beat the historical baseline for that draft slot).
+
+    Cap: EVA alone can score a player positively for beating a bad
+    historical baseline (e.g. early picks bust often) even when they
+    lost value versus their OWN actual draft cost -- real case found
+    in testing: Arian Foster 2012, drafted overall_adp=1.4, finished
+    12th overall. eva_raw=+28.8 (beat the rough historical average for
+    pick-1-ish slots) but direct_raw=-10.6 (genuinely worse than the
+    actual pick spent on him). Verified this is not a bug in EVA's
+    math -- it is EVA correctly answering a different question than
+    "did this beat the actual pick." The cap adds direct accountability:
+    if a player's overall finish is worse than their own overall ADP,
+    their Component 1 score is capped below the midpoint (40) --
+    verified via real-data testing to move Foster from rank 64 to
+    rank 332-357 without materially affecting real known-value seasons.
+    """
+    # Use overall_adp_model (real ADP for drafted players; the fixed
+    # proxy for verified-undrafted players) if present -- falls back to
+    # overall_adp directly for synthetic/test data that doesn't set up
+    # the full observed/modeled ADP schema, so this stays backward
+    # compatible with existing tests.
+    adp_col = "overall_adp_model" if "overall_adp_model" in df.columns else "overall_adp"
+
+    df["expected_finish_loso"] = np.nan
+    for held_out_season in df["season"].unique():
+        train = df[df["season"] != held_out_season]
+        iso = IsotonicRegression(increasing=True, out_of_bounds="clip")
+        iso.fit(train[adp_col], train["overall_finish_ppr"])
+        mask = df["season"] == held_out_season
+        df.loc[mask, "expected_finish_loso"] = iso.predict(df.loc[mask, adp_col])
+
+    df["eva_raw"] = df["expected_finish_loso"] - df["overall_finish_ppr"]
+    df["adp_value_raw"] = df[adp_col] - df["overall_finish_ppr"]  # kept for the cap check + output
+    eva_component = minmax_normalize_within_group(df, "eva_raw", ["season"])
+
+    worse_than_own_adp = df["overall_finish_ppr"] > df[adp_col]
+    capped = np.where(worse_than_own_adp, np.minimum(eva_component, LWI_ADP_UNDERPERFORM_CAP), eva_component)
+    return pd.Series(capped, index=df.index)
+
+
+def compute_component_2_fantasy_finish(df):
+    """Total points ABOVE REPLACEMENT, normalized across all positions
+    within a season. Distinct job from Component 4: this rewards
+    full-season cumulative production AND availability (a durable
+    player with more usable games scores higher here even at a lower
+    per-game rate than a great-but-injured player) -- Component 4
+    measures the PER-GAME (weekly lineup) advantage instead, which
+    does NOT reward games played. See docs/METRIC_SPECIFICATION.md
+    Component 2 for the full reasoning and the real-data test proving
+    these two are NOT the same formula (R-squared of Component 4
+    predicted from Components 2+3 is 0.897 under this structure --
+    Component 4 retains real, non-redundant information -- versus
+    1.000/fully redundant when Component 3 was ALSO replacement-
+    adjusted PPG, which was mathematically identical to Component 4)."""
+    df["replacement_points"] = compute_replacement_level(df, "fantasy_points_ppr")
+    df["points_above_replacement"] = df["fantasy_points_ppr"] - df["replacement_points"]
+    return minmax_normalize_within_group(df, "points_above_replacement", ["season"])
+
+
+def compute_component_3_ppg(df):
+    """PPG above replacement, normalized across all positions within a
+    season -- "full B" structure. NOTE: this was previously reverted
+    to positional percentile because it was found to be mathematically
+    IDENTICAL to Component 4's old (unstandardized) formula. Restored
+    to replacement-adjusted here because Component 4 has since been
+    redesigned to STANDARDIZED positional advantage (see
+    compute_component_4_positional_advantage below), which is no
+    longer the same formula as this component -- verified via testing:
+    Spearman correlation between this and the new Component 4 is 0.878
+    (not ~1.0), and Component 4 retains 25% variance not explained by
+    Components 2+3 (not 0%). See docs/METRIC_SPECIFICATION.md
+    Component 3/4 for the full history of this back-and-forth."""
+    df["replacement_ppg"] = compute_replacement_level(df, "ppg_ppr")
+    df["ppg_above_replacement"] = df["ppg_ppr"] - df["replacement_ppg"]
+    return minmax_normalize_within_group(df, "ppg_above_replacement", ["season"])
+
+
+def compute_component_4_positional_advantage(df):
+    """STANDARDIZED positional advantage -- PPG above replacement,
+    divided by the IQR of PPG among "starter tier" players (ranked 1
+    through the position's replacement threshold) at that position and
+    season, THEN normalized across positions within season using
+    WINSORIZED min-max (5th/95th percentile clip), not plain min-max.
+
+    Why standardized (IQR division), not raw: the raw version (PPG
+    above replacement, unstandardized) was found via testing to be
+    mathematically IDENTICAL to Component 3 once Component 3 was also
+    made replacement-adjusted (Spearman ~1.0, R-squared of 1.000 when
+    regressed on Components 2+3 -- literally the same formula counted
+    twice). Standardizing by the position's own starter-tier PPG
+    spread asks a genuinely different question: not "how big was the
+    gap" (Component 3's job) but "how UNUSUAL was that gap relative to
+    how tightly bunched the position normally is" (this component's
+    job). IQR was chosen over standard deviation (weaker: only 15.8%
+    unique variance vs IQR's) and tested head-to-head against MAD
+    (close, but IQR gave meaningfully better false-positive
+    separation).
+
+    Why WINSORIZED min-max, not plain min-max, for the final 0-100
+    scale: plain min-max is highly sensitive to its own extremes --
+    found via direct testing that a single wild outlier in ONE
+    position's data could shift an UNRELATED player's score in a
+    DIFFERENT position by 60+ points, because the final normalization
+    is cross-position (shared range across all 4 positions within a
+    season, needed for VORP-style comparability). Winsorizing at the
+    5th/95th percentile before scaling clips that outlier's influence
+    on the shared range to zero (verified: 0.0 point shift to an
+    unrelated player in the same test that showed 60+ under plain
+    min-max) while retaining most of the magnitude signal for the bulk
+    of the distribution. Tested head-to-head against plain min-max,
+    percentile rank, and 2.5/97.5 winsorizing -- 5/95 gave the best
+    combination of outlier robustness and retained discriminative
+    power (best known-winner and false-positive separation among the
+    outlier-robust alternatives, though slightly lower "unique
+    variance" than plain min-max -- 15.5% vs 25.0% -- a real, accepted
+    tradeoff for eliminating the cross-position contamination bug).
+
+    Verified via real-data testing: TE share of the real top-100 is
+    ~6-7% under this final structure (vs 15% for an intermediate
+    fallback and 5-16% for earlier variants tested)."""
+    df["replacement_ppg"] = compute_replacement_level(df, "ppg_ppr")
+    df["ppg_above_replacement"] = df["ppg_ppr"] - df["replacement_ppg"]
+
+    spread_lookup = {}
+    for (season, position), group in df.groupby(["season", "position"]):
+        threshold = REPLACEMENT_RANK_THRESHOLDS.get(position)
+        if threshold is None:
+            spread_lookup[(season, position)] = np.nan
+            continue
+        starters = group[group["position_finish_ppr"] <= threshold]
+        if len(starters) < 4:  # too few to get a meaningful IQR
+            spread_lookup[(season, position)] = np.nan
+            continue
+        q75, q25 = starters["ppg_ppr"].quantile([0.75, 0.25])
+        iqr = q75 - q25
+        spread_lookup[(season, position)] = iqr if iqr > 0 else np.nan
+
+    df["starter_ppg_iqr"] = df.apply(lambda r: spread_lookup.get((r["season"], r["position"])), axis=1)
+    df["positional_advantage_raw"] = df["ppg_above_replacement"] / df["starter_ppg_iqr"]
+
+    # WINSORIZED min-max (5/95), not plain min-max -- see this
+    # function's docstring for the real outlier-sensitivity bug this
+    # fixes. The winsorized (clipped, pre-scale) intermediate value is
+    # kept as its own visible output column so the clipping itself is
+    # transparent and auditable, not hidden inside one opaque
+    # normalization step.
+    def _winsorize(s):
+        lo_bound, hi_bound = s.quantile(0.05), s.quantile(0.95)
+        return s.clip(lo_bound, hi_bound)
+    df["positional_advantage_winsorized"] = df.groupby("season")["positional_advantage_raw"].transform(_winsorize)
+    return minmax_normalize_within_group(df, "positional_advantage_winsorized", ["season"])
 
 
 def compute_component_5_playoff_performance(df, weekly):
@@ -275,13 +409,26 @@ def calculate_lwi():
     weekly = pd.read_csv(WEEKLY_PATH)
 
     print("Step 1: Determining LWI eligibility...")
+    # A row is ADP-eligible if EITHER it has a real drafted match
+    # (data_quality_flag) OR it's a VERIFIED undrafted player (per the
+    # product decision to include genuine undrafted breakouts in the
+    # unified LWI, not exclude them -- see config.py's
+    # LWI_GLOBAL_MAX_OVERALL_ADP documentation). A row that is simply
+    # UNMATCHED and not yet researched (verification_status ==
+    # 'unresolved') is NOT assumed undrafted -- it stays ineligible,
+    # identically to the original no_adp_match behavior, until someone
+    # actually verifies its status in data/manual/adp_status_verification.csv.
+    has_real_adp_match = master["data_quality_flag"].isin(ELIGIBLE_QUALITY_FLAGS)
+    is_verified_undrafted = (
+        (master.get("verification_status") == "verified")
+        & (master.get("adp_status") == "undrafted")
+    )
+    adp_eligible = has_real_adp_match | is_verified_undrafted
+
     master["lwi_eligibility_flag"] = "eligible"
+    master.loc[~adp_eligible, "lwi_eligibility_flag"] = "no_adp_match"
     master.loc[
-        ~master["data_quality_flag"].isin(ELIGIBLE_QUALITY_FLAGS), "lwi_eligibility_flag"
-    ] = "no_adp_match"
-    master.loc[
-        (master["data_quality_flag"].isin(ELIGIBLE_QUALITY_FLAGS))
-        & (master["games_played"] < MIN_GAMES),
+        adp_eligible & (master["games_played"] < MIN_GAMES),
         "lwi_eligibility_flag",
     ] = "insufficient_games"
 
@@ -289,6 +436,10 @@ def calculate_lwi():
     eligible = master[eligible_mask].copy()
     ineligible = master[~eligible_mask].copy()
     print(f"  Eligible: {len(eligible)} / {len(master)} total rows")
+    n_verified_undrafted_eligible = (eligible.get("adp_status") == "undrafted").sum() if "adp_status" in eligible.columns else 0
+    if n_verified_undrafted_eligible > 0:
+        print(f"  ({n_verified_undrafted_eligible} of those are verified-undrafted players, "
+              f"scored via the proxy ADP)")
     print(f"  Ineligible breakdown:\n{ineligible['lwi_eligibility_flag'].value_counts().to_string()}")
 
     eligible_keys = set(zip(eligible["season"], eligible["player_id"]))
