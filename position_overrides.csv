@@ -1,0 +1,3 @@
+player_id,season,correct_position,notes
+00-0031299,,WR,"Jordan Matthews tagged TE by nflverse for his entire career (all 7 seasons in source data) despite playing WR throughout his NFL career. Confirmed via audit; blank season = applies to all his seasons."
+00-0032055,,WR,"Devin Funchess tagged TE by nflverse for his entire career (all 5 seasons in source data). Drafted as a TE/WR tweener at Michigan but played primarily WR in the NFL. Confirmed via audit; blank season = applies to all his seasons."
