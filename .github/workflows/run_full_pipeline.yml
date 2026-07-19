@@ -1,4 +1,4 @@
-name: Run Full Pipeline (ADP + Stats + Master DB)
+name: Run Full Pipeline (ADP + Stats + Master DB + LWI + Rankings)
 
 # Manual trigger only -- click "Run workflow" on the Actions tab.
 on:
@@ -21,7 +21,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install --only-binary=:all: pandas requests openpyxl rapidfuzz nfl_data_py
+          pip install --only-binary=:all: pandas requests openpyxl rapidfuzz nfl_data_py scikit-learn
 
       - name: Step 1 - Fetch fresh FFC ADP data (Phase 1)
         run: python scripts/ci_fetch_adp_phase1.py
@@ -35,6 +35,12 @@ jobs:
       - name: Step 4 - Build Master Historical Database (runs player matching internally)
         run: python scripts/04_build_master_dataset.py
 
+      - name: Step 5 - Calculate League Winner Index (05_calculate_metrics.py)
+        run: python scripts/05_calculate_metrics.py
+
+      - name: Step 6 - Generate rankings and leaderboards (06_generate_rankings.py)
+        run: python scripts/06_generate_rankings.py
+
       - name: Show final summary
         run: |
           echo "=== Season coverage ==="
@@ -42,6 +48,9 @@ jobs:
           echo ""
           echo "=== Top-250 ADP coverage ==="
           cat data/exports/validation/top_250_adp_coverage_report.csv
+          echo ""
+          echo "=== LWI eligibility ==="
+          cat data/exports/validation/lwi_eligibility_report.csv
 
       - name: Upload all results as one artifact
         uses: actions/upload-artifact@v4
@@ -51,5 +60,6 @@ jobs:
             data/master/
             data/processed/
             data/exports/validation/
+            data/exports/rankings/
             data/raw/nflverse/
           retention-days: 14
