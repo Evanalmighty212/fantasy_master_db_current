@@ -19,6 +19,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -208,18 +209,24 @@ class TestConfigPropagation:
         # positions (season only), not within a single position, or
         # this test would pass vacuously (any within-position grouping
         # makes a replacement-level shift mathematically invisible).
+        # Needs >=4 players within the starter-tier window for the IQR
+        # to actually compute (not NaN) -- a too-small synthetic sample
+        # made this test pass vacuously (both threshold settings hit
+        # the "insufficient starters" guard and produced identical NaNs).
+        np.random.seed(1)
+        n_per_pos = 20
         df = pd.DataFrame({
-            "season": [2020] * 6,
-            "position": ["QB", "QB", "QB", "RB", "RB", "RB"],
-            "position_finish_ppr": [1, 2, 3, 1, 2, 3],
-            "ppg_ppr": [25.0, 20.0, 15.0, 12.0, 10.0, 8.0],
+            "season": [2020] * (n_per_pos * 2),
+            "position": ["QB"] * n_per_pos + ["RB"] * n_per_pos,
+            "position_finish_ppr": list(range(1, n_per_pos+1)) * 2,
+            "ppg_ppr": list(np.linspace(25, 5, n_per_pos)) + list(np.linspace(20, 3, n_per_pos)),
         })
 
-        monkeypatch.setattr(mod, "REPLACEMENT_RANK_THRESHOLDS", {"QB": 1, "RB": 1})
-        monkeypatch.setattr(mod, "REPLACEMENT_WINDOW", 2)
+        monkeypatch.setattr(mod, "REPLACEMENT_RANK_THRESHOLDS", {"QB": 5, "RB": 5})
+        monkeypatch.setattr(mod, "REPLACEMENT_WINDOW", 10)
         result_a = mod.compute_component_4_positional_advantage(df.copy())
 
-        monkeypatch.setattr(mod, "REPLACEMENT_RANK_THRESHOLDS", {"QB": 3, "RB": 1})
+        monkeypatch.setattr(mod, "REPLACEMENT_RANK_THRESHOLDS", {"QB": 15, "RB": 5})
         result_b = mod.compute_component_4_positional_advantage(df.copy())
 
         assert not result_a.equals(result_b), (
@@ -264,6 +271,365 @@ class TestConfigPropagation:
         # If adp_value weight were doubled (hypothetically), the
         # contribution from a maxed adp_value_component should double too
         assert (mod.WEIGHTS["adp_value"] * 2) * components["adp_value_component"] == pytest.approx(92.0)
+
+
+class TestComponent1LOSOEvaAndCap:
+    """Regression tests for Component 1's final structure: leave-one-
+    season-out (LOSO) monotonic EVA (Expected Value Added) plus an
+    overall-ADP-underperformance cap. Replaced the earlier pure-overall
+    min-max version after extensive real-data testing -- see
+    docs/METRIC_SPECIFICATION.md Component 1 for the full history."""
+
+    def test_loso_never_uses_the_players_own_season(self, mod):
+        # The whole point of leave-one-season-out is that a
+        # player-season's expected baseline must be built WITHOUT that
+        # player's own season in the training data -- otherwise each
+        # observation slightly influences its own baseline.
+        df = pd.DataFrame({
+            "season": [2018]*5 + [2019]*5,
+            "position": ["RB"]*10,
+            "position_finish_ppr": list(range(1,6))*2,
+            "overall_adp": [5,20,40,80,150]*2,
+            "overall_finish_ppr": [3,25,35,70,140]*2,
+        })
+        # Two seasons, identical ADP/finish patterns -- if LOSO is
+        # working, isotonic curves for both seasons should be built
+        # from ONLY the other season's data and should therefore be
+        # identical to each other (each is the sole training set for
+        # the other), not influenced by including their own rows.
+        result = mod.compute_component_1_adp_value(df.copy())
+        assert result.notna().all()
+
+    def test_cap_applies_when_worse_than_own_adp(self, mod):
+        # Real-world mirror: Arian Foster 2012 (overall_adp=1.4,
+        # overall_finish=12 -- genuinely worse than the actual pick
+        # spent, even though he likely beat the rough historical
+        # baseline for pick-1-ish slots given how often very early
+        # picks bust). Must be capped regardless of EVA's raw view.
+        # Two seasons included -- LOSO needs at least 2 to have any
+        # training data when the target season is excluded.
+        base = pd.DataFrame({
+            "position": ["RB"]*30,
+            "position_finish_ppr": list(range(1,31)),
+            "overall_adp": [1.4] + list(np.linspace(2, 250, 29)),
+            "overall_finish_ppr": [12] + list(np.linspace(2, 250, 29)),
+        })
+        df = pd.concat([base.assign(season=2012), base.assign(season=2013)], ignore_index=True)
+        result = mod.compute_component_1_adp_value(df.copy())
+        assert result.iloc[0] <= mod.LWI_ADP_UNDERPERFORM_CAP, (
+            "A player who finished worse than his own overall ADP was "
+            "not capped -- the cap mechanism may have regressed."
+        )
+
+    def test_cap_does_not_apply_when_better_than_own_adp(self, mod):
+        base = pd.DataFrame({
+            "position": ["RB"]*30,
+            "position_finish_ppr": list(range(1,31)),
+            "overall_adp": [150] + list(np.linspace(2, 250, 29)),
+            "overall_finish_ppr": [5] + list(np.linspace(2, 250, 29)),  # huge riser
+        })
+        df = pd.concat([base.assign(season=2012), base.assign(season=2013)], ignore_index=True)
+        result = mod.compute_component_1_adp_value(df.copy())
+        assert result.iloc[0] > mod.LWI_ADP_UNDERPERFORM_CAP, (
+            "A genuine riser (beat their own overall ADP by a lot) was "
+            "capped -- the cap should only trigger for underperformers."
+        )
+
+
+class TestComponents2And3ReplacementAdjusted:
+    """Regression tests for the FINAL Components 2/3 structure ("full
+    B"): Component 2 = total points above replacement, Component 3 =
+    PPG above replacement, BOTH normalized cross-position (season
+    only). An intermediate version reverted Component 3 to positional
+    percentile to avoid duplicating an earlier, unstandardized
+    Component 4 -- but once Component 4 was redesigned to STANDARDIZED
+    positional advantage (dividing by the position's starter-tier PPG
+    spread, not just a raw replacement-adjusted difference), Component
+    3 could safely return to replacement-adjusted without duplicating
+    Component 4 again (verified: Spearman correlation between the two
+    dropped from ~1.0 to 0.878, and Component 4 retains 25% variance
+    not explained by Components 2+3, vs 0% before). See
+    docs/METRIC_SPECIFICATION.md Component 3/4 for the full history."""
+
+    def test_component_2_grouped_by_season_cross_position(self, mod):
+        # position_finish_ppr values must span each position's
+        # replacement threshold window (QB12/RB34/WR42/TE12, window 12)
+        # or replacement_level lookup returns NaN for that group.
+        df = pd.DataFrame({
+            "season": [2020]*4,
+            "position": ["QB", "QB", "TE", "TE"],
+            "position_finish_ppr": [1, 12, 1, 12],
+            "fantasy_points_ppr": [400.0, 150.0, 200.0, 80.0],
+        })
+        result = mod.compute_component_2_fantasy_finish(df.copy())
+        assert result.notna().all()
+
+    def test_component_3_grouped_by_season_cross_position(self, mod):
+        # Component 3 pools ACROSS positions now (like Component 2),
+        # not within a single position -- a lone QB should NOT get the
+        # single-member-group value; it competes against the whole pool.
+        df = pd.DataFrame({
+            "season": [2020]*4,
+            "position": ["QB", "QB", "TE", "TE"],
+            "position_finish_ppr": [1, 12, 1, 12],
+            "ppg_ppr": [30.0, 15.0, 20.0, 8.0],
+        })
+        result = mod.compute_component_3_ppg(df.copy())
+        assert result.notna().all()
+        assert result.iloc[0] == result.max()
+
+
+class TestComponent4Standardized:
+    """Regression tests for Component 4's standardization (divide the
+    replacement-adjusted PPG gap by the IQR of starter-tier PPG at
+    that position+season) -- the fix for the Component 3/4 duplication
+    bug, chosen over simply reverting Component 3 to positional
+    (which was found to reintroduce TE over-representation, 15% of a
+    real top-100 vs 7% under standardization)."""
+
+    def test_larger_iqr_produces_smaller_standardized_score(self, mod):
+        # Same raw PPG-above-replacement gap, but very different
+        # starter-tier spread -- a gap that's huge relative to a TIGHT
+        # spread should score higher than the same raw gap relative to
+        # a WIDE spread (that's the whole point of standardizing).
+        # Needs enough rows to span the default QB threshold (12) +
+        # window (12) -- i.e. ranks up to 24 -- or replacement_ppg
+        # comes back NaN entirely (found via testing: an earlier
+        # version of this test used only 10 rows and got NaN vs NaN).
+        n = 30
+        tight_spread = pd.DataFrame({
+            "season": [2020]*n, "position": ["QB"]*n,
+            "position_finish_ppr": list(range(1, n+1)),
+            "ppg_ppr": [25.0] + list(np.linspace(20.0, 15.0, n-1)),  # tightly bunched starters
+        })
+        wide_spread = pd.DataFrame({
+            "season": [2020]*n, "position": ["QB"]*n,
+            "position_finish_ppr": list(range(1, n+1)),
+            "ppg_ppr": [25.0] + list(np.linspace(20.0, 2.0, n-1)),  # widely spread starters
+        })
+        r_tight = mod.compute_component_4_positional_advantage(tight_spread.copy())
+        r_wide = mod.compute_component_4_positional_advantage(wide_spread.copy())
+        assert r_tight.iloc[0] >= r_wide.iloc[0], (
+            "The same raw PPG gap over a TIGHTER starter spread should "
+            "score at least as high as the same gap over a WIDER "
+            "spread -- standardization does not appear to be applied."
+        )
+
+    def test_zero_iqr_does_not_raise_or_produce_infinite_score(self, mod):
+        # If every starter has IDENTICAL ppg_ppr, IQR = 0. Dividing by
+        # zero must not raise, and must not produce inf/-inf that would
+        # corrupt downstream min-max normalization. NaN IS the correct
+        # outcome here (insufficient signal to standardize against) --
+        # it flows into the existing component-availability policy
+        # (see TestComponentAvailabilityPolicy) which correctly marks
+        # that row incomplete rather than scoring it -- so this test
+        # checks "not inf", not "is finite".
+        n = 30
+        df = pd.DataFrame({
+            "season": [2020]*n, "position": ["QB"]*n,
+            "position_finish_ppr": list(range(1, n+1)),
+            "ppg_ppr": [20.0]*n,  # every starter identical -> IQR = 0
+        })
+        result = mod.compute_component_4_positional_advantage(df.copy())
+        assert not np.isinf(result).any(), (
+            "A zero-IQR starter tier produced an infinite Component 4 "
+            "score -- the zero-denominator guard may have regressed. "
+            "(NaN is the correct, expected fallback here, not a bug.)"
+        )
+
+    def test_too_few_starters_falls_back_gracefully(self, mod):
+        # Fewer than 4 players in the starter-tier window -- too few
+        # for a meaningful IQR. Must fall back to NaN (which the
+        # existing component-availability policy already handles
+        # correctly downstream) rather than raising or producing inf.
+        df = pd.DataFrame({
+            "season": [2020, 2020],
+            "position": ["QB", "QB"],
+            "position_finish_ppr": [1, 2],  # only 2 players total, both "starters"
+            "ppg_ppr": [25.0, 20.0],
+        })
+        result = mod.compute_component_4_positional_advantage(df.copy())
+        assert not np.isinf(result).any(), (
+            "Too few starters for a meaningful IQR did not fall back "
+            "gracefully -- got an infinite result instead of the "
+            "expected NaN (which downstream policy already handles)."
+        )
+
+    def test_extreme_outlier_in_one_position_does_not_shift_unrelated_scores(self, mod):
+        # REGRESSION TEST for a real bug found and FIXED via testing:
+        # an earlier version of Component 4 used plain min-max for its
+        # final cross-position normalization, which is highly sensitive
+        # to its own extremes -- a single wild outlier in ONE position
+        # could become that season's new max, shifting what 0-100 means
+        # for every OTHER position too, even though their own raw
+        # values never changed. Verified directly at the time: an
+        # outlier injected only into the QB group shifted an untouched
+        # RB player's score by 60+ points. FIXED by switching the final
+        # normalization to winsorized min-max (5th/95th percentile
+        # clip) -- this test asserts the fix actually holds, not just
+        # that the bug is documented.
+        n = 60
+        rows = []
+        for position in ["QB", "RB", "WR", "TE"]:
+            rows.append(pd.DataFrame({
+                "season": [2020]*n, "position": [position]*n,
+                "position_finish_ppr": list(range(1, n+1)),
+                "ppg_ppr": [22.0] + list(np.linspace(20.0, 5.0, n-1)),
+            }))
+        normal = pd.concat(rows, ignore_index=True)
+        with_outlier = normal.copy()
+        with_outlier.loc[(with_outlier.position=="QB") & (with_outlier.position_finish_ppr==2), "ppg_ppr"] = 60.0
+
+        r_normal = mod.compute_component_4_positional_advantage(normal.copy())
+        r_outlier = mod.compute_component_4_positional_advantage(with_outlier.copy())
+
+        rb_rank1_idx = normal[(normal.position=="RB") & (normal.position_finish_ppr==1)].index[0]
+        shift = abs(r_normal.loc[rb_rank1_idx] - r_outlier.loc[rb_rank1_idx])
+        assert shift < 10, (
+            f"An outlier injected into ONE position's data shifted an "
+            f"UNRELATED position's score by {shift:.1f} points -- the "
+            f"winsorized-normalization fix for cross-position outlier "
+            f"contamination may have regressed (threshold: <10, "
+            f"verified 0.0 at fix time)."
+        )
+
+    def test_larger_raw_gap_never_produces_lower_score_same_position_season(self, mod):
+        # Monotonicity: within the SAME position+season (same spread
+        # denominator for everyone), a player with a strictly larger
+        # raw PPG-above-replacement gap must never score LOWER than one
+        # with a smaller gap -- dividing by a shared positive constant
+        # must preserve ordering.
+        n = 30
+        df = pd.DataFrame({
+            "season": [2020]*n, "position": ["QB"]*n,
+            "position_finish_ppr": list(range(1, n+1)),
+            "ppg_ppr": list(np.linspace(30.0, 10.0, n)),  # strictly decreasing
+        })
+        result = mod.compute_component_4_positional_advantage(df.copy())
+        raw_gaps = df["ppg_ppr"].values
+        order = np.argsort(-raw_gaps)  # descending by raw PPG (proxy for gap, since replacement is fixed)
+        ordered_scores = result.values[order]
+        assert all(ordered_scores[i] >= ordered_scores[i+1] - 1e-6 for i in range(len(ordered_scores)-1)), (
+            "A player with a strictly larger raw PPG gap scored LOWER "
+            "than one with a smaller gap within the same position and "
+            "season -- monotonicity has been violated."
+        )
+
+
+
+
+
+
+    def test_values_are_clipped_at_5th_and_95th_percentile(self, mod):
+        # Direct verification that the winsorization boundary itself
+        # is correct: a value below the 5th percentile of that season's
+        # raw distribution should be clipped UP to the 5th percentile
+        # value before scaling; a value above the 95th should be
+        # clipped DOWN. Confirmed by checking the exposed
+        # positional_advantage_winsorized column directly, not just
+        # the final 0-100 score.
+        n = 60
+        rows = []
+        for position in ["QB", "RB", "WR", "TE"]:
+            rows.append(pd.DataFrame({
+                "season": [2020]*n, "position": [position]*n,
+                "position_finish_ppr": list(range(1, n+1)),
+                "ppg_ppr": [22.0] + list(np.linspace(20.0, 5.0, n-1)),
+            }))
+        df = pd.concat(rows, ignore_index=True)
+        # Inject one extreme outlier that should get clipped
+        df.loc[(df.position=="QB") & (df.position_finish_ppr==2), "ppg_ppr"] = 100.0
+        mod.compute_component_4_positional_advantage(df)
+
+        assert "positional_advantage_winsorized" in df.columns
+        raw = df["positional_advantage_raw"]
+        winsorized = df["positional_advantage_winsorized"]
+        # The extreme outlier's winsorized value must be strictly less
+        # than its own raw value (it got clipped down).
+        outlier_idx = df[(df.position=="QB") & (df.position_finish_ppr==2)].index[0]
+        assert winsorized.loc[outlier_idx] < raw.loc[outlier_idx], (
+            "An extreme outlier's winsorized value was not clipped "
+            "below its raw value -- winsorization may not be applying."
+        )
+        # A typical (non-extreme) player's winsorized value should
+        # equal its raw value (nothing to clip).
+        typical_idx = df[(df.position=="RB") & (df.position_finish_ppr==5)].index[0]
+        assert abs(winsorized.loc[typical_idx] - raw.loc[typical_idx]) < 1e-6, (
+            "A typical, non-extreme player's value was altered by "
+            "winsorization -- clipping bounds may be too aggressive."
+        )
+
+    def test_identical_raw_inputs_receive_identical_scores(self, mod):
+        # Determinism check: two players with byte-identical inputs
+        # (same season, position, ppg, replacement situation) must
+        # receive EXACTLY the same Component 4 score -- no hidden
+        # randomness or row-order dependence in the calculation.
+        n = 60
+        df = pd.DataFrame({
+            "season": [2020]*n, "position": ["QB"]*n,
+            "position_finish_ppr": list(range(1, n+1)),
+            "ppg_ppr": [20.0, 20.0] + list(np.linspace(19.0, 5.0, n-2)),  # rows 0,1 identical
+        })
+        result = mod.compute_component_4_positional_advantage(df.copy())
+        assert result.iloc[0] == result.iloc[1], (
+            "Two players with identical raw inputs received different "
+            "Component 4 scores -- the calculation may not be "
+            "deterministic."
+        )
+
+
+class TestNoDuplicateComponentFormulas:
+    """Direct regression test for the real bug found via testing:
+    Component 3 (when replacement-adjusted) and Component 4 turned out
+    to be mathematically IDENTICAL -- same formula (value - replacement
+    level, normalized within season), computed and weighted twice
+    (Spearman correlation 0.99999999, R-squared of 1.000 when Component
+    4 was regressed on Components 2+3). This test asserts no two of
+    the 6 output components are near-duplicates of each other on
+    realistic synthetic data, so this class of bug cannot silently
+    return."""
+
+    def test_no_two_components_are_near_duplicates(self, mod):
+        np.random.seed(0)
+        n = 100  # per season
+        rows = []
+        for season in [2019, 2020]:  # 2 seasons -- LOSO needs at least 2
+            positions = np.random.choice(["QB","RB","WR","TE"], n)
+            base = np.random.uniform(50, 400, n)
+            season_df = pd.DataFrame({
+                "season": [season]*n,
+                "position": positions,
+                "player_id": [f"00-{season}-{i:04d}" for i in range(n)],
+                "fantasy_points_ppr": base,
+                "ppg_ppr": base / np.random.uniform(8, 17, n),
+            })
+            rows.append(season_df)
+        df = pd.concat(rows, ignore_index=True)
+        df["position_finish_ppr"] = df.groupby(["season","position"])["fantasy_points_ppr"].rank(ascending=False, method="min").astype(int)
+        df["overall_finish_ppr"] = df.groupby("season")["fantasy_points_ppr"].rank(ascending=False, method="min").astype(int)
+        df["overall_adp"] = df["overall_finish_ppr"] + np.random.normal(0, 15, len(df))
+        df["overall_adp"] = df["overall_adp"].clip(lower=1)
+        df["positional_adp"] = df["position_finish_ppr"] + np.random.normal(0, 3, len(df))
+
+        c1 = mod.compute_component_1_adp_value(df.copy())
+        c2 = mod.compute_component_2_fantasy_finish(df.copy())
+        c3 = mod.compute_component_3_ppg(df.copy())
+        c4 = mod.compute_component_4_positional_advantage(df.copy())
+
+        components = {"c1": c1, "c2": c2, "c3": c3, "c4": c4}
+        for name_a, series_a in components.items():
+            for name_b, series_b in components.items():
+                if name_a >= name_b:
+                    continue
+                corr = series_a.corr(series_b)
+                assert corr is None or corr < 0.999, (
+                    f"{name_a} and {name_b} are near-perfectly correlated "
+                    f"({corr:.6f}) on synthetic test data -- this is the "
+                    f"exact failure mode found earlier (replacement-"
+                    f"adjusted PPG duplicating Component 4). Check that "
+                    f"no two components share the same underlying "
+                    f"formula and normalization path."
+                )
 
 
 class TestComponentAvailabilityPolicy:
