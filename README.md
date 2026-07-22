@@ -19,11 +19,21 @@ model) -- both specced but not yet built, see `docs/` below.
 
 No local Python installation required for the automated path -- see
 **"Running the pipeline"** below for the one-click GitHub Actions
-option. If you do have Python locally:
+option. If you do have Python locally (**requires Python 3.11+** --
+`requirements.txt`'s pinned versions won't install on anything older).
+Create the virtual environment using Python 3.11 or newer, for
+example:
 
 ```bash
-pip install -r requirements.txt --break-system-packages
-python3 run_pipeline.py
+python3.11 -m venv venv
+```
+
+Then:
+
+```bash
+source venv/bin/activate
+pip install -r requirements.txt
+python run_pipeline.py
 ```
 
 This runs every pipeline step in order and writes results to `data/`.
@@ -139,10 +149,19 @@ rejected.
 "Run Full Pipeline," click "Run workflow." Results download as an
 artifact when it finishes.
 
-**With local Python**:
+**With local Python** (requires Python 3.11+). Create the virtual
+environment using Python 3.11 or newer, for example:
+
 ```bash
-pip install -r requirements.txt --break-system-packages
-python3 run_pipeline.py
+python3.11 -m venv venv
+```
+
+Then:
+
+```bash
+source venv/bin/activate
+pip install -r requirements.txt
+python run_pipeline.py
 ```
 
 ---
