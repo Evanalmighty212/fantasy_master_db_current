@@ -11,6 +11,11 @@ data/exports/
 # data/manual/ is intentionally NOT ignored - hand-maintained source data
 outputs/
 
+# research/output/ is pipeline-regenerated (same convention as data/
+# above) -- rerun the scripts in research/dataset3/README.md's "Run
+# order" to reproduce it, never commit it directly.
+research/output/
+
 *.log
 .ipynb_checkpoints/
 .pytest_cache/
