@@ -63,10 +63,28 @@ Fixes applied (Priority 1 audit, see docs/ or PR notes):
    fixed -- data/manual/position_overrides.csv, a persistent,
    hand-maintained override table checked before falling back to
    nflverse's own position value.
+9. Migrated off `nfl_data_py.import_weekly_data()` to
+   `nflverse_source.fetch_and_normalize()` -- nfl_data_py reads from
+   nflverse's `player_stats` GitHub release, deprecated 2025-08-01 and
+   frozen (confirmed it will never receive 2025 or later data). The
+   new source (`stats_player` release) was verified byte-for-byte
+   compatible with the old one for every season 2006-2024 except 166
+   individual weekly rows nflverse has since corrected upstream (see
+   CHANGELOG.md for the full count and downstream impact -- 0 LWI
+   eligibility flips, ~84 LWI scores shift by small amounts). The new
+   module also fixes the ONE real schema difference found (`team`
+   renamed to `recent_team` at ingestion, verified as a lossless
+   rename across all 19 old-schema seasons) and adds integrity
+   checking via a committed manifest so a future silent upstream
+   revision can never pass through unnoticed.
 
 Input:  config.SEASONS
         data/manual/position_overrides.csv (optional, hand-maintained)
-Output: data/raw/nflverse/season_results_ppr_<start>_<end>.csv
+        scripts/nflverse_source_manifest.json (committed integrity baseline --
+          every season fetched here must already have an entry, see
+          nflverse_source.py)
+Output: data/raw/nflverse/annual/stats_player_week_<season>.csv (cached raw, per season)
+        data/raw/nflverse/season_results_ppr_<start>_<end>.csv
         data/raw/nflverse/weekly_results_ppr_<start>_<end>.csv
         data/raw/nflverse/weekly_download_failures.csv
         data/raw/nflverse/season_player_duplicates.csv
@@ -76,10 +94,11 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+sys.path.append(str(Path(__file__).resolve().parent))
 
 import pandas as pd
-import nfl_data_py as nfl
 
+import nflverse_source
 from config import SEASONS
 
 RAW_DIR = Path("data/raw/nflverse")
@@ -153,14 +172,20 @@ def apply_position_overrides(season_df, overrides_df):
 
 
 def build_season_results():
-    print("Step 1: Downloading weekly nflverse data...")
+    print("Step 1: Fetching weekly nflverse data via nflverse_source (stats_player release)...")
     frames = []
     failed = []
 
     for season in SEASONS:
         try:
-            print(f"  downloading {season}...")
-            frames.append(nfl.import_weekly_data([season]))
+            print(f"  fetching {season}...")
+            # Already REG-filtered and team->recent_team normalized by
+            # nflverse_source -- see that module's docstring for the
+            # integrity-check behavior (raises loudly on an unrecorded
+            # season or a hash mismatch against the committed manifest,
+            # rather than silently using different data than what this
+            # pipeline was verified against).
+            frames.append(nflverse_source.fetch_and_normalize(season))
         except Exception as e:
             print(f"  FAILED {season}: {e}")
             failed.append({"season": season, "error": str(e)})
@@ -169,7 +194,6 @@ def build_season_results():
         raise RuntimeError("No weekly data downloaded.")
 
     weekly = pd.concat(frames, ignore_index=True)
-    weekly = weekly[weekly["season_type"] == "REG"].copy()
 
     pd.DataFrame(failed).to_csv(RAW_DIR / "weekly_download_failures.csv", index=False)
 

@@ -5,6 +5,95 @@ recorded here. For the full "why" behind each decision, see
 `docs/LWI_MODEL_CARD.md` (design history) and `docs/METRIC_SPECIFICATION.md`
 (exact current formulas).
 
+## Data source migration -- nflverse `stats_player` release (2006-2025)
+
+**Not an LWI formula change -- `LWI_VERSION` stays 2.1.** This is a
+data-provenance event: the underlying nflverse weekly stats source
+changed, not any weight, threshold, or formula.
+
+**Why**: `scripts/03_download_stats.py` depended on
+`nfl_data_py.import_weekly_data()`, which reads nflverse's
+`player_stats` GitHub release. That release was marked DEPRECATED
+2025-08-01 and is frozen -- confirmed directly it will never receive
+2025 or any later season. Migrated to nflverse's successor
+`stats_player` release, fetched directly (new `scripts/nflverse_source.py`
+module) rather than through `nfl_data_py`, which has not been updated
+to point at the new release (latest PyPI version predates nflverse's
+own migration).
+
+**Verified before migrating, not assumed**:
+- `team` (new release) vs. `recent_team` (old release, and this
+  project's existing output schema): confirmed a pure, lossless
+  rename -- 100% agreement across every season 2006-2024, not just a
+  sample.
+- `fantasy_points_ppr`: **166 individual weekly rows corrected**
+  across 2006-2024 (of ~91,000 compared, ~0.18%) -- small, real stat
+  corrections nflverse applied upstream after the old release was
+  frozen. Per-season counts ranged 3-16 rows; max single-row
+  difference 2.0-12.6 points depending on season.
+- Downstream impact of those 166 rows: **165 affected player-seasons**
+  (recomputing season totals via the exact existing aggregation
+  logic), of which **34 show a `games_played` change** and **zero
+  cross the `LWI_MIN_GAMES` (8) eligibility threshold** -- no
+  player-season flips between scored and unscored. **~84 of the 165
+  are currently LWI-eligible** (have a real production `lwi_score`),
+  meaning their component inputs -- and therefore their exact score --
+  shift by a small amount under the new source. Full row-level detail
+  in `research/diagnostics/nflverse/old_vs_new_downstream_impact.csv`.
+- REG-only filtering (excludes the new release's additional POST/
+  playoff rows) and the team-column rename are both covered by new
+  regression tests, `tests/test_nflverse_source.py`.
+
+**Integrity mechanism added**: `scripts/nflverse_source_manifest.json`,
+committed, records the exact GitHub release **asset ID** (not just a
+URL), retrieval date, sha256, schema version, and upstream
+`updated_at` timestamp for every season 2006-2025. Fetches by asset ID
+rather than the tag+filename URL -- verified this is a real
+difference: the tag+filename URL always resolves to whatever asset
+*currently* holds that name, silently serving new bytes if nflverse
+deletes and re-uploads (their actual mechanism for publishing a
+correction); an asset ID is tied to one specific uploaded object, so a
+future republish either 404s (loud, clear failure) or keeps serving
+the original bytes. A future pipeline run additionally verifies the
+downloaded file's hash against the manifest's recorded sha256 before
+use -- if nflverse changes an asset's content in place, the pipeline
+fails loudly rather than silently drifting, regardless of the ID
+pinning. A manifest entry is only ever written by an explicit,
+separate call (`register_manifest_entry()`), never as a side effect of
+a normal run.
+
+**Honest limits on this, stated explicitly rather than implied**:
+- GitHub does not publicly document a permanence guarantee for release
+  asset IDs -- this is the most stable identifier their API exposes,
+  not a proven-forever guarantee. The sha256 check is the actual
+  safety net; asset-ID pinning reduces how often it's needed, it
+  doesn't replace it.
+- This project does not independently archive nflverse's raw bytes
+  anywhere -- the only local copy is the gitignored cache under
+  `data/raw/nflverse/annual/`. A fresh clone has none of it and
+  re-fetches from GitHub by asset ID.
+- If GitHub ever fully removes an asset (not just supersedes it), a
+  fresh-clone rebuild for that season fails with a fetch/HTTP error,
+  not an integrity error -- a real, disclosed limitation, not a
+  defect.
+- Updating the manifest to accept a real upstream revision is always
+  an explicit, reviewed action (`register_manifest_entry(season,
+  force=True)`), never automatic.
+
+**Verified directly, not just designed**: emptied the local cache for
+two seasons (2010, 2025) and confirmed `fetch_season_raw()` re-downloads
+from scratch by asset ID and reproduces the exact recorded hash --
+this is the literal fresh-clone scenario. Reproduced offline (mocked
+network) in `tests/test_nflverse_source.py`'s `TestEmptyCacheRetrieval`
+for CI.
+
+**2025 season**: now included in the master database and season-level
+stats for the first time (full season, weeks 1-18 REG + real
+postseason correctly excluded). **2025 ADP is a separate, not-yet-decided
+question** -- this migration does not add or approve any 2025 ADP
+source; 2025 rows remain `no_adp_match`/LWI-ineligible until that's
+resolved.
+
 ## v2.1 -- current
 
 ### Added

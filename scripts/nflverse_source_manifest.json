@@ -1,0 +1,205 @@
+{
+  "schema_version": "nflverse_stats_player_v1",
+  "seasons": {
+    "2006": {
+      "asset_id": 472205702,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472205702",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2006.csv",
+      "retrieved_at": "2026-07-24T20:23:24.129739+00:00",
+      "row_count": 17214,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "5d1c0d28e50cde695fa808d53e773890bfdaf9fa43448c9944a50a2b57e25026",
+      "upstream_updated_at": "2026-07-10T07:00:19Z"
+    },
+    "2007": {
+      "asset_id": 472205834,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472205834",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2007.csv",
+      "retrieved_at": "2026-07-24T20:23:25.327503+00:00",
+      "row_count": 17265,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "2d0e704d58f75817d5c9995881afb17370e98a8c1dcbe5d16dde56adad3e2ceb",
+      "upstream_updated_at": "2026-07-10T07:00:27Z"
+    },
+    "2008": {
+      "asset_id": 472208594,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472208594",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2008.csv",
+      "retrieved_at": "2026-07-24T20:23:26.342222+00:00",
+      "row_count": 17212,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "575204f1818c832495979e2806e7478fbbfc7a230369767c59dc7d55a78da9c5",
+      "upstream_updated_at": "2026-07-10T07:03:51Z"
+    },
+    "2009": {
+      "asset_id": 472208361,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472208361",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2009.csv",
+      "retrieved_at": "2026-07-24T20:23:27.266790+00:00",
+      "row_count": 17690,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "f14bc3707ee09872c19a20f52313b681b53c2335f94b7102e79dd5416ec6b5e1",
+      "upstream_updated_at": "2026-07-10T07:03:36Z"
+    },
+    "2010": {
+      "asset_id": 472127087,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472127087",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2010.csv",
+      "retrieved_at": "2026-07-24T20:23:28.558390+00:00",
+      "row_count": 17590,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "57faf093bc81f755449a1c1aa0e04f87a515a58c988fa7aa258e0c2108435558",
+      "upstream_updated_at": "2026-07-10T05:10:05Z"
+    },
+    "2011": {
+      "asset_id": 472128533,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472128533",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2011.csv",
+      "retrieved_at": "2026-07-24T20:23:29.608494+00:00",
+      "row_count": 17440,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "870bdaa7e08c060ea6bc60fa037cefe7acfccca1496ea31956cab7ed1f83be74",
+      "upstream_updated_at": "2026-07-10T05:11:34Z"
+    },
+    "2012": {
+      "asset_id": 472208082,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472208082",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2012.csv",
+      "retrieved_at": "2026-07-24T20:23:30.843277+00:00",
+      "row_count": 17419,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "3808fb710b30d0c8ff497de70182e143f238b5e7cb6225c3f737bd42924546fc",
+      "upstream_updated_at": "2026-07-10T07:03:17Z"
+    },
+    "2013": {
+      "asset_id": 472208815,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472208815",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2013.csv",
+      "retrieved_at": "2026-07-24T20:23:32.037453+00:00",
+      "row_count": 17248,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "76513314bcbd18ad1bc007ecfb886b2c7bf42f74613342d4fc232a820c2021c7",
+      "upstream_updated_at": "2026-07-10T07:04:09Z"
+    },
+    "2014": {
+      "asset_id": 472130875,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472130875",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2014.csv",
+      "retrieved_at": "2026-07-24T20:23:32.954893+00:00",
+      "row_count": 17622,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "1d434cd2805b008b7b23db41bb149def95e6a9ace3856dc1a9dacfe8e787b620",
+      "upstream_updated_at": "2026-07-10T05:13:53Z"
+    },
+    "2015": {
+      "asset_id": 472127712,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472127712",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2015.csv",
+      "retrieved_at": "2026-07-24T20:23:33.814389+00:00",
+      "row_count": 17613,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "6f59050eb9f815b72433e2fedf4794f53d7c155d331ffddddbe074ad7ff2dca1",
+      "upstream_updated_at": "2026-07-10T05:10:52Z"
+    },
+    "2016": {
+      "asset_id": 472127418,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472127418",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2016.csv",
+      "retrieved_at": "2026-07-24T20:23:35.550449+00:00",
+      "row_count": 17552,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "029ce30742617e0ef4ee0fddee138118d96a21b2bcb829b21ad122fc28bac739",
+      "upstream_updated_at": "2026-07-10T05:10:31Z"
+    },
+    "2017": {
+      "asset_id": 472196337,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472196337",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2017.csv",
+      "retrieved_at": "2026-07-24T20:23:42.755514+00:00",
+      "row_count": 17477,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "064208e4b10398775ee7a2359b124c146b83816ee3bec5c18a1e320d987d7d85",
+      "upstream_updated_at": "2026-07-10T06:48:53Z"
+    },
+    "2018": {
+      "asset_id": 472196382,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472196382",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2018.csv",
+      "retrieved_at": "2026-07-24T20:23:44.724269+00:00",
+      "row_count": 17414,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "016a488cd7c187f0d0ba58ad1b8fad11b633d2050964fbb3009bd26ff9c82f95",
+      "upstream_updated_at": "2026-07-10T06:48:57Z"
+    },
+    "2019": {
+      "asset_id": 472130567,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472130567",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2019.csv",
+      "retrieved_at": "2026-07-24T20:23:47.268885+00:00",
+      "row_count": 17362,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "7e956affe5cdf93ea57261c90b8a4c77b9f8e6fe8e04a82459a295d45878a31d",
+      "upstream_updated_at": "2026-07-10T05:13:29Z"
+    },
+    "2020": {
+      "asset_id": 472130657,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472130657",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2020.csv",
+      "retrieved_at": "2026-07-24T20:23:49.536713+00:00",
+      "row_count": 17602,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "54d9274dfda5637daf5675b41f682959b442ae94e9ea95bc0a779c2024e52d81",
+      "upstream_updated_at": "2026-07-10T05:13:35Z"
+    },
+    "2021": {
+      "asset_id": 472130822,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472130822",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2021.csv",
+      "retrieved_at": "2026-07-24T20:23:50.800692+00:00",
+      "row_count": 18969,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "63cc3e2400307ee8c1fc5c6283c6c4223471111c0f4aedecd60c8db75c96a06d",
+      "upstream_updated_at": "2026-07-10T05:13:49Z"
+    },
+    "2022": {
+      "asset_id": 472196759,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472196759",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2022.csv",
+      "retrieved_at": "2026-07-24T20:23:52.463237+00:00",
+      "row_count": 18831,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "9ee25c230db72c8b9cffc3ad3d218482c3ef53c8a06eadaee85f9e8163552f28",
+      "upstream_updated_at": "2026-07-10T06:49:26Z"
+    },
+    "2023": {
+      "asset_id": 472196453,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472196453",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2023.csv",
+      "retrieved_at": "2026-07-24T20:23:54.050679+00:00",
+      "row_count": 18643,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "ee65341b2f28cfbf48df85571bf512ec62b281043623e7ffed2926e5569126b3",
+      "upstream_updated_at": "2026-07-10T06:49:04Z"
+    },
+    "2024": {
+      "asset_id": 472130697,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472130697",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2024.csv",
+      "retrieved_at": "2026-07-24T20:23:56.895196+00:00",
+      "row_count": 18981,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "db6379707a8d520f7fb9a90eeacd8a98ec3d5cdca8b98e0943cab5a250d91a97",
+      "upstream_updated_at": "2026-07-10T05:13:38Z"
+    },
+    "2025": {
+      "asset_id": 472198854,
+      "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/472198854",
+      "bootstrap_url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2025.csv",
+      "retrieved_at": "2026-07-24T20:23:59.920409+00:00",
+      "row_count": 19421,
+      "schema_version": "nflverse_stats_player_v1",
+      "sha256": "40b67b296fda02c7f628741d4aa471208352dd42fb670d4854e7ba95295af1a6",
+      "upstream_updated_at": "2026-07-10T06:51:52Z"
+    }
+  }
+}

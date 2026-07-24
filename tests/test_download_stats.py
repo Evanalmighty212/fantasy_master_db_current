@@ -20,6 +20,11 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
+# nflverse_source must be importable (by name, for unittest.mock.patch's
+# string target below) before 03_download_stats.py is loaded and adds
+# scripts/ to sys.path itself.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+
 SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "03_download_stats.py"
 
 
@@ -58,7 +63,7 @@ class TestPlayedDefinition:
         ]
         weekly_df = pd.DataFrame(rows)
 
-        with patch("nfl_data_py.import_weekly_data", return_value=weekly_df):
+        with patch("nflverse_source.fetch_and_normalize", return_value=weekly_df):
             mod = load_module(tmp_path, monkeypatch)
             mod.SEASONS = [2013]
             season = mod.build_season_results()
@@ -79,7 +84,7 @@ class TestPlayedDefinition:
         ]
         weekly_df = pd.DataFrame(rows)
 
-        with patch("nfl_data_py.import_weekly_data", return_value=weekly_df):
+        with patch("nflverse_source.fetch_and_normalize", return_value=weekly_df):
             mod = load_module(tmp_path, monkeypatch)
             mod.SEASONS = [2020]
             season = mod.build_season_results()
@@ -102,7 +107,7 @@ class TestDuplicateWeekHandling:
         ]
         weekly_df = pd.DataFrame(rows)
 
-        with patch("nfl_data_py.import_weekly_data", return_value=weekly_df):
+        with patch("nflverse_source.fetch_and_normalize", return_value=weekly_df):
             mod = load_module(tmp_path, monkeypatch)
             mod.SEASONS = [2010]
             season = mod.build_season_results()
@@ -129,7 +134,7 @@ class TestTeamHandlingDoesNotFragmentSeason:
         ]
         weekly_df = pd.DataFrame(rows)
 
-        with patch("nfl_data_py.import_weekly_data", return_value=weekly_df):
+        with patch("nflverse_source.fetch_and_normalize", return_value=weekly_df):
             mod = load_module(tmp_path, monkeypatch)
             mod.SEASONS = [2019]
             season = mod.build_season_results()
