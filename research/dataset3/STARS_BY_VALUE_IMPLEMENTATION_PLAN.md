@@ -685,8 +685,40 @@ each leaves the repo in a working state):
    (not the 1-decimal prose headlines in the methodology doc, which
    are rounded for readability): 16-game era QB/RB/WR/TE =
    29.14/21.72/33.63/18.17, 17-game era = 30.96/23.07/35.73/19.31.
-9. `lib/stars_by_value/labeling.py` (status routing) + the full
-   invariant test suite from #10.
+9. **Landed.** `lib/stars_by_value/labeling.py` (status routing) + the
+   full invariant test suite from #10. The wiring layer -- the first
+   commit where Commits 5-8 are all exercised together. Implements the
+   four-step order exactly (temporal/study-scope eligibility ->
+   production gate, in-scope rows only -> acquisition-cost resolution,
+   gate-clearing rows only -> score/label, the two scoreable statuses
+   only), each step a hard early return, not a downstream filter --
+   directly tested by mocking `acquisition_cost.classify_row()` to
+   raise if called and confirming it's never invoked for out-of-scope
+   or below-gate rows. The final composite `score = P - SBV_LAMBDA * E_P`
+   (methodology section 6/10) is computed here for the first time --
+   no earlier commit owned it, since it consumes both `production.py`'s
+   `P` and either `expected_production.py`'s real lookup or
+   `minimal_market_cost.py`'s substitute `E_P`, never duplicating
+   either's formula. **One implementation-time interpretation, not a
+   settled specification** -- confirmed by direct search, neither this
+   plan nor `STARS_BY_VALUE_METHODOLOGY.md` ever specified a
+   provenance value for a 2010 `usable_adp` override, only its status
+   (`adp_scored`, already settled in section 8a). The 10-value
+   provenance enum has no dedicated value for "adp_scored via a
+   reviewed manual override" as distinct from a real canonical-source
+   match, so `labeling.py` records `adp_matched_clean` -- the closest
+   existing fit, not a derived rule. Documented explicitly, not left
+   implicit, in `STARS_BY_VALUE_METHODOLOGY.md`'s 2010-cohort section
+   (flagged for review if the override mechanism is ever actually
+   used against a real row -- it has zero real rows today). Named-case
+   regression tests reproduce the real settled scores from the
+   methodology's reinforcement-check table exactly (Herbert 2020
+   202.0, Cruz 2011 187.6, Nacua 2023 184.4, Kyren Williams 2023 232.6,
+   Barnidge 2015 160.9, all label=1; Vick 2010 stays
+   `unscoreable_drafted_adp_missing`, label=NULL, never label=0) --
+   `P` values were solved backward from each real score, not invented.
+   Does not write any output file (Parquet/CSV export is Commit 10's
+   job, not this one).
 10. Wire `scripts/08`/`09`/`10`/`11` together, end-to-end integration
     test producing `stars_by_value_player_seasons.parquet` and the CSV
     convenience export + round-trip test.
@@ -699,21 +731,23 @@ each leaves the repo in a working state):
 
 - **Promotable with light rework**: `player_matching.py` and
   `nflverse_source.py` (reused outright).
-- **Built (Commits 2-8, landed)**: `nflverse_source.py`'s `players`/`depth_charts`
+- **Built (Commits 2-9, landed)**: `nflverse_source.py`'s `players`/`depth_charts`
   extensions, `scripts/mfl_client.py`, `lib/stars_by_value/mmc_2010_overrides.py`,
   `lib/stars_by_value/production.py`, `lib/replacement.py`,
   `lib/stars_by_value/expected_production.py`, `scripts/09_fit_sbv_expected_production.py`,
   `lib/stars_by_value/acquisition_cost.py` (classifier, rookie-QB
   depth-chart correction, 3-way MFL corroboration, 2010-cohort
-  fallback), `lib/stars_by_value/minimal_market_cost.py`.
-- **Must still be written from scratch**: the status-routing/labeling
-  module (`labeling.py`) -- the last remaining piece, tying
-  acquisition_cost.py's classification, minimal_market_cost.py's
-  expectation, and expected_production.py's lookup together into the
-  final 7-status/10-provenance schema (section 11) and the actual
-  Stars-by-Value output rows. None of this exists as saved code today
-  -- all of it ran once, in this conversation,
-  against scratch-space files.
+  fallback), `lib/stars_by_value/minimal_market_cost.py`,
+  `lib/stars_by_value/labeling.py` (the four-step wiring layer --
+  every module above is now exercised together for the first time).
+- **Must still be built**: end-to-end pipeline wiring
+  (`scripts/08`/`10`/`11`, or equivalent) that assembles the real
+  master-DB population, calls `labeling.label_rows()` across it, and
+  writes the canonical Parquet/CSV outputs (decision #1/#5) -- deferred
+  from Commit 9 by explicit instruction; `labeling.py` itself computes
+  labels but writes no file. This is now purely orchestration, not new
+  methodology or classification logic -- every formula and rule it
+  will call already exists as tested code.
 
 ## Research-only assumptions that must not silently enter production
 

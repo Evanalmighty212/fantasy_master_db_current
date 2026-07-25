@@ -1176,6 +1176,28 @@ order:
    produce `minimal_market_cost_scored`** for a 2010 row, exactly as
    it's insufficient (without MFL agreement) for any other season.
 
+**`usable_adp` override provenance -- an IMPLEMENTATION decision, not
+a settled specification.** The override schema (section 8a of the
+implementation plan) already specifies that a `usable_adp` override
+produces `star_by_value_status = adp_scored` -- that mapping was
+settled when the schema was designed. What was never specified,
+because it wasn't considered at the time, is which
+`star_by_value_provenance_type` such a row should carry: the 10-value
+provenance enum (settled separately, in the initial `SBV_*` config
+commit) has no dedicated value distinguishing "adp_scored via a
+reviewed manual override" from "adp_scored via a real, direct
+canonical-source match." When `labeling.py` was implemented, this gap
+was resolved by using `adp_matched_clean` -- the override supplies a
+human-verified, clean-quality number, so it was treated as the closest
+existing fit -- but this was an implementation-time interpretation,
+not a rule derived from anything settled here. It has never been
+exercised against a real row (the 2010 override file is still empty
+at the time of this note). If the override mechanism is ever actually
+used, this provenance choice should be revisited for face validity
+before being treated as final -- and if a real need for the
+distinction emerges, the cleaner fix is a dedicated eleventh
+provenance value, not continuing to overload `adp_matched_clean`.
+
 **Vick 2010 specifically remains `unscoreable_drafted_adp_missing`.**
 The existing lead (NFL.com's "2010 ADP: 14th round" citation) is a
 real, named source, but it is a single restated number from one
