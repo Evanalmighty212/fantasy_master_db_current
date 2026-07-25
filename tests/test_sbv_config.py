@@ -270,6 +270,81 @@ class TestArtifactPaths:
         assert len(paths) == len(set(paths))
 
 
+class TestMmcManualOverrideSeasons:
+    """Deliberately a constant SEPARATE from SBV_FIRST_SCOREABLE_SEASON
+    -- the two encode different concepts that only coincide in value
+    today. See config.py's comment on SBV_MMC_MANUAL_OVERRIDE_SEASONS."""
+
+    def test_not_empty(self, config_mod):
+        assert len(config_mod.SBV_MMC_MANUAL_OVERRIDE_SEASONS) > 0
+
+    def test_empty_tuple_is_rejected(self, config_mod):
+        config_mod.SBV_MMC_MANUAL_OVERRIDE_SEASONS = ()
+        with pytest.raises(ValueError, match="SBV_MMC_MANUAL_OVERRIDE_SEASONS"):
+            config_mod.validate_sbv_config()
+
+    def test_duplicate_seasons_are_rejected(self, config_mod):
+        config_mod.SBV_MMC_MANUAL_OVERRIDE_SEASONS = (2010, 2010)
+        with pytest.raises(ValueError, match="must not contain duplicates"):
+            config_mod.validate_sbv_config()
+
+    def test_non_integer_season_is_rejected(self, config_mod):
+        config_mod.SBV_MMC_MANUAL_OVERRIDE_SEASONS = (2010.5,)
+        with pytest.raises(ValueError, match="must be integers"):
+            config_mod.validate_sbv_config()
+
+    def test_currently_equals_2010_only(self, config_mod):
+        assert config_mod.SBV_MMC_MANUAL_OVERRIDE_SEASONS == (2010,)
+
+    def test_is_a_distinct_constant_from_first_scoreable_season(self, config_mod):
+        """Coincidentally equal in value today, but must be able to
+        change independently -- proven by mutating one and confirming
+        the other is untouched."""
+        config_mod.SBV_FIRST_SCOREABLE_SEASON = 2099
+        assert config_mod.SBV_MMC_MANUAL_OVERRIDE_SEASONS == (2010,)
+
+
+class TestMmc2010OverrideDisallowedSourceValues:
+    def test_not_empty(self, config_mod):
+        assert len(config_mod.SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES) > 0
+
+    def test_empty_tuple_is_rejected(self, config_mod):
+        config_mod.SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES = ()
+        with pytest.raises(ValueError, match="SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES"):
+            config_mod.validate_sbv_config()
+
+    def test_duplicate_values_are_rejected(self, config_mod):
+        config_mod.SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES = ("classifier", "classifier")
+        with pytest.raises(ValueError, match="must not contain duplicates"):
+            config_mod.validate_sbv_config()
+
+    def test_uppercase_value_is_rejected(self, config_mod):
+        config_mod.SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES = ("Classifier",)
+        with pytest.raises(ValueError, match="lowercase"):
+            config_mod.validate_sbv_config()
+
+    def test_expected_values_present(self, config_mod):
+        assert set(config_mod.SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES) == {
+            "classifier",
+            "internal_classifier_output",
+            "acquisition_cost_classifier",
+            "draft_capital",
+            "rookie_status",
+            "prior_production_heuristic",
+        }
+
+    def test_values_are_short_tokens_not_full_sentences(self, config_mod):
+        """Guards against accidentally reintroducing phrase-length
+        entries that would make exact-match behave like a substring
+        search in practice -- see mmc_2010_overrides.py's docstring
+        for why substring matching was rejected after review."""
+        for value in config_mod.SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES:
+            assert " " not in value, (
+                f"{value!r} contains a space -- disallowed values should be single "
+                f"underscore_or_lowercase tokens, not multi-word phrases"
+            )
+
+
 class TestMflSettings:
     def test_period_must_be_aug15(self, config_mod):
         config_mod.SBV_MFL_PERIOD = "RECENT"

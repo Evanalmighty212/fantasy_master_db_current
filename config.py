@@ -441,6 +441,45 @@ SBV_OUTPUT_CSV_SCHEMA_PATH = "data/exports/stars_by_value_player_seasons_SCHEMA.
 SBV_EXPECTED_PRODUCTION_LOOKUP_PATH = "data/processed/sbv_expected_production_lookup.parquet"
 SBV_MMC_2010_OVERRIDE_PATH = "data/manual/mmc_2010_manual_overrides.csv"
 
+# [SETTLED METHODOLOGY] Section 11/8a -- which season(s) the manual-
+# override mechanism is sanctioned for. Deliberately a SEPARATE
+# constant from SBV_FIRST_SCOREABLE_SEASON: the two encode different
+# concepts that only happen to share the value 2010 today --
+# SBV_FIRST_SCOREABLE_SEASON is about temporal/study-scope eligibility
+# (derived from SBV_TRUSTWORTHY_ADP_START_SEASON + SBV_MIN_PRIOR_SEASONS),
+# while this is about which cohort(s) cannot be resolved by ADP
+# matching OR MFL corroboration (MFL has zero data before 2011) and so
+# need this fallback at all. Conflating them would make it look like
+# extending the study's start season and extending the override
+# mechanism were the same decision, when they are not -- either could
+# change independently of the other, and each would be its own
+# methodology decision (section 11), not just a config edit.
+SBV_MMC_MANUAL_OVERRIDE_SEASONS = (2010,)
+
+# [SETTLED METHODOLOGY] Section 8a rule #2 -- no 2010 override may be
+# created from classifier output alone. Narrow and exact-match ON
+# PURPOSE (revised after review): rejects a row only when 'source' IS,
+# verbatim (case/whitespace/underscore-normalized), one of these
+# literal internal-signal-name tokens -- e.g. someone pasting
+# "classifier" or "draft_capital" as a lazy citation. Deliberately NOT
+# a substring/phrase match against 'source' -- ordinary language in a
+# genuine independent source ("cross-referenced against the team's own
+# rookie status announcement") legitimately contains phrases like
+# "rookie status" without restating the classifier's own reasoning,
+# and a substring rule would reject that real source while being
+# trivially evadable by rephrasing. This is a mechanical floor, not a
+# substitute for human review at approval time -- see section 8a's own
+# caveat that rule #2 is a process rule a loader can only partially
+# enforce.
+SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES = (
+    "classifier",
+    "internal_classifier_output",
+    "acquisition_cost_classifier",
+    "draft_capital",
+    "rookie_status",
+    "prior_production_heuristic",
+)
+
 
 def validate_sbv_config():
     """
@@ -602,6 +641,34 @@ def validate_sbv_config():
             errors.append(f"{name} must be a non-empty string, got {path!r}")
         elif not path.endswith(expected_ext):
             errors.append(f"{name} must end with '{expected_ext}', got {path!r}")
+
+    # --- manual-override eligible seasons: non-empty, all ints, no duplicates ---
+    if not SBV_MMC_MANUAL_OVERRIDE_SEASONS:
+        errors.append("SBV_MMC_MANUAL_OVERRIDE_SEASONS must not be empty")
+    if len(SBV_MMC_MANUAL_OVERRIDE_SEASONS) != len(set(SBV_MMC_MANUAL_OVERRIDE_SEASONS)):
+        errors.append(
+            f"SBV_MMC_MANUAL_OVERRIDE_SEASONS must not contain duplicates, "
+            f"got {SBV_MMC_MANUAL_OVERRIDE_SEASONS}"
+        )
+    for season in SBV_MMC_MANUAL_OVERRIDE_SEASONS:
+        if not isinstance(season, int):
+            errors.append(f"SBV_MMC_MANUAL_OVERRIDE_SEASONS entries must be integers, got {season!r}")
+
+    # --- 2010 override disallowed source values: non-empty, lowercase, no duplicates ---
+    if not SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES:
+        errors.append("SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES must not be empty")
+    if len(SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES) != len(set(SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES)):
+        errors.append(
+            f"SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES must not contain duplicates, "
+            f"got {SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES}"
+        )
+    for value in SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES:
+        if not isinstance(value, str) or value != value.lower() or not value.strip():
+            errors.append(
+                f"SBV_MMC_2010_OVERRIDE_DISALLOWED_SOURCE_VALUES entries must be non-empty "
+                f"lowercase strings (matching is case-insensitive at the value level, not "
+                f"the definition), got {value!r}"
+            )
 
     if errors:
         raise ValueError(
