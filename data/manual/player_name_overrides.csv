@@ -1,1 +1,5 @@
 season,adp_player_name_original,position,nflverse_player_id,notes
+2011,Michael Vick,QB,00-0020245,"Stars-by-Value no_adp_match remediation. Fuzzy match to nflverse 'Mike Vick' scored 76.19 (<80 review floor) in missing_adp_matches.csv -- Michael/Mike is a real nickname variant, not a typo. Source: fantasyfootballcalculator PPR, overall_adp=8.9."
+2012,Michael Vick,QB,00-0020245,"Stars-by-Value no_adp_match remediation. Same root cause as 2011 row (fuzzy score 76.19, <80 floor). Source: fantasyfootballcalculator PPR, overall_adp=55.2."
+2013,Michael Vick,QB,00-0020245,"Stars-by-Value no_adp_match remediation. Same root cause as 2011 row (fuzzy score 76.19, <80 floor). Source: fantasyfootballcalculator PPR, overall_adp=106.0."
+2009,Michael Vick,QB,00-0020245,"Stars-by-Value no_adp_match remediation, added for consistency with the 2011-2013 fix (same root cause, fuzzy score 76.19). Outside the 2010-2024 Stars-by-Value scope, included so the override table doesn't leave an adjacent already-diagnosed year unfixed. Source: fftoday standard, overall_adp=125.0 (note: standard scoring, not PPR -- flag for adp_source compatibility review before use)."

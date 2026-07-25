@@ -615,6 +615,675 @@ Every major source evaluation should be documented with:
 
 ---
 
+### 2026-07 -- Stars-by-Value no-ADP-match remediation (targeted, 2010-2024)
+
+- **Date**: 2026-07
+- **Trigger**: Stars-by-Value implementation-readiness review found that
+  111/823 (13.5%) of 2010-2024 elite-tier player-seasons (top-15 PPG at
+  position, >=8 games) have `data_quality_flag = no_adp_match` and are
+  therefore permanently ineligible for the Star label, including
+  historically prominent seasons (Adrian Peterson 2012, Justin Herbert
+  2020, Odell Beckham Jr. 2014, Puka Nacua 2023, Victor Cruz 2011).
+  This entry documents a **targeted** remediation pass on the
+  highest-impact cases -- not a full audit of all 111 rows.
+- **Method**: for each targeted case, checked (1) `missing_adp_matches.csv`
+  / `low_confidence_player_matches.csv` for an existing-but-unmatched ADP
+  row, (2) the raw canonical `ffc_api_ppr_VERIFIED` source file directly
+  for that season (player-name search across the full JSON, not just the
+  matched subset), (3) where neither found the player, targeted external
+  research (WebSearch/WebFetch) for a real, dated, source-quality
+  historical ADP consensus -- never a single writer's subjective ranking.
+
+**Resolved via existing-source matching fix** (override table,
+`data/manual/player_name_overrides.csv`):
+
+| Player | Season(s) | Cause | Fix |
+|---|---|---|---|
+| Mike Vick (nflverse `00-0020245`) | 2009, 2011, 2012, 2013 (2010-2024 scope: 2011-2013) | Category 1 -- name mismatch. ADP source spells him "Michael Vick"; nflverse stats use "Mike Vick." Fuzzy match scored 76.19, below the 80 review floor (`Michael`->`Mike` is a real nickname variant, not a typo the matcher is tuned to catch) | Added 4 rows to the override table, one per season, each citing the exact source/overall_adp/fuzzy-score evidence. Verified by rerunning `scripts/player_matching.py`: all 4 rows now resolve via `manual_override` at 100% confidence; 0 remaining Vick rows in `missing_adp_matches.csv`. |
+
+Impact of the Vick fix: only the 2011 season (round 1, ADP 8.9) clears
+the production gate (P=173.6 > QB floor 142.6); 2012 (P=124.4) and 2013
+do not. Estimated against the existing round-1 QB `E_P` (~205, n=3 in
+the current fit), 2011's score comes out near ~102 -- well below any
+QB candidate cutoff. This is a correct, not a disappointing, result:
+2011 Vick was a well-known real-world value bust relative to his
+inflated post-2010-comeback ADP, and the fix correctly shows that
+rather than manufacturing a new Star.
+
+**Investigated, no existing-source fix available, external research
+attempted, no qualifying source found**:
+
+| Player-season | Canonical source checked | Found in source? | External research result | Classification | Status |
+|---|---|---|---|---|---|
+| Adrian Peterson 2012 | `ffc_adp_2012_ppr.json` (93 players, explicitly flagged `THIN_YEAR` in `ADP_SEASON_SOURCE_PLAN.csv`) | No | ESPN "Statuesday" column (Ken Daube, published 2012-08-08, `espn.com/fantasy/football/ffl/story?page=nfldk2k12_decisionspeterson`) gives only a single writer's subjective positional rank (RB11, recommended up to RB7) -- not an aggregated draft-position consensus. Does not meet this project's source-quality bar. | 3 (beyond reliable source depth) / 4 (no usable canonical ADP found) | Unresolved |
+| Justin Herbert 2020 | `ffc_adp_2020_ppr.json` (203 players) | No | Multiple searches found only 2021 ADP data (32.42, QB4) for Herbert; no 2020 preseason figure exists in indexed sources -- consistent with him being a non-starting rookie backup (Tyrod Taylor was the starter) with no real preseason fantasy relevance that year. | 5 (genuinely no preseason draftable relevance) | Unresolved |
+| Victor Cruz 2011, Odell Beckham Jr. 2014, Puka Nacua 2023 | Respective `ffc_adp_*_ppr.json` (188-202 players each) | No | Not independently re-searched externally this pass (time-boxed to the two cases above as representative) -- pattern-consistent with Herbert 2020 (real UDFA/rookie-breakout stories where a genuine lack of preseason ADP is the more likely explanation than a data gap). Flagged explicitly as un-verified, not confirmed. | 5 (probable, not confirmed) | Unresolved |
+| Mike Vick 2010 | `ffc_adp_2010_ppr.json` (214 players) | No | Not independently re-searched this pass. Vick was a backup (Kevin Kolb was the starter) entering 2010, consistent with genuinely minimal preseason ADP relevance -- same reasoning as Herbert 2020, not confirmed via search. | 5 (probable, not confirmed) | Unresolved |
+
+- **Decision**: No new ADP source promoted to canonical or
+  sensitivity-only status for any of these six cases -- nothing found
+  cleared the bar. Per explicit instruction, no ADP was invented to
+  make a famous season eligible. The wider 237-row "clears the p82.5
+  gate outright" population (2010-2024, `no_adp_match`) was
+  deliberately NOT audited beyond this targeted set.
+- **Confidence level**: High that the Vick fix is correct (verified by
+  rerun, not just reasoned about). Medium that AP 2012 and Herbert 2020
+  are genuinely source-absent rather than a fixable gap -- the negative
+  result is real but the search was not exhaustive. Low/unverified for
+  Cruz 2011, OBJ 2014, Nacua 2023, and Vick 2010, which were reasoned
+  by pattern rather than individually searched.
+- **Next experiment**: if this population is revisited, prioritize a
+  from-scratch search (not reasoning by analogy) for Cruz 2011, OBJ
+  2014, and Nacua 2023 specifically, since rookie/UDFA breakout seasons
+  are exactly the case where a real but obscure preseason ranking
+  (rather than a true absence of one) is most plausible.
+
+---
+
+### 2026-07 -- No-ADP remediation, part 2: individual verification + drafted-vs-undrafted classification
+
+- **Date**: 2026-07
+- **Trigger**: the prior entry's "Next experiment" -- replace pattern-based
+  reasoning with real, individual, per-player source research for the
+  five cases still marked "probable, not confirmed," and explicitly
+  separate two different questions the prior pass conflated: (1) was
+  the player genuinely drafted but our evidence/matching is missing,
+  vs. (2) was the player genuinely undrafted / outside reliable source
+  depth. Adrian Peterson 2012 was revisited only because a promising
+  new avenue (MyFantasyLeague as a second real ADP provider, surfaced
+  by the Odell Beckham Jr. research below) appeared -- not re-searched
+  from scratch on the original ESPN-only lead.
+
+**Revised classification** (four categories, per instruction: confirmed
+drafted with usable ADP / clearly drafted but usable ADP still missing
+/ likely genuinely undrafted or outside normal draft depth / ambiguous):
+
+| Player-season | Classification | Real-world evidence found | Primary-source verification |
+|---|---|---|---|
+| Mike Vick 2010 | Clearly drafted, usable ADP still missing | NFL.com "2010 Fantasy draft do-over" piece quotes his real, contemporaneous draft position directly: "Michael Vick, QB, Philadelphia Eagles (2010 ADP: 14th round)." A real number exists in a named source. | Not verified against a primary consensus table -- no snapshot date, scoring format, or league size given, and it's not in FFC's 214-player 2010 canonical file. |
+| Adrian Peterson 2012 | Clearly drafted, usable ADP still missing (strongest of the three "missing" cases) | Bleacher Report's "Complete Fantasy Profile & Draft Strategy" cites, by name, "a 2012 average draft position of 20.69" attributed to **FFToolbox.com** -- a real named ADP aggregator, not a personal ranking (contrast with the previous pass's ESPN opinion-column finding, which this supersedes as the better lead). | Could not reach FFToolbox's own 2012 archive (site has since migrated to fulltimefantasy.com and no longer lists a 2012 page); Wayback Machine unreachable from this environment. The number is real and named but not independently re-derived from a primary table. |
+| Odell Beckham Jr. 2014 | Clearly drafted, usable ADP still missing | A FoxSports "risks and rewards of rookie WRs" piece states "Beckham was a late-round flier at best" and links directly to a real (now-dead) MyFantasyLeague.com 2014 ADP query URL -- confirming a real MFL consensus existed for him that year. | The linked MFL query (`www03.myfantasyleague.com/2014/adp?...`) 404s today; no specific number recovered, only the qualitative "late-round" characterization. |
+| Victor Cruz 2011 | Likely genuinely undrafted / outside normal draft depth | His famous breakout preseason game was August 2010 (his rookie year), not 2011 -- he then missed his entire 2010 season with a hamstring injury, so he entered the 2011 preseason with zero NFL production and a year-old, mostly-forgotten highlight. Real-world context supports minimal 2011 preseason relevance. | Absence from FFC's 2011 archive corroborated two independent ways: the repo's own `ffc_adp_2011_ppr.json` (188 players, matching FFC's live-site metadata exactly -- 600 drafts, 2011-09-06 to 2011-09-09) and a direct live WebFetch of `fantasyfootballcalculator.com/adp/ppr/12-team/all/2011`, which also does not show him. |
+| Justin Herbert 2020 | Likely genuinely undrafted / outside normal draft depth | Real backup to Tyrod Taylor entering 2020 (not his own team's starter); no 2020 ADP found anywhere searched (only 2021 data exists, ADP 32.42/QB4, confirming 2020 fantasy irrelevance rather than a data gap). | Absent from FFC's 203-player 2020 canonical file; no external source of any kind found. |
+| Puka Nacua 2023 | Likely genuinely undrafted / outside normal draft depth | 5th-round NFL pick (177th overall), unremarkable college production ("barely topping 800 receiving yards in his best season"), explicitly characterized as an "unheralded rookie" in dedicated post-hoc breakout-rookie coverage. | Absent from FFC's 202-player 2023 canonical file; no external ADP source of any kind found. |
+
+Net effect on the prior pass's classification: **Odell Beckham Jr. 2014
+moves from "unresolved / pattern-reasoned category 5" to "clearly
+drafted, ADP missing"** -- a real, materially different conclusion
+from individual verification, which is exactly why the "Next
+experiment" note called for it instead of continuing to reason by
+analogy. Cruz, Herbert, and Nacua's category-5 classifications are
+now backed by real (if not exhaustive) verification rather than
+pattern-matching alone.
+
+- **Decision**: No ADP was invented or backfilled into canonical or
+  override data for any of these six cases. Vick's existing override
+  rows and the ADP_SOURCE_MATRIX entry above remain **unstaged**,
+  held pending review of the undrafted-baseline question below --
+  they are not superseded by this entry, just not yet acted on further.
+- **Confidence level**: High for Cruz 2011 (only case with independent
+  corroboration via a live-source refetch, not just the repo snapshot).
+  Medium-high for Herbert 2020 and Nacua 2023 (real-world context is
+  strong, absence from source is confirmed, but no second source was
+  checked). Medium for Vick 2010, AP 2012, and OBJ 2014 as "drafted but
+  missing" -- each has a real, named, dated-or-nameable source, but
+  none was independently re-derived from a primary table.
+- **Next experiment**: if AP 2012's FFToolbox number is ever needed for
+  real, contact FFToolbox/FullTimeFantasy directly or find a
+  third-party citation that reproduces the underlying table (not just
+  the summary number) -- do not treat a single restated number from a
+  secondary article as canonical-quality on its own.
+
+---
+
+### 2026-07 -- No-ADP remediation, part 3: scalable classifier + MFL feasibility
+
+- **Date**: 2026-07
+- **Trigger**: hand-researching 6 players individually doesn't scale to
+  the 237-380-row unresolved population. This entry investigates (1) a
+  reproducible rule-based classifier for drafted-but-missing vs.
+  genuinely-undrafted, built from existing/reachable data, and (2) MFL
+  as a second historical ADP provider, superseding the "not
+  independently searched" caveats on Cruz/Herbert/Nacua from part 2.
+
+**Classifier**: built from `players.csv` (real NFL draft round/pick,
+rookie season) from nflverse's `players` GitHub release -- reachable
+directly from this environment (verified: `curl` to
+`github.com/nflverse/nflverse-data/releases/download/players/players.csv`
+succeeds; not yet wired into any pipeline script, downloaded to
+scratch space only) -- joined against this project's own
+`master_historical_db` for prior-season production. Rules, in order:
+QB + rookie season -> likely_undrafted; UDFA or Day-3 NFL rookie at a
+skill position -> likely_undrafted; Day 1-2 NFL skill-position rookie
+-> likely_drafted_missing_evidence; established veteran (2+ years in,
+real production in the last 3 seasons) -> likely_drafted_missing_evidence;
+everything else -> ambiguous.
+
+Validated against the 6 hand-researched ground-truth cases: **5/6
+correct**. The miss (Mike Vick 2010) lands in the safe "ambiguous"
+bucket, not a confidently wrong one -- his last real production before
+2010 was 2006, because he missed 2007-2008 entirely (incarceration),
+four years outside even an extended 3-year lookback. Deliberately not
+patched further: 6 examples is too small a set to keep tuning rules
+against without overfitting.
+
+Applied to the full 237-row "clears the gate outright" unresolved
+population: **149 likely_drafted_missing_evidence, 64 ambiguous, 24
+likely_undrafted.**
+
+**A real, verified classifier error, found by spot-checking real
+names, not the ground-truth set**: Andrew Luck 2012 and Russell Wilson
+2012 both hit the "QB + rookie -> likely_undrafted" rule, but both
+were real **Week-1 starters** (verified against nflverse's
+`depth_charts_2012.csv`, `depth_team=1` for both), unlike Herbert 2020
+and Watson 2017 (`depth_team=2`, real backups, correctly classified).
+A rookie QB who wins the starting job outright is a meaningfully
+different case from one who doesn't -- the current rule conflates
+them. Depth-chart data (`nflverse-data` release `depth_charts`, also
+directly reachable, per-season files back to 2001) is the fix, but was
+only pulled for the 6 ground-truth seasons this pass, not integrated
+across the full population. Separately, depth-chart status was tested
+as a general drafted-vs-undrafted signal and found **weak** for that
+purpose -- Vick 2010, OBJ 2014, Cruz 2011, Herbert 2020, and Nacua
+2023 all showed `depth_team=2` (backup) in their target week despite
+being real, different draft-cost cases; it only adds value for the
+specific rookie-QB-starter sub-case above.
+
+**MFL feasibility**: MFL's API (`api.myfantasyleague.com/{year}/export?TYPE=adp`)
+is directly reachable and, critically, **the `PERIOD` parameter
+matters enormously and was not obvious up front**. The unparameterized
+default report is NOT a clean preseason snapshot for recent years --
+it blends in-season and post-breakout draft activity. Confirmed
+directly: Nacua 2023's default-report rank was 135 (46% draftSelPct);
+with `PERIOD=AUG15` (a true preseason snapshot, comparable to this
+project's own FFC methodology) his real rank was 209 (18%
+draftSelPct) -- a materially different, more honest number. **All
+results below use `PERIOD=AUG15`.**
+
+| Season | Available? | Total AUG15 drafts | Target player's AUG15 result |
+|---|---|---|---|
+| 2007-2010 | No -- 0 real drafts at any PERIOD | -- | Vick 2010 NOT resolvable via MFL |
+| 2011 | Yes | 7,098 | Victor Cruz: rank 268, avg pick 151.4, selected in 6% of drafts |
+| 2012 | Yes | 8,913 | Adrian Peterson: rank 15, avg pick 22.81, selected in 77% of drafts |
+| 2014 | Yes | 11,942 | Odell Beckham Jr.: rank 189, avg pick 126.4, selected in 61% of drafts |
+| 2020 | Yes | 5,892 | Justin Herbert: rank 158, avg pick 120.0, selected in 17% of drafts |
+| 2023 | Yes | 7,923 | Puka Nacua: rank 209, avg pick 123.0, selected in 18% of drafts |
+
+MFL's real historical ADP data begins in **2011** (2007-2010 return
+`totalDrafts: 0` at every PERIOD tested) -- a clean, disclosed
+boundary, not a gap to work around.
+
+**Does this resolve the 5 named gaps?** Four cleanly, one confirms the
+"unresolvable" finding rather than reversing it:
+- **Adrian Peterson 2012 and Odell Beckham Jr. 2014**: CONFIRMED
+  drafted with a real, primary, reproducible number (not a secondary
+  citation) -- AP's 22.81 corroborates the earlier FFToolbox 20.69
+  finding closely. This resolves both from "clearly drafted, ADP
+  missing" to "confirmed drafted with usable ADP," pending a decision
+  on canonical vs. sensitivity-only status.
+- **Victor Cruz 2011, Justin Herbert 2020, Puka Nacua 2023**: MFL
+  reveals these are not perfectly binary "zero real relevance" cases
+  -- each was selected in a small but real minority of drafts (6-18%).
+  This is genuinely more precise than "likely genuinely undrafted,"
+  and matches the classification wording this project already
+  chose ("outside normal draft depth") better than a hard undrafted
+  claim would.
+- **Mike Vick 2010**: still unresolved by MFL specifically -- MFL's
+  data doesn't reach back that far. The NFL.com "14th round" citation
+  from part 2 remains the only lead.
+
+**Compatibility caveat, not yet resolved**: this project's own prior
+2025 MFL investigation (see the "2025 Cross-Source Validation" entry
+below) already found MFL drafts QBs measurably earlier than every
+other source checked (ESPN, FFToday, FFC), for reasons that
+investigation could not fully explain. Justin Herbert 2020's MFL
+number should be read with that in mind -- it may still run early
+relative to what FFC would have shown, even after correcting for the
+PERIOD contamination above. This caveat does not apply to the
+non-QB cases (Peterson, Beckham, Cruz, Nacua).
+
+**Reproducibility**: yes, cleanly -- `mfl_client.py` (already built
+for the 2025 investigation) already implements exactly the caching,
+rate-limiting, and retry discipline this would need; the only change
+is a year parameter and always specifying `PERIOD=AUG15` explicitly
+(never relying on the default). Not yet wired into any pipeline script
+-- this pass queried the raw API directly and cached responses to
+scratch space, not `data/raw/`.
+
+**Is a reliable `verified_undrafted` category realistically
+achievable?** More achievable than part 2 concluded, but still not
+solved: MFL's `draftSelPct` (percent of real drafts that selected a
+player) is a genuinely useful **graduated** signal -- far better than
+guessing at a hard binary -- and combined with (a) confirmed absence
+from FFC's canonical source and (b) classifier-bucket agreement, a
+defensible `verified_undrafted` definition might be: FFC-absent AND
+MFL AUG15 `draftSelPct` below some low threshold (e.g. 20%) AND
+classifier bucket is `likely_undrafted`. That is a real, three-way
+corroboration design, not yet built or threshold-tuned. It still
+cannot reach players outside MFL's 2011+ coverage (Vick-2010-style
+cases) or QB-position cases without correcting for MFL's own
+documented QB bias first.
+
+- **Decision**: No baseline assigned, no override or canonical data
+  changed. Vick's override rows and prior `ADP_SOURCE_MATRIX.md`
+  entries remain unstaged. This entry documents feasibility findings
+  only.
+- **Confidence level**: High that MFL AUG15 data is usable and
+  meaningfully more precise than what part 2 had (verified via a
+  worked example -- the PERIOD contamination check -- not just
+  asserted). Medium on the specific numbers reported above pending a
+  second independent check (only one MFL query per player was run;
+  not cross-validated against a third source). Low on QB compatibility
+  specifically, pending the documented MFL QB-early-bias question
+  being resolved.
+- **Next experiment**: (1) integrate `depth_charts` into the
+  classifier for the full population, not just the 6 ground-truth
+  seasons, to fix the rookie-QB-starter gap; (2) if MFL is pursued
+  further, resolve the QB-early-bias compatibility question before
+  trusting any QB-position MFL number at face value; (3) formalize and
+  threshold-tune the three-way `verified_undrafted` corroboration
+  design above on a larger labeled sample before treating it as
+  reliable.
+
+---
+
+### 2026-07 -- No-ADP remediation, part 4: corroborated framework built and tested
+
+- **Date**: 2026-07
+- **Trigger**: build and test the three-way corroboration design part 3
+  proposed but didn't implement; fix the rookie-QB classifier gap;
+  narrowly test the MFL QB bias on prevalence specifically (not exact
+  cost); compare -- without assigning -- minimal-market-cost treatment
+  options.
+
+**1. Classifier correction (narrow, as scoped)**: identified all 9
+rookie-QB candidates in the 380-row unresolved population, pulled
+`depth_charts` for their specific seasons (2012, 2015, 2017-2020,
+2023), and checked real Week-1 `depth_team` status. 4 were verified
+Week-1 **starters** (Andrew Luck 2012, Russell Wilson 2012, Jameis
+Winston 2015, C.J. Stroud 2023) and moved from `likely_undrafted` to
+`ambiguous` -- the other 5 (Herbert 2020, Watson 2017, Allen 2018,
+Jones 2019, Minshew 2019) were verified real backups and correctly
+stay `likely_undrafted`. Not expanded to any other position or rule.
+Full-population bucket counts (380 rows): `likely_drafted_missing_evidence`
+243 (unchanged), `ambiguous` 106 (+4), `likely_undrafted` 31 (-4).
+
+**2. Three-way corroboration, built and threshold-swept**: combined
+(a) absence from FFC canonical, (b) MFL `PERIOD=AUG15` `draftSelPct`,
+(c) the corrected classifier, for all 222 gate-clearing 2011-2024
+unresolved candidates (2010 excluded -- no MFL data exists for it).
+Matched 216/222 to a real MFL player record by normalized name
+(4 players excluded as unresolvable name collisions -- e.g. two real
+"Steve Smith"s at WR in the same era -- same category of ambiguity
+already documented for FFC matching, not guessed at).
+
+Threshold sweep on the 7 named cases (draftSelPct shown, ABOVE/below
+a candidate boundary):
+
+| Player | draftSelPct | 5% | 10% | 15% | 20% | 25% | 30% |
+|---|---|---|---|---|---|---|---|
+| Adrian Peterson 2012 | 77.2% | ABOVE | ABOVE | ABOVE | ABOVE | ABOVE | ABOVE |
+| Odell Beckham Jr. 2014 | 61.3% | ABOVE | ABOVE | ABOVE | ABOVE | ABOVE | ABOVE |
+| Andrew Luck 2012 | 94.0% | ABOVE | ABOVE | ABOVE | ABOVE | ABOVE | ABOVE |
+| Russell Wilson 2012 | 58.3% | ABOVE | ABOVE | ABOVE | ABOVE | ABOVE | ABOVE |
+| Justin Herbert 2020 | 17.9% | ABOVE | ABOVE | ABOVE | below | below | below |
+| Puka Nacua 2023 | 18.5% | ABOVE | ABOVE | ABOVE | below | below | below |
+| Victor Cruz 2011 | 6.7% | ABOVE | below | below | below | below | below |
+
+Four of seven are robust to threshold choice across the whole tested
+range (Peterson, Beckham, Luck, Wilson all sit far above any
+reasonable boundary -- Luck and Wilson's real MFL presence also
+retroactively validates the classifier correction in part 1 well
+beyond just "not backups"). The real decision is in a narrow band:
+Cruz separates from the other two around 10%, Herbert/Nacua separate
+around 20% -- **20% is the first threshold that groups all three
+low-signal cases together**, which is the basis for using it as the
+primary value below.
+
+**Final 3-category bucket counts** (threshold=20%, 222 candidates):
+**107 confirmed_or_likely_drafted, 54 minimal_market_cost, 47
+ambiguous_disagreement** (classifier and MFL genuinely conflict -- not
+resolved by design, flagged rather than guessed), plus 10
+MFL-unmatched (fall back to classifier alone, lower confidence) and 2
+classifier-ambiguous-with-no-MFL-signal. At threshold=15%:
+118/50/40 unmatched-adjusted; at 25%: 99/55/54. **The
+ambiguous-disagreement count grows with the threshold** (40 at 15% ->
+54 at 25%) -- raising the bar to call something "confirmed drafted"
+mechanically produces more disagreement with a classifier that was
+tuned independently, not more resolution. This is real friction
+between the two signals, disclosed rather than smoothed over.
+
+**Risks**:
+- **False positive** (calling minimal-cost players "confirmed
+  drafted"): mainly a QB-position risk, per the bias test below.
+- **False negative** (calling real draft-cost players "minimal
+  market cost"): mainly a threshold-too-low risk (setting the bar
+  under ~15% would have called Herbert and Nacua minimal-cost despite
+  real, if modest, market presence) and an early-year MFL-thinness
+  risk (2011's 7,098 total drafts is MFL's thinnest year with usable
+  data -- prevalence estimates from it carry more sampling noise than
+  2020+'s 15,000-17,000-draft years).
+- **Unresolved risk**: the 47 ambiguous_disagreement rows (21% of the
+  222) are not a small residual -- a real chunk of the population
+  still has no reliable answer from this framework.
+
+**3. MFL QB bias, tested narrowly on prevalence (not reopening the
+2025 investigation)**: compared MFL `draftSelPct` for REAL,
+FFC-confirmed players at the same real ADP round (10-15), by position,
+2011-2024, n=747 matched. **Result: the bias is not confined to exact
+rank/cost -- it measurably affects prevalence too.** At round 15
+specifically: QB median draftSelPct 58.1% vs. RB 28.3% vs. WR 32.8% --
+roughly double. The gap is present at every round tested (10 through
+15), narrower at shallower rounds, widest at the deepest ones.
+
+**This means the clean distinction proposed going in
+("unsuitable for exact cost, but reliable for whether drafted at
+all") does not fully hold** -- it needed testing, and testing changed
+the answer. The practically important part, though: the bias runs in
+one direction only (inflating apparent QB presence), and for the
+specific cases in this population, it doesn't flip anything. Herbert's
+raw 17.9% is already below the 20% threshold; correcting for a ~1.5-2x
+QB inflation would only push his true estimate lower, reinforcing
+`minimal_market_cost`, not undermining it. The real practical risk is
+for QB rows sitting **close to whatever threshold is chosen** -- those
+need either a QB-specific (higher) threshold or a lower-confidence
+flag, not the same cutoff used for RB/WR/TE. Not built this pass --
+a disclosed follow-up, not a blocker for the framework's non-QB
+conclusions.
+
+**4. Minimal-market-cost treatment comparison (no baseline assigned)**:
+
+| Option | Reproducibility | False-precision risk |
+|---|---|---|
+| A. Dedicated fixed minimal-market-cost expectation (position-specific constant) | High -- one number per position, fully deterministic | Low -- explicitly declines to claim a precise implied round |
+| B. Map MFL `draftSelPct` to an implied late round via a continuous function | Medium -- the mapping function itself becomes a new, uncalibrated design question | High -- manufactures false precision from a noisy, now confirmed **position-biased** percentage; directly exposed to the QB-inflation finding above with no correction |
+| C. Treat all below-threshold players as the final reliable modeled round | High -- reuses existing infrastructure exactly | Medium-high -- actively **overstates** cost: round-15 QB/RB/WR MFL prevalence (28-58%) is still well above Cruz's actual 6.7%, so this would hand these players more expected credit than the evidence supports, and the deepest modeled round is itself thin (n=1 in the current fit) |
+
+**Assessment**: Option A is both the most reproducible and the least
+falsely precise, independent of anyone's preference -- Option B's
+weakness is compounded directly by the part-3 finding (a mapping
+function would silently bake in the QB bias unless explicitly
+corrected, which is extra unbuilt machinery), and Option C
+contradicts the graduated MFL evidence gathered this pass by assigning
+*more* implied cost than the most marginal cases (6-18% draftSelPct)
+actually show. **A dedicated minimal-market-cost category is the
+right kind of answer** -- this agrees with the philosophical
+preference stated going in, arrived at independently from the
+reproducibility/precision comparison, not by deference. What it does
+not yet resolve: whether the constant should be position-specific
+(very likely, given how differently QB/RB/WR/TE market behavior
+showed up in every test this pass) and where to calibrate it -- both
+open, undecided design questions, not defaults.
+
+- **Decision**: No baseline assigned, no canonical data changed,
+  `config.py` untouched. Vick's override rows and all prior entries
+  remain unstaged.
+- **Confidence level**: High on the classifier correction (verified
+  directly, not reasoned). Medium-high on the corroboration bucket
+  counts at threshold=20% (real data, real matching, but 21% of the
+  population is honestly unresolved). Medium on the QB-bias-on-prevalence
+  finding (n=747, real signal, single test design -- not
+  independently replicated a second way).
+- **Next experiment**: (1) build the QB-specific threshold or
+  confidence-downgrade for the corroboration framework; (2) resolve
+  the 47 ambiguous_disagreement rows with a second signal (e.g. a
+  third ADP provider, or manual review of the highest-production
+  ones) rather than leaving them all as one undifferentiated bucket;
+  (3) calibrate the Option-A minimal-market-cost constant(s) if this
+  path is chosen -- likely via the same named-case/sensitivity
+  process already used for lambda and k.
+
+---
+
+### 2026-07 -- No-ADP remediation, part 5: Option A calibrated (universal vs. position-specific tested, not implemented)
+
+- **Date**: 2026-07
+- **Trigger**: calibrate candidate values for the minimal-market-cost
+  baseline (Option A, chosen over B/C in part 4) and determine whether
+  a universal or position-specific constant is justified -- empirically,
+  not by precedent from the rest of this project's position-specific
+  defaults.
+
+**Derivation population and a real circularity caveat, disclosed up
+front**: the 54-row `minimal_market_cost` bucket (threshold=20%, part
+4) is not a clean, unbiased sample -- it only contains players who
+already cleared the p82.5 production gate, i.e. **successful**
+minimal-cost breakouts. A baseline derived directly from this
+population's production would be upward-biased (survivorship), the
+same circularity flagged and rejected for "Option 3" two passes ago.
+Two anchors were computed instead, and compared:
+
+1. **Empirical bucket percentiles** (survivorship-biased, used only as
+   a face-validity cross-check, not a derivation source): QB n=3
+   (P10-P75: 176.9-196.7), RB n=8 (132.7-165.9), WR n=12 (100.1-135.1),
+   TE n=31 (70.2-107.8).
+2. **Replacement-implied P** -- a principled, non-circular anchor:
+   for a hypothetical exactly-replacement-level player (rate exactly
+   at `replacement_ppg` all season), the production composite reduces
+   algebraically to `P = 0.5 x replacement_ppg x G` (the PPG-above-replacement
+   term is exactly 0 by construction at replacement rate). Computed
+   from `replacement_ppg` averaged over 2015-2024 (the same,
+   already-approved, much larger replacement-level population used
+   throughout AATP -- NOT the thin 54-row bucket): **QB 133.3, RB
+   80.7, TE 67.6, WR 98.6.** Sanity check: this anchor lands almost
+   exactly at the TE (66.7) and WR (98.1) p82.5 gate floors, and
+   meaningfully below the QB (142.6) and RB (113.7) floors -- consistent
+   with TE/WR's gate representing "replacement plus a little" and
+   QB/RB's representing a bigger real jump above replacement, a real
+   and previously undocumented positional difference, not asserted.
+
+**Universal vs. position-specific, tested by simulating actual scores**
+on the 54-row bucket (`Score = P - 0.35 x E_P`, existing settled
+lambda) and checking how many would cross their position's own
+already-calibrated Star cutoff (QB ~176.5, RB ~188, WR ~171, TE ~134):
+
+| E_P treatment | False positives created | False negatives created |
+|---|---|---|
+| Position-specific (replacement-implied) | 0 beyond 2 defensible cases (Kyren Williams 2023 RB, Gary Barnidge 2015 TE -- both real, extreme, legitimate outlier breakouts) | None found |
+| Universal, set at the pooled average (95.0, pulled toward WR/TE's scale) | **Justin Herbert 2020 incorrectly clears the QB cutoff** (score 179.6 vs. 176.5) -- a player this entire investigation independently found to be a marginal, 17.9%-MFL-selected case, not a Star | -- |
+| Universal, set at the pooled bucket median (107.8, pulled toward QB/RB's scale) | -- | **Gary Barnidge's real TE breakout incorrectly fails to clear** (score 129.9 vs. 134) -- a legitimate outlier wrongly excluded |
+
+**No single universal value avoids both failure modes** -- the
+position scale gap is too large (TE median raw P ~85 vs. QB ~180,
+more than 2x) for one constant to be simultaneously strict enough for
+QB and lenient enough for TE. This is concrete, not asserted from the
+rest of the project's position-specific precedent.
+
+**Stability**: the thin per-position sample sizes (QB n=3, RB n=8)
+that would make a *position-specific empirical percentile* unstable do
+**not** apply to the replacement-implied anchor actually recommended --
+it's derived from `replacement_ppg`, which comes from the full,
+much larger, already-approved replacement-level population, not from
+the 54-row bucket. Sensitivity-tested by perturbing all four anchors
++/-30%: completely stable from 0% to +30% (same 2 players clear
+throughout); only breaks down on the downward side, first at -20%
+(Cruz 2011 starts clearing) and further at -30% (Herbert 2020 and
+Nacua 2023 also start clearing) -- i.e. the current calibration point
+sits with real margin on the safe side, and the failure direction
+(setting the anchor too low) matches exactly the universal-95.0
+failure mode found above.
+
+**Conclusion**: position-specific constants are empirically justified,
+not merely consistent with precedent -- a universal constant was
+shown, concretely, to either falsely promote a real marginal QB
+season or falsely suppress a real legitimate TE breakout, and no
+single value avoids both. The additional complexity is worth it here.
+**Candidate position-specific values (not selected, not implemented):
+QB 133.3, RB 80.7, TE 67.6, WR 98.6** (replacement-implied,
+2015-2024 basis). Open, undecided: whether to use full-history
+(2007-2024) `replacement_ppg` instead of the recent-era window (checked:
+QB 14.75 vs 15.68, RB/TE/WR nearly identical -- a minor, not decisive,
+choice) and whether the empirical bucket percentiles should inform a
+face-validity adjustment on top of the algebraic anchor.
+
+- **Decision**: No baseline assigned, no canonical/config change.
+  Everything from this and all prior remediation entries remains
+  unstaged.
+- **Confidence level**: High that position-specific beats universal
+  (concrete, simulated false-positive/negative evidence, not just
+  reasoning). Medium on the exact candidate values -- they're
+  principled and stability-tested, but not yet run through the same
+  named-case face-validity review lambda and k received before being
+  treated as settled.
+- **Next experiment**: named-case face-validity review of the
+  candidate values (the same process used for lambda/k) before
+  selecting a final constant; decide the full-history-vs-recent-era
+  question; decide whether the two real face-validity clears (Williams,
+  Barnidge) should be treated as confirmation the calibration is
+  reasonable, or as boundary cases needing their own review.
+
+---
+
+### 2026-07 -- No-ADP remediation, part 6: minimal-market-cost expectation SETTLED
+
+- **Date**: 2026-07
+- **Trigger**: part 5's replacement-implied baseline (100% of
+  `0.5 x replacement_ppg x G`) was tested against the verified
+  minimal-market-cost population and produced real false negatives --
+  Herbert 2020, Cruz 2011, and Nacua 2023 all missed their Star cutoff
+  despite Herbert finishing top-10 at QB. This entry resolves that by
+  re-deriving the baseline from first principles rather than tuning
+  the existing one to fit three names.
+
+**Step 1 -- decomposed the false negatives mechanically.** Herbert,
+Cruz, and Nacua all have **zero missed-game replacement credit in
+their own AATP** (production is 100% real, on-field output) and real
+positional finishes (QB9, WR3, WR4) better than either of the two
+players the 100% baseline did correctly clear (Williams RB7, Barnidge
+TE4). The exclusion was not a marginal statistical fact -- it was the
+baseline erasing a real top-10 finish.
+
+**Step 2 -- re-examined the concept.** The question the baseline
+should answer is "what preseason production expectation should be
+assigned to an effectively free acquisition" -- not "how much does a
+replacement-level player produce if rostered and given a role."
+`replacement_ppg` is a role-conditional rate (average output *given*
+real playing time); a true minimal-cost player's real expectation must
+also price in the substantial chance of getting **no meaningful role
+at all**. Checked directly for literal double-counting (Kyren
+Williams, the one case with real missed-game replacement credit in his
+own AATP) and found none -- no arithmetic double-subtraction in any
+individual score -- but the conceptual mismatch (conditional rate
+treated as unconditional) was real and explains the false negatives
+mechanistically, independent of the empirical test.
+
+**Step 3 -- tested a 100/75/50/25/0% scalar sweep on the same
+replacement-implied family across all 54 verified minimal-market-cost
+players.** 25%, 50%, and 75% produced **identical classifications** --
+all five real cases (Williams, Herbert, Cruz, Nacua, Barnidge) qualify,
+no false positives anywhere in that range. Only the 0% extreme
+introduced a new, marginal case (Nick Foles 2013, by a 4-point
+margin) -- evidence that literal zero-expectation goes a step too far,
+not evidence for a specific number in between.
+
+**Step 4 -- estimated the scalar as an actual probability, non-circularly**,
+rather than picking a point in the stable range by preference. Built
+the reference population from **every 2011-2024 `no_adp_match`
+QB/RB/WR/TE player-season classified `minimal_market_cost` before
+outcome** (n=3,418 -- not the 54 that happened to also clear the
+p82.5 gate, which would have reintroduced survivorship bias into the
+very estimate being built). Defined "earned meaningful opportunity"
+via real usage data (nflverse `stats_player` release, pulled fresh --
+attempts/carries/targets, not present anywhere else in this repo),
+never fantasy points or the gate: QB attempts >= 100, RB touches
+(carries+targets) >= 40, WR/TE targets >= 20. Checked for era drift
+(four eras, 2011-14 to 2021-24) -- found none large or monotonic
+enough to justify recency weighting, so equal-weighted full history
+was used, consistent with this project's standing default.
+
+**Result -- opportunity probabilities**: QB 24.7% (n=413), RB 29.0%
+(n=775), TE 28.5% (n=965), WR 36.8% (n=1,265). These land in the
+lower part of the already-safe 25-75% range, not at the midpoint --
+a uniform "50%" convention would have been a real, avoidable
+overstatement given what the data actually shows.
+
+**Final settled constants** (`opportunity_probability x replacement-implied
+rate`): **QB 31.0, RB 23.1, WR 35.7, TE 19.3.**
+
+**Sensitivity**: re-derived under three alternative usage definitions
+(a looser bar, a stricter bar, and games-played>=8 as a different
+signal entirely) -- **identical classification of every named case in
+all three**. Only the weakest tested definition (raw games-played>=4,
+which doesn't require real usage) gave a different result -- Nacua
+missing by 0.52 points -- which argues against that definition, not
+against the settled one.
+
+**Decision: SETTLED.** QB 31.0, RB 23.1, WR 35.7, TE 19.3, applied
+only to the verified `minimal_market_cost` status group -- never to
+`confirmed_or_likely_drafted` (real cost existed, just no recoverable
+number) or `ambiguous_disagreement`. Recorded in
+`STARS_BY_VALUE_METHODOLOGY.md` section 9. Not yet implemented in
+`config.py` or any canonical pipeline -- that remains a distinct,
+separate step.
+- **Confidence level**: High. Two independent lines of evidence
+  (mechanistic/conceptual, and an empirical non-circular estimate)
+  converged on the same correction, sensitivity-tested across five
+  different opportunity-threshold definitions and a temporal check,
+  with no obvious false positive surviving anywhere in the safe range.
+- **Next experiment**: none planned for this specific calibration
+  absent a new, specific mechanism. Known, disclosed, out-of-scope
+  items: the 47 `ambiguous_disagreement` rows (2011-2024) remain
+  genuinely unresolved; `confirmed_or_likely_drafted` players (real
+  cost, no usable number -- e.g. Adrian Peterson 2012) remain
+  permanently unscoreable absent new source-quality ADP evidence;
+  Vick 2010 remains outside MFL's coverage entirely.
+
+---
+
+### 2026-07 -- No-ADP remediation, part 7: position-specific Star thresholds SETTLED
+
+- **Date**: 2026-07
+- **Trigger**: with the minimal-market-cost expectation settled (part
+  6), review whether the provisional position-specific Stars-by-Value
+  thresholds (QB ~176.5, RB ~188, WR ~171, TE ~134 --
+  `STARS_BY_VALUE_METHODOLOGY.md`, "Named-case calibration and
+  narrative-blind validation") still hold given everything learned
+  since, without re-opening the already-settled finding that no
+  natural breakpoint exists near the plausible region for any
+  position.
+- **Method**: not a new statistical search -- explicitly a calibration
+  review. Checked for (1) obvious false positives/negatives, (2)
+  internal consistency with the now-finalized methodology (in
+  particular, whether the minimal-market-cost `E_P` values sit in a
+  sensible position relative to the round-based `E_P` curve they now
+  coexist with), and (3) whether each position's label would be
+  defensible to another researcher.
+- **Findings**: Herbert 2020, Cruz 2011, Nacua 2023, Kyren Williams
+  2023, and Gary Barnidge 2015 -- the five real cases that motivated
+  the minimal-market-cost recalibration in part 6 -- all clear their
+  position's *existing, unchanged* threshold by wide margins (+13.4 to
+  +44.6 points) once scored under the settled section-9 constants. No
+  other verified minimal-market-cost player clears any threshold.
+  The minimal-market-cost `E_P` values (19.3-35.7) sit below even the
+  deepest real round's `E_P` (~84 for QB round 15, thin sample) --
+  the correct direction, confirming no overlap/inconsistency between
+  the two `E_P` sources that now share the same score formula and
+  cutoffs. QB and WR retain more genuine boundary ambiguity than RB
+  and TE (unchanged from prior calibration passes -- not worsened,
+  not resolved, by this check). No obvious false positive or false
+  negative found anywhere.
+- **Decision: SETTLED.** QB 176.5, RB 188, WR 171, TE 134, unchanged
+  from the provisional values. Treated as calibration choices
+  supported by face validity, sensitivity analysis, narrative-blind
+  review, a confirmed absence of any natural breakpoint, and this
+  pass's reinforcement check -- not as discovered natural breakpoints.
+  This also formally closes the cross-position raw-score problem
+  flagged early in the Stars-by-Value methodology work: position-specific
+  thresholds were always the intended fix, and this pass confirms they
+  work correctly across both populations that now feed the same score
+  formula, not just the one they were originally calibrated against.
+  Recorded in `STARS_BY_VALUE_METHODOLOGY.md` section 10.
+- **Confidence level**: High. No genuinely new evidence surfaced that
+  argues for moving any of the four values; the reinforcement check
+  was a real test (the five named cases could have landed close to
+  their cutoffs and didn't) rather than a formality.
+- **Next experiment**: none planned for the thresholds themselves
+  absent a new, specific mechanism. The label schema question below
+  (how the three status groups map into an actual label column) is
+  the next real design decision, not a reason to revisit these values.
+
+---
+
 ### 2026-07 -- 2025 canonical ADP investigation (MFL + FFToday cross-validation)
 
 - **Date**: 2026-07
