@@ -149,7 +149,7 @@ one blocks the other; stage 11 is the only stage that needs both.
 | `scripts/player_matching.py` | **Reuse as-is.** Already production-quality (override table, confidence tiers, `matched_clean`/`matched_needs_review`/`no_adp_match` classification). SBV consumes its output; does not modify it. |
 | `scripts/nflverse_source.py` | **Reused as-is for usage stats; extended for `players` and `depth_charts` (Commit 2, landed).** Verified directly against the repo (not assumed from scratch research): this module already fetches the `stats_player` release at week grain (`stats_player_week_<season>.csv`, asset-ID pinned, sha256-verified, manifest covers 2006-2025 in full), and the already-cached local files already contain `attempts`/`carries`/`targets`/`receptions` -- exactly what the MMC usage-definition calibration needs. **No new fetch or asset pinning for usage stats** -- `acquisition_cost.py` calls the existing `fetch_and_normalize()` and sums the relevant columns per player/season itself. `players` (draft capital, single file, no season grain) and `depth_charts` (rookie-QB correction, season grain) were genuinely new -- confirmed no existing fetch mechanism for either -- and are now fetched via `fetch_players()`/`fetch_depth_chart(season)`, same asset-ID-pinning + sha256 verification + explicit-registration-only model as `stats_player`, registered for `players.csv` (single entry) and `depth_charts` seasons 2006-2025 (matching `config.SEASONS`). **Real finding from registering all 20 seasons: nflverse's `depth_charts_2025.csv` uses a completely different 12-column schema** (`dt`/`team`/`espn_id`/`pos_grp`/`pos_slot`/`pos_rank`, ~15x the row count of any other season -- apparently a different upstream vendor as of this migration) than the consistent 15-column schema verified identical across every one of 2006-2024. The 2025 file is still registered and fetchable (fetching is schema-agnostic by design), but no consumer code normalizes or interprets it yet -- `acquisition_cost.py` (Commit 7) will need to either handle both shapes or explicitly exclude 2025 until decided; not resolved by this commit. |
 | `research/dataset3/production_weight_and_boundary_calibration.py::build_adp_aware_aatp()` | **Promote, with rewrites.** Correct logic, wrong location/config-coupling -- currently hardcodes `WINDOW=12`, `MIN_PRIOR_SEASONS=3`, the roster preset dict, etc. inline. Must be rewritten to read from the new `SBV_*` config constants instead of local hardcoded values before it's production code. |
-| `research/dataset3/lib/replacement.py` | **Promote with minimal changes.** Already parameterized (takes roster/flex assumptions as explicit arguments, not hardcoded) -- close to production-ready as written. Move under a shared `lib/` (not `research/dataset3/lib/`) so both research and production code import the same module rather than forking it. |
+| `research/dataset3/lib/replacement.py` | **Promoted verbatim (Commit 5, landed) to `lib/replacement.py`.** Logic unchanged -- only relocated, folded into Commit 5 as production.py's direct dependency rather than given its own commit, since production.py cannot function without it and cannot import from `research/`. |
 | `research/dataset3/expected_production_by_round_investigation.py` | **Promote the fitting logic, not the script.** `adp_round()` helper and the expanding-window/QB_RB-offset/recency-weighting fit logic are correct and settled -- extract into a real module; the surrounding research script (comparison harnesses, print statements, CSV dumps for calibration) does not belong in production. |
 | The rookie-QB depth-chart correction, the classifier, the 3-way corroboration | **Do not exist as saved code at all.** Every one of these was built and run as ad hoc Python in this conversation, writing to scratch space (`/private/tmp/.../scratchpad`), never committed anywhere. This is the single biggest gap between "settled methodology" and "implementable" -- see #4 and #9. |
 | The MFL client | **Built (Commit 3, landed) at `scripts/mfl_client.py`, not `lib/stars_by_value/mfl_client.py` as originally sketched in section 4 below.** Deliberate placement correction, mirroring `nflverse_source.py`'s precedent: this module is pure fetch/cache/rate-limit infrastructure with no SBV business logic, same role as `nflverse_source.py`, so it lives alongside it in `scripts/` -- `lib/stars_by_value/` stays reserved for modules that actually apply SBV methodology (`production.py`, `expected_production.py`, `acquisition_cost.py`, `minimal_market_cost.py`, `labeling.py`). Fetches `TYPE=adp&PERIOD=AUG15` and `TYPE=players`, cache-first with an explicit `force_refresh`. **Real finding that shaped its design**: MFL's `TYPE=adp` report is a live, continuously-growing aggregate, not a frozen artifact -- confirmed directly, querying season 2023 live returned `totalDrafts=9,970` and Puka Nacua at rank 213/16%, versus `totalDrafts=7,923` and rank 209/18% recorded earlier in `docs/ADP_SOURCE_MATRIX.md` from a prior-date query. **Integrity model (revised once before landing, see below)**: a cache hit (hash matches) returns silently, no network call; a missing local file is fetched (bootstrap, not a replacement); a cache PRESENT but hash-MISMATCHED against the manifest raises loudly with no network call, naming `force_refresh=True` as the explicit way to accept new data -- normal (non-refresh) runs must never make an unexpected network request just because a local snapshot looks stale or was edited. `force_refresh=True` always fetches fresh and prints old-vs-new values when a snapshot is replaced. **`scripts/mfl_source_manifest.json` IS committed to git** (unlike the raw per-response JSON under `data/raw/mfl/`, which stays gitignored) -- a compact snapshot registry per season/endpoint (URL/params including `PERIOD=AUG15`, `retrieved_at`, `sha256`, `total_drafts`, `row_count`, `sbv_version`), with an explicit `note` field in the JSON itself clarifying that it documents the exact snapshot used but cannot, by itself, reproduce MFL's live report byte-for-byte -- a future immutable archive of the raw responses may be needed for full reproducibility. Rate-limiting constants live in `config.py`'s `SBV_*` block (`SBV_MFL_MIN_REQUEST_DELAY_SECONDS`, `SBV_MFL_MAX_RETRIES`, `SBV_MFL_BACKOFF_BASE_SECONDS`, `SBV_MFL_REQUEST_TIMEOUT_SECONDS`) as implementation metadata, not hardcoded in the client -- operational tunables, not methodology, per explicit direction. |
@@ -164,7 +164,8 @@ lib/stars_by_value/
     mmc_2010_overrides.py    # built (Commit 4, landed) -- section 8a loader/validator,
                              #      not named explicitly here at the time this section was
                              #      first written. Fetch/parse-only, no classifier logic.
-    production.py           # AATP, shrinkage, composite -- promoted from build_adp_aware_aatp()
+    production.py           # built (Commit 5, landed) -- AATP/shrinkage/composite, promoted
+                             #      from build_adp_aware_aatp() + ppg_eq_normalized_shrink()
     expected_production.py  # section 7 fitting: expanding window, QB_RB offset, recency, no leakage;
                              # writes the materialized lookup table, does not refit at row-scoring time
     acquisition_cost.py     # NEW: classifier + depth-chart QB correction + 3-way MFL corroboration
@@ -590,9 +591,27 @@ each leaves the repo in a working state):
    Both corrections keep the loader deliberately independent of any
    classifier/scoring code -- verified by a test that greps its own
    imports.
-5. `lib/stars_by_value/production.py` (promoted AATP/shrinkage/composite)
-   + tests that reproduce the already-verified research numbers
-   exactly, as a regression pin.
+5. **Landed.** `lib/stars_by_value/production.py` (promoted AATP/
+   shrinkage/composite from two research sources -- `build_adp_aware_aatp()`
+   in `production_weight_and_boundary_calibration.py` for AATP/PPG_AR/
+   PPG_AR_eq, `ppg_eq_normalized_shrink()` in
+   `normalized_shrinkage_comparison.py` for the k=5 shrinkage step --
+   plus `lib/replacement.py`, promoted verbatim from
+   `research/dataset3/lib/replacement.py` as production.py's direct
+   dependency, folded into this commit since production.py cannot
+   function without it and cannot import from `research/`). Tests
+   compare against the real research implementation's output on the
+   real 9,615-row 2007-2024 population (run in an isolated subprocess
+   to avoid a real `lib`-package-name collision between
+   `research/dataset3/lib/` and this project's new top-level `lib/`,
+   confirmed to occur regardless of import order) -- exact match on
+   every row, every computed column, not a spot-check on a few named
+   examples. Population scoping (season range, `games_played >= 1`,
+   position membership) was deliberately NOT carried into
+   `production.py` -- see its module docstring -- so the module
+   validates structural preconditions and raises loudly on violation
+   rather than silently filtering; population scoping is upstream
+   routing's job (not yet built).
 6. `lib/stars_by_value/expected_production.py` + `scripts/09_fit_sbv_expected_production.py`
    (materialized lookup table, section 9) + leakage tests + version-check
    test.
@@ -613,12 +632,12 @@ each leaves the repo in a working state):
 
 ## What already exists vs. what must be built
 
-- **Promotable with light rework**: `production.py` logic (AATP,
-  shrinkage, composite), `replacement.py`, `expected_production_by_round_investigation.py`'s
+- **Promotable with light rework**: `expected_production_by_round_investigation.py`'s
   fitting logic, `player_matching.py` and `nflverse_source.py` (reused
   outright).
-- **Built (Commits 2-3, landed)**: `nflverse_source.py`'s `players`/`depth_charts`
-  extensions, `scripts/mfl_client.py`.
+- **Built (Commits 2-5, landed)**: `nflverse_source.py`'s `players`/`depth_charts`
+  extensions, `scripts/mfl_client.py`, `lib/stars_by_value/mmc_2010_overrides.py`,
+  `lib/stars_by_value/production.py`, `lib/replacement.py`.
 - **Must still be written from scratch**: the classifier, the
   depth-chart correction, the 3-way MFL corroboration, the 2010-cohort
   fallback, the status-routing/labeling module. None of this exists as
