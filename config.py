@@ -383,6 +383,25 @@ SBV_MMC_USAGE_DEFINITION = {
 SBV_MFL_AVAILABLE_FROM_SEASON = 2011
 SBV_MFL_PERIOD = "AUG15"
 
+# [IMPLEMENTATION METADATA] mfl_client.py rate-limiting/retry
+# operational tunables. MFL's public API has no documented rate limit,
+# but an earlier ad hoc parallel-batch attempt during the 2025 MFL
+# investigation triggered what looked like transient rate-limiting/
+# timeouts (see research/diagnostics/mfl_pipeline/mfl_client.py) --
+# these values (serial requests, a minimum delay between real network
+# calls, bounded retry with exponential backoff, a per-request
+# timeout) exist to make hammering MFL's servers impossible by
+# construction. Deliberately here rather than hardcoded in
+# mfl_client.py: unlike nflverse's asset-ID pinning (a fixed protocol
+# with no equivalent throttling need), these are real operational
+# judgment calls that may legitimately need adjusting later --
+# e.g. if MFL's tolerance changes -- without that being a methodology
+# change.
+SBV_MFL_MIN_REQUEST_DELAY_SECONDS = 1.5
+SBV_MFL_MAX_RETRIES = 3
+SBV_MFL_BACKOFF_BASE_SECONDS = 3
+SBV_MFL_REQUEST_TIMEOUT_SECONDS = 20
+
 # [SETTLED METHODOLOGY] Section 11 -- the seven mutually exclusive
 # label statuses and the ten structured provenance values. Single
 # source of truth: import these everywhere else that needs to
@@ -545,6 +564,22 @@ def validate_sbv_config():
         errors.append(
             f"SBV_MFL_PERIOD must be 'AUG15' -- the only period verified to be a clean "
             f"preseason snapshot (see docs/ADP_SOURCE_MATRIX.md), got {SBV_MFL_PERIOD!r}"
+        )
+    if not isinstance(SBV_MFL_MIN_REQUEST_DELAY_SECONDS, (int, float)) or SBV_MFL_MIN_REQUEST_DELAY_SECONDS <= 0:
+        errors.append(
+            f"SBV_MFL_MIN_REQUEST_DELAY_SECONDS must be a positive number, got "
+            f"{SBV_MFL_MIN_REQUEST_DELAY_SECONDS}"
+        )
+    if not isinstance(SBV_MFL_MAX_RETRIES, int) or SBV_MFL_MAX_RETRIES < 1:
+        errors.append(f"SBV_MFL_MAX_RETRIES must be a positive integer, got {SBV_MFL_MAX_RETRIES}")
+    if not isinstance(SBV_MFL_BACKOFF_BASE_SECONDS, (int, float)) or SBV_MFL_BACKOFF_BASE_SECONDS <= 0:
+        errors.append(
+            f"SBV_MFL_BACKOFF_BASE_SECONDS must be a positive number, got {SBV_MFL_BACKOFF_BASE_SECONDS}"
+        )
+    if not isinstance(SBV_MFL_REQUEST_TIMEOUT_SECONDS, (int, float)) or SBV_MFL_REQUEST_TIMEOUT_SECONDS <= 0:
+        errors.append(
+            f"SBV_MFL_REQUEST_TIMEOUT_SECONDS must be a positive number, got "
+            f"{SBV_MFL_REQUEST_TIMEOUT_SECONDS}"
         )
 
     # --- status / provenance enums: no duplicates ---

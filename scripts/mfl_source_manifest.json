@@ -1,0 +1,27 @@
+{
+  "adp": {
+    "seasons": {
+      "2023": {
+        "retrieved_at": "2026-07-25T20:32:39.660778+00:00",
+        "row_count": 391,
+        "sbv_version": "1.0",
+        "sha256": "130c3aac7b4b09dc514739d6d9d19daf82ca5c77a855c3ba97668f1be3477294",
+        "total_drafts": "9970",
+        "url": "https://api.myfantasyleague.com/2023/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      }
+    }
+  },
+  "note": "This registry documents the exact MFL snapshot used for each season/endpoint at the time it was fetched (URL and query parameters, retrieval timestamp, sha256, totalDrafts where applicable, row count, sbv_version). MFL's underlying reports are live, continuously-growing aggregates -- re-fetching the same season later will very likely NOT reproduce the same bytes (confirmed directly: season 2023's totalDrafts grew from 7,923 to 9,970 between two real queries on different dates, see mfl_client.py's module docstring). This registry proves what was used; it cannot by itself recreate the original bytes. A future immutable archive of the raw responses may be needed for full reproducibility.",
+  "players": {
+    "seasons": {
+      "2023": {
+        "retrieved_at": "2026-07-25T20:32:41.736080+00:00",
+        "row_count": 2800,
+        "sbv_version": "1.0",
+        "sha256": "f427bbaf2d76c6713e7811de7d2abfb169b7a6c5364583bb68db7a84ad5842d9",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2023/export?TYPE=players&JSON=1"
+      }
+    }
+  }
+}

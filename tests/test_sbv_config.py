@@ -279,6 +279,45 @@ class TestMflSettings:
     def test_available_from_2011(self, config_mod):
         assert config_mod.SBV_MFL_AVAILABLE_FROM_SEASON == 2011
 
+    def test_zero_min_request_delay_is_rejected(self, config_mod):
+        config_mod.SBV_MFL_MIN_REQUEST_DELAY_SECONDS = 0
+        with pytest.raises(ValueError, match="SBV_MFL_MIN_REQUEST_DELAY_SECONDS"):
+            config_mod.validate_sbv_config()
+
+    def test_negative_min_request_delay_is_rejected(self, config_mod):
+        config_mod.SBV_MFL_MIN_REQUEST_DELAY_SECONDS = -1.5
+        with pytest.raises(ValueError, match="SBV_MFL_MIN_REQUEST_DELAY_SECONDS"):
+            config_mod.validate_sbv_config()
+
+    def test_zero_max_retries_is_rejected(self, config_mod):
+        config_mod.SBV_MFL_MAX_RETRIES = 0
+        with pytest.raises(ValueError, match="SBV_MFL_MAX_RETRIES"):
+            config_mod.validate_sbv_config()
+
+    def test_non_integer_max_retries_is_rejected(self, config_mod):
+        config_mod.SBV_MFL_MAX_RETRIES = 3.5
+        with pytest.raises(ValueError, match="SBV_MFL_MAX_RETRIES"):
+            config_mod.validate_sbv_config()
+
+    def test_zero_backoff_base_is_rejected(self, config_mod):
+        config_mod.SBV_MFL_BACKOFF_BASE_SECONDS = 0
+        with pytest.raises(ValueError, match="SBV_MFL_BACKOFF_BASE_SECONDS"):
+            config_mod.validate_sbv_config()
+
+    def test_zero_request_timeout_is_rejected(self, config_mod):
+        config_mod.SBV_MFL_REQUEST_TIMEOUT_SECONDS = 0
+        with pytest.raises(ValueError, match="SBV_MFL_REQUEST_TIMEOUT_SECONDS"):
+            config_mod.validate_sbv_config()
+
+    def test_default_rate_limit_values_match_proven_research_client(self, config_mod):
+        """Not arbitrary defaults -- these match the values already
+        proven safe in research/diagnostics/mfl_pipeline/mfl_client.py
+        (built after an earlier ad hoc parallel-batch attempt triggered
+        apparent rate-limiting)."""
+        assert config_mod.SBV_MFL_MIN_REQUEST_DELAY_SECONDS == 1.5
+        assert config_mod.SBV_MFL_MAX_RETRIES == 3
+        assert config_mod.SBV_MFL_BACKOFF_BASE_SECONDS == 3
+
 
 class TestNoAccidentalLwiReuse:
     """SBV and LWI are two different specs with independently

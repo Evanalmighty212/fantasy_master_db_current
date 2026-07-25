@@ -25,6 +25,15 @@ research/output/
 research/diagnostics/mfl_pipeline/cache/
 research/diagnostics/nflverse/
 
+# scripts/mfl_source_manifest.json IS committed (unlike the raw MFL
+# JSON responses under data/raw/mfl/, which stay gitignored above) --
+# it's a compact snapshot registry (URL/params, retrieved_at, sha256,
+# totalDrafts, row_count, sbv_version per season/endpoint), not
+# disposable bookkeeping. See mfl_client.py's module docstring for
+# exactly what it documents and its limits (it records what snapshot
+# was used; it cannot itself reproduce MFL's live, continuously-growing
+# report byte-for-byte).
+
 *.log
 .ipynb_checkpoints/
 .pytest_cache/

@@ -151,7 +151,8 @@ one blocks the other; stage 11 is the only stage that needs both.
 | `research/dataset3/production_weight_and_boundary_calibration.py::build_adp_aware_aatp()` | **Promote, with rewrites.** Correct logic, wrong location/config-coupling -- currently hardcodes `WINDOW=12`, `MIN_PRIOR_SEASONS=3`, the roster preset dict, etc. inline. Must be rewritten to read from the new `SBV_*` config constants instead of local hardcoded values before it's production code. |
 | `research/dataset3/lib/replacement.py` | **Promote with minimal changes.** Already parameterized (takes roster/flex assumptions as explicit arguments, not hardcoded) -- close to production-ready as written. Move under a shared `lib/` (not `research/dataset3/lib/`) so both research and production code import the same module rather than forking it. |
 | `research/dataset3/expected_production_by_round_investigation.py` | **Promote the fitting logic, not the script.** `adp_round()` helper and the expanding-window/QB_RB-offset/recency-weighting fit logic are correct and settled -- extract into a real module; the surrounding research script (comparison harnesses, print statements, CSV dumps for calibration) does not belong in production. |
-| The rookie-QB depth-chart correction, the classifier, the 3-way corroboration, the MFL client | **Do not exist as saved code at all.** Every one of these was built and run as ad hoc Python in this conversation, writing to scratch space (`/private/tmp/.../scratchpad`), never committed anywhere. This is the single biggest gap between "settled methodology" and "implementable" -- see #4 and #9. |
+| The rookie-QB depth-chart correction, the classifier, the 3-way corroboration | **Do not exist as saved code at all.** Every one of these was built and run as ad hoc Python in this conversation, writing to scratch space (`/private/tmp/.../scratchpad`), never committed anywhere. This is the single biggest gap between "settled methodology" and "implementable" -- see #4 and #9. |
+| The MFL client | **Built (Commit 3, landed) at `scripts/mfl_client.py`, not `lib/stars_by_value/mfl_client.py` as originally sketched in section 4 below.** Deliberate placement correction, mirroring `nflverse_source.py`'s precedent: this module is pure fetch/cache/rate-limit infrastructure with no SBV business logic, same role as `nflverse_source.py`, so it lives alongside it in `scripts/` -- `lib/stars_by_value/` stays reserved for modules that actually apply SBV methodology (`production.py`, `expected_production.py`, `acquisition_cost.py`, `minimal_market_cost.py`, `labeling.py`). Fetches `TYPE=adp&PERIOD=AUG15` and `TYPE=players`, cache-first with an explicit `force_refresh`. **Real finding that shaped its design**: MFL's `TYPE=adp` report is a live, continuously-growing aggregate, not a frozen artifact -- confirmed directly, querying season 2023 live returned `totalDrafts=9,970` and Puka Nacua at rank 213/16%, versus `totalDrafts=7,923` and rank 209/18% recorded earlier in `docs/ADP_SOURCE_MATRIX.md` from a prior-date query. **Integrity model (revised once before landing, see below)**: a cache hit (hash matches) returns silently, no network call; a missing local file is fetched (bootstrap, not a replacement); a cache PRESENT but hash-MISMATCHED against the manifest raises loudly with no network call, naming `force_refresh=True` as the explicit way to accept new data -- normal (non-refresh) runs must never make an unexpected network request just because a local snapshot looks stale or was edited. `force_refresh=True` always fetches fresh and prints old-vs-new values when a snapshot is replaced. **`scripts/mfl_source_manifest.json` IS committed to git** (unlike the raw per-response JSON under `data/raw/mfl/`, which stays gitignored) -- a compact snapshot registry per season/endpoint (URL/params including `PERIOD=AUG15`, `retrieved_at`, `sha256`, `total_drafts`, `row_count`, `sbv_version`), with an explicit `note` field in the JSON itself clarifying that it documents the exact snapshot used but cannot, by itself, reproduce MFL's live report byte-for-byte -- a future immutable archive of the raw responses may be needed for full reproducibility. Rate-limiting constants live in `config.py`'s `SBV_*` block (`SBV_MFL_MIN_REQUEST_DELAY_SECONDS`, `SBV_MFL_MAX_RETRIES`, `SBV_MFL_BACKOFF_BASE_SECONDS`, `SBV_MFL_REQUEST_TIMEOUT_SECONDS`) as implementation metadata, not hardcoded in the client -- operational tunables, not methodology, per explicit direction. |
 
 ---
 
@@ -167,13 +168,21 @@ lib/stars_by_value/
                              #      + 2010-cohort fallback. Currently exists nowhere as real code.
     minimal_market_cost.py  # section 9: opportunity-based E_P, season-varying G
     labeling.py             # section 11: 4-step status routing, final schema assembly
-    mfl_client.py           # NEW: lean production MFL client (rate-limited, cached, PERIOD=AUG15
-                             #      always explicit -- see the PERIOD-contamination finding in
-                             #      ADP_SOURCE_MATRIX.md). NOT a reuse of
-                             #      research/diagnostics/mfl_pipeline/mfl_client.py, which is
-                             #      explicitly marked "ISOLATED -- never wired into any production
-                             #      code" and was built for a different (2025 canonical-ADP)
-                             #      question -- same rate-limiting/caching discipline, new module.
+```
+
+`scripts/mfl_client.py` -- **built (Commit 3, landed), moved out of the
+`lib/stars_by_value/` tree above.** Lean production MFL client
+(rate-limited, cached, `PERIOD=AUG15` always explicit -- see the
+PERIOD-contamination finding in `ADP_SOURCE_MATRIX.md`). NOT a reuse of
+`research/diagnostics/mfl_pipeline/mfl_client.py`, which is explicitly
+marked "ISOLATED -- never wired into any production code" and was
+built for a different (2025 canonical-ADP) question -- same
+rate-limiting/caching discipline, new module. Placed alongside
+`nflverse_source.py` rather than under `lib/stars_by_value/` because
+it is pure fetch/cache infrastructure with no SBV business logic, same
+role as that module -- see section 3.
+
+```
 
 scripts/08_fetch_sbv_reference_data.py        # manual refresh step, see decision #4
 scripts/09_fit_sbv_expected_production.py     # materializes the E_P lookup table, see decision #2
@@ -218,7 +227,7 @@ stops responding.
 | nflverse `stats_player` release, week grain (attempts/carries/targets) | **already fetched, already cached** -- `nflverse_source.py::fetch_and_normalize()`, no change needed | `data/raw/nflverse/annual/stats_player_week_<season>.csv`, manifest covers 2006-2025 | Recalibrating the frozen opportunity probabilities, **calibration-only** -- never read by `minimal_market_cost.py` at normal scoring time (decision #2/#8). Verified directly against the repo: confirmed present, not a new fetch (see section 3). |
 | nflverse `players` release (draft_round, draft_pick, rookie_season) | genuinely new, fetched via `nflverse_source.py::fetch_players()` (Commit 2, landed) | `data/raw/nflverse/reference/players.csv`, single manifest entry (no season grain) | `acquisition_cost.py` classifier |
 | nflverse `depth_charts` release, per season | genuinely new, fetched via `nflverse_source.py::fetch_depth_chart(season)` (Commit 2, landed) | `data/raw/nflverse/annual/depth_charts_<season>.csv`, manifest covers 2006-2025 -- **2025 uses a different, not-yet-normalized schema, see section 3** | `acquisition_cost.py`, rookie-QB correction only |
-| MFL `PERIOD=AUG15` ADP, 2011+ | stage 08 fetch via `mfl_client.py`, genuinely new | `data/raw/mfl/mfl_adp_<season>_aug15.json` | `acquisition_cost.py` corroboration |
+| MFL `PERIOD=AUG15` ADP + player directory, 2011+ | genuinely new, fetched via `scripts/mfl_client.py::fetch_adp(season)`/`fetch_players(season)` (Commit 3, landed) | Raw JSON at `data/raw/mfl/adp_<season>_period_aug15.json`, `data/raw/mfl/players_<season>.json` -- gitignored, **not cross-environment-reproducible by design** (MFL's report is a live aggregate, see section 3). The COMMITTED record is `scripts/mfl_source_manifest.json` -- a compact snapshot registry (url/params, retrieved_at, sha256, total_drafts, row_count, sbv_version per season/endpoint), documenting exactly what was used without being able to reproduce it byte-for-byte. | `acquisition_cost.py` corroboration, name-matched against our master DB via `player_matching.py`'s existing normalization (not `mfl_client.py`, which is fetch-only) |
 | `data/manual/player_name_overrides.csv` | existing, already has the Vick 2011-2013 rows added this investigation (currently unstaged) | n/a -- hand-maintained | ADP matching (via `player_matching.py`) |
 | `data/manual/mmc_2010_manual_overrides.csv` | new, manual, rare | n/a -- hand-maintained | `acquisition_cost.py`, 2010-cohort fallback only, see decision #3 |
 
@@ -526,8 +535,17 @@ each leaves the repo in a working state):
    previously-unknown schema break in `depth_charts_2025.csv` (see
    section 3) that Commit 7 (`acquisition_cost.py`) will need to
    address.
-3. New MFL client (`mfl_client.py`) + fetch script + tests --
-   infrastructure only.
+3. **Landed.** New MFL client (`scripts/mfl_client.py`, placed
+   alongside `nflverse_source.py` rather than `lib/stars_by_value/` as
+   originally sketched -- see section 4) + tests -- infrastructure
+   only, fetch-only by design (no name matching/corroboration logic,
+   deferred to Commit 7's `acquisition_cost.py`). No fetch script yet
+   (`scripts/08_fetch_sbv_reference_data.py` is still Commit 10's
+   wiring step). Surfaced a real finding that shaped the design: MFL's
+   `TYPE=adp` report is a live, continuously-growing aggregate, not a
+   frozen artifact -- see section 3 -- so its integrity model and
+   manifest-commit treatment deliberately differ from
+   `nflverse_source.py`'s.
 4. `data/manual/mmc_2010_manual_overrides.csv` (empty, headers only) +
    the loader/validator (section 8a) + schema tests -- infrastructure,
    nothing produces a row yet.
@@ -558,11 +576,13 @@ each leaves the repo in a working state):
   shrinkage, composite), `replacement.py`, `expected_production_by_round_investigation.py`'s
   fitting logic, `player_matching.py` and `nflverse_source.py` (reused
   outright).
-- **Must be written from scratch**: the classifier, the depth-chart
-  correction, the 3-way MFL corroboration, the 2010-cohort fallback,
-  the production MFL client, the status-routing/labeling module. None
-  of this exists as saved code today -- all of it ran once, in this
-  conversation, against scratch-space files.
+- **Built (Commits 2-3, landed)**: `nflverse_source.py`'s `players`/`depth_charts`
+  extensions, `scripts/mfl_client.py`.
+- **Must still be written from scratch**: the classifier, the
+  depth-chart correction, the 3-way MFL corroboration, the 2010-cohort
+  fallback, the status-routing/labeling module. None of this exists as
+  saved code today -- all of it ran once, in this conversation,
+  against scratch-space files.
 
 ## Research-only assumptions that must not silently enter production
 
