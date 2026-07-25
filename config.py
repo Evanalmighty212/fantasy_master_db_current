@@ -356,6 +356,18 @@ SBV_STAR_THRESHOLD = {"QB": 176.5, "RB": 188, "WR": 171, "TE": 134}
 SBV_MMC_OPPORTUNITY_PROBABILITY = {"QB": 0.247, "RB": 0.290, "WR": 0.368, "TE": 0.285}
 SBV_MMC_REPLACEMENT_PPG = {"QB": 14.746, "RB": 9.361, "WR": 11.423, "TE": 7.970}
 
+# [SETTLED METHODOLOGY] Section 9 -- the role-conditional production
+# discount in the MMC_E_P formula above: "if this player gets real
+# opportunity, they'd produce at roughly half replacement-level rate."
+# A DEDICATED constant, deliberately NOT the same as
+# SBV_PRODUCTION_WEIGHT_AATP -- the two currently share a value (0.5)
+# but are different quantities (this is a production-rate discount
+# conditional on getting opportunity; SBV_PRODUCTION_WEIGHT_AATP is the
+# AATP/PPG_AR_eq_shrunk composite weight in production.py). Reusing one
+# constant for both was considered and rejected: they must be free to
+# move independently if either is ever recalibrated.
+SBV_MMC_ROLE_CONDITIONAL_DISCOUNT = 0.5
+
 # [SETTLED METHODOLOGY] Section 9 -- the "meaningful usage" definition
 # used ONLY to calibrate SBV_MMC_OPPORTUNITY_PROBABILITY above (a real,
 # usage-based opportunity-rate estimate from a broad pre-outcome
@@ -619,6 +631,11 @@ def validate_sbv_config():
             errors.append(f"SBV_MMC_USAGE_DEFINITION['{pos}'] must be a dict with 'stat' and 'min' keys, got {usage}")
         elif not isinstance(usage["min"], (int, float)) or usage["min"] <= 0:
             errors.append(f"SBV_MMC_USAGE_DEFINITION['{pos}']['min'] must be a positive number, got {usage['min']}")
+    if not isinstance(SBV_MMC_ROLE_CONDITIONAL_DISCOUNT, (int, float)) or not (0 < SBV_MMC_ROLE_CONDITIONAL_DISCOUNT < 1):
+        errors.append(
+            f"SBV_MMC_ROLE_CONDITIONAL_DISCOUNT must be a number strictly between 0 and 1, got "
+            f"{SBV_MMC_ROLE_CONDITIONAL_DISCOUNT}"
+        )
 
     # --- acquisition-cost classifier thresholds ---
     if not isinstance(SBV_CLASSIFIER_PRIOR_SEASONS_LOOKBACK, int) or SBV_CLASSIFIER_PRIOR_SEASONS_LOOKBACK < 1:

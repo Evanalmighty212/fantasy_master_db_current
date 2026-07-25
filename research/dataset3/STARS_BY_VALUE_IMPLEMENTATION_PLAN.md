@@ -666,8 +666,25 @@ each leaves the repo in a working state):
    does not produce an acquisition-cost status at all -- it returns
    the override's `adp_overall`/`adp_round` and the row exits to the
    normal ADP-scored path, confirmed as the intended contract.
-8. `lib/stars_by_value/minimal_market_cost.py` + season-varying-`G`
-   tests.
+8. **Landed.** `lib/stars_by_value/minimal_market_cost.py` + season-
+   varying-`G` tests. Narrow single-formula module:
+   `MMC_E_P(position, season) = opportunity_probability(position) *
+   SBV_MMC_ROLE_CONDITIONAL_DISCOUNT * replacement_ppg(position) *
+   season_length(season)` (reusing `production.py`'s `season_length()`
+   rather than re-deriving the 16/17-game cutover a second time). The
+   settled formula's "0.5" multiplier is `SBV_MMC_ROLE_CONDITIONAL_DISCOUNT`,
+   a new, DEDICATED config constant -- a first draft of this module
+   reused `SBV_PRODUCTION_WEIGHT_AATP` directly (the two happened to
+   share the value 0.5), which was reviewed and rejected: they are
+   different quantities (a role-conditional production discount vs.
+   production.py's composite weight) that must be free to move
+   independently if either is ever recalibrated, so coupling them
+   -- even deliberately -- was a real risk not worth taking. Every
+   other input was an already-settled `SBV_*` constant from Commit 1.
+   Regression values verified against the exact settled constants
+   (not the 1-decimal prose headlines in the methodology doc, which
+   are rounded for readability): 16-game era QB/RB/WR/TE =
+   29.14/21.72/33.63/18.17, 17-game era = 30.96/23.07/35.73/19.31.
 9. `lib/stars_by_value/labeling.py` (status routing) + the full
    invariant test suite from #10.
 10. Wire `scripts/08`/`09`/`10`/`11` together, end-to-end integration
@@ -682,19 +699,20 @@ each leaves the repo in a working state):
 
 - **Promotable with light rework**: `player_matching.py` and
   `nflverse_source.py` (reused outright).
-- **Built (Commits 2-7, landed)**: `nflverse_source.py`'s `players`/`depth_charts`
+- **Built (Commits 2-8, landed)**: `nflverse_source.py`'s `players`/`depth_charts`
   extensions, `scripts/mfl_client.py`, `lib/stars_by_value/mmc_2010_overrides.py`,
   `lib/stars_by_value/production.py`, `lib/replacement.py`,
   `lib/stars_by_value/expected_production.py`, `scripts/09_fit_sbv_expected_production.py`,
   `lib/stars_by_value/acquisition_cost.py` (classifier, rookie-QB
   depth-chart correction, 3-way MFL corroboration, 2010-cohort
-  fallback).
+  fallback), `lib/stars_by_value/minimal_market_cost.py`.
 - **Must still be written from scratch**: the status-routing/labeling
-  module (`labeling.py`) and `minimal_market_cost.py` (the position-specific
-  numeric MMC expectation formula -- acquisition_cost.py only
-  classifies WHICH rows are MMC-eligible, it does not compute the
-  score). None of this exists as saved code today -- all of it ran
-  once, in this conversation,
+  module (`labeling.py`) -- the last remaining piece, tying
+  acquisition_cost.py's classification, minimal_market_cost.py's
+  expectation, and expected_production.py's lookup together into the
+  final 7-status/10-provenance schema (section 11) and the actual
+  Stars-by-Value output rows. None of this exists as saved code today
+  -- all of it ran once, in this conversation,
   against scratch-space files.
 
 ## Research-only assumptions that must not silently enter production

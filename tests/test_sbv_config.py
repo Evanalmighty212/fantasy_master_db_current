@@ -197,6 +197,42 @@ class TestMmcOpportunityProbabilities:
             config_mod.validate_sbv_config()
 
 
+class TestMmcRoleConditionalDiscount:
+    """Dedicated constant, deliberately separate from
+    SBV_PRODUCTION_WEIGHT_AATP even though both currently equal 0.5 --
+    see config.py's comment on SBV_MMC_ROLE_CONDITIONAL_DISCOUNT."""
+
+    def test_settled_value_is_zero_point_five(self, config_mod):
+        assert config_mod.SBV_MMC_ROLE_CONDITIONAL_DISCOUNT == 0.5
+
+    def test_zero_is_rejected(self, config_mod):
+        config_mod.SBV_MMC_ROLE_CONDITIONAL_DISCOUNT = 0.0
+        with pytest.raises(ValueError, match="SBV_MMC_ROLE_CONDITIONAL_DISCOUNT"):
+            config_mod.validate_sbv_config()
+
+    def test_one_is_rejected(self, config_mod):
+        config_mod.SBV_MMC_ROLE_CONDITIONAL_DISCOUNT = 1.0
+        with pytest.raises(ValueError, match="SBV_MMC_ROLE_CONDITIONAL_DISCOUNT"):
+            config_mod.validate_sbv_config()
+
+    def test_above_one_is_rejected(self, config_mod):
+        config_mod.SBV_MMC_ROLE_CONDITIONAL_DISCOUNT = 1.5
+        with pytest.raises(ValueError, match="SBV_MMC_ROLE_CONDITIONAL_DISCOUNT"):
+            config_mod.validate_sbv_config()
+
+    def test_negative_is_rejected(self, config_mod):
+        config_mod.SBV_MMC_ROLE_CONDITIONAL_DISCOUNT = -0.1
+        with pytest.raises(ValueError, match="SBV_MMC_ROLE_CONDITIONAL_DISCOUNT"):
+            config_mod.validate_sbv_config()
+
+    def test_is_a_distinct_constant_from_production_weight_aatp(self, config_mod):
+        """Coincidentally equal in value today, but must be able to
+        change independently -- proven by mutating one and confirming
+        the other is untouched."""
+        config_mod.SBV_PRODUCTION_WEIGHT_AATP = 0.9
+        assert config_mod.SBV_MMC_ROLE_CONDITIONAL_DISCOUNT == 0.5
+
+
 class TestStatusAndProvenanceEnumUniqueness:
     def test_exactly_seven_statuses(self, config_mod):
         assert len(config_mod.SBV_STATUSES) == 7
