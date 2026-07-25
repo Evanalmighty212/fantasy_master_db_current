@@ -1,4 +1,5 @@
 venv/
+venv.old-py39/
 __pycache__/
 *.pyc
 .DS_Store
@@ -15,6 +16,14 @@ outputs/
 # above) -- rerun the scripts in research/dataset3/README.md's "Run
 # order" to reproduce it, never commit it directly.
 research/output/
+
+# raw-fetch caches from Stars-by-Value research -- same convention as
+# data/raw/ above, pure re-fetchable HTTP cache, never meant to be
+# curated or committed. research/diagnostics/mfl_pipeline/output/ and
+# research/diagnostics/mfl/ are deliberately NOT listed here -- both
+# contain a mix of curated and generated artifacts, not evaluated yet.
+research/diagnostics/mfl_pipeline/cache/
+research/diagnostics/nflverse/
 
 *.log
 .ipynb_checkpoints/
