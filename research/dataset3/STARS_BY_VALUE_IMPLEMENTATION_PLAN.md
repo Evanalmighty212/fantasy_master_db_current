@@ -147,7 +147,7 @@ one blocks the other; stage 11 is the only stage that needs both.
 | Existing artifact | Disposition |
 |---|---|
 | `scripts/player_matching.py` | **Reuse as-is.** Already production-quality (override table, confidence tiers, `matched_clean`/`matched_needs_review`/`no_adp_match` classification). SBV consumes its output; does not modify it. |
-| `scripts/nflverse_source.py` | **Extend, don't duplicate.** Add fetch functions for the `players` and `depth_charts` and `stats_player` GitHub releases, following the exact same asset-ID-pinning + sha256-verification discipline already built there. |
+| `scripts/nflverse_source.py` | **Reused as-is for usage stats; extended for `players` and `depth_charts` (Commit 2, landed).** Verified directly against the repo (not assumed from scratch research): this module already fetches the `stats_player` release at week grain (`stats_player_week_<season>.csv`, asset-ID pinned, sha256-verified, manifest covers 2006-2025 in full), and the already-cached local files already contain `attempts`/`carries`/`targets`/`receptions` -- exactly what the MMC usage-definition calibration needs. **No new fetch or asset pinning for usage stats** -- `acquisition_cost.py` calls the existing `fetch_and_normalize()` and sums the relevant columns per player/season itself. `players` (draft capital, single file, no season grain) and `depth_charts` (rookie-QB correction, season grain) were genuinely new -- confirmed no existing fetch mechanism for either -- and are now fetched via `fetch_players()`/`fetch_depth_chart(season)`, same asset-ID-pinning + sha256 verification + explicit-registration-only model as `stats_player`, registered for `players.csv` (single entry) and `depth_charts` seasons 2006-2025 (matching `config.SEASONS`). **Real finding from registering all 20 seasons: nflverse's `depth_charts_2025.csv` uses a completely different 12-column schema** (`dt`/`team`/`espn_id`/`pos_grp`/`pos_slot`/`pos_rank`, ~15x the row count of any other season -- apparently a different upstream vendor as of this migration) than the consistent 15-column schema verified identical across every one of 2006-2024. The 2025 file is still registered and fetchable (fetching is schema-agnostic by design), but no consumer code normalizes or interprets it yet -- `acquisition_cost.py` (Commit 7) will need to either handle both shapes or explicitly exclude 2025 until decided; not resolved by this commit. |
 | `research/dataset3/production_weight_and_boundary_calibration.py::build_adp_aware_aatp()` | **Promote, with rewrites.** Correct logic, wrong location/config-coupling -- currently hardcodes `WINDOW=12`, `MIN_PRIOR_SEASONS=3`, the roster preset dict, etc. inline. Must be rewritten to read from the new `SBV_*` config constants instead of local hardcoded values before it's production code. |
 | `research/dataset3/lib/replacement.py` | **Promote with minimal changes.** Already parameterized (takes roster/flex assumptions as explicit arguments, not hardcoded) -- close to production-ready as written. Move under a shared `lib/` (not `research/dataset3/lib/`) so both research and production code import the same module rather than forking it. |
 | `research/dataset3/expected_production_by_round_investigation.py` | **Promote the fitting logic, not the script.** `adp_round()` helper and the expanding-window/QB_RB-offset/recency-weighting fit logic are correct and settled -- extract into a real module; the surrounding research script (comparison harnesses, print statements, CSV dumps for calibration) does not belong in production. |
@@ -215,10 +215,10 @@ stops responding.
 |---|---|---|---|
 | `weekly_results_ppr_2006_2025.csv` | existing `data/raw/nflverse/` | already present | `production.py` (first-active-week) |
 | `player_matches.csv` / master DB | existing `scripts/04` output | already present | everywhere (adp_round, data_quality_flag, games_played, fantasy_points_ppr) |
-| nflverse `players` release (draft_round, draft_pick, rookie_season) | stage 08 fetch | `data/raw/nflverse/players.csv` | `acquisition_cost.py` classifier |
-| nflverse `depth_charts` release, per season | stage 08 fetch | `data/raw/nflverse/depth_charts_<season>.csv` | `acquisition_cost.py`, rookie-QB correction only |
-| nflverse `stats_player_reg_<season>.csv` (attempts/carries/targets) | stage 08 fetch, **calibration-only** | `data/raw/nflverse/stats_player_reg_<season>.csv` | Recalibrating the frozen opportunity probabilities only -- never read by `minimal_market_cost.py` at normal scoring time (see decision #2/#8) |
-| MFL `PERIOD=AUG15` ADP, 2011+ | stage 08 fetch via `mfl_client.py` | `data/raw/mfl/mfl_adp_<season>_aug15.json` | `acquisition_cost.py` corroboration |
+| nflverse `stats_player` release, week grain (attempts/carries/targets) | **already fetched, already cached** -- `nflverse_source.py::fetch_and_normalize()`, no change needed | `data/raw/nflverse/annual/stats_player_week_<season>.csv`, manifest covers 2006-2025 | Recalibrating the frozen opportunity probabilities, **calibration-only** -- never read by `minimal_market_cost.py` at normal scoring time (decision #2/#8). Verified directly against the repo: confirmed present, not a new fetch (see section 3). |
+| nflverse `players` release (draft_round, draft_pick, rookie_season) | genuinely new, fetched via `nflverse_source.py::fetch_players()` (Commit 2, landed) | `data/raw/nflverse/reference/players.csv`, single manifest entry (no season grain) | `acquisition_cost.py` classifier |
+| nflverse `depth_charts` release, per season | genuinely new, fetched via `nflverse_source.py::fetch_depth_chart(season)` (Commit 2, landed) | `data/raw/nflverse/annual/depth_charts_<season>.csv`, manifest covers 2006-2025 -- **2025 uses a different, not-yet-normalized schema, see section 3** | `acquisition_cost.py`, rookie-QB correction only |
+| MFL `PERIOD=AUG15` ADP, 2011+ | stage 08 fetch via `mfl_client.py`, genuinely new | `data/raw/mfl/mfl_adp_<season>_aug15.json` | `acquisition_cost.py` corroboration |
 | `data/manual/player_name_overrides.csv` | existing, already has the Vick 2011-2013 rows added this investigation (currently unstaged) | n/a -- hand-maintained | ADP matching (via `player_matching.py`) |
 | `data/manual/mmc_2010_manual_overrides.csv` | new, manual, rare | n/a -- hand-maintained | `acquisition_cost.py`, 2010-cohort fallback only, see decision #3 |
 
@@ -519,8 +519,13 @@ each leaves the repo in a working state):
    is commit zero, before any of the numbered code commits start.
 1. `config.py` `SBV_*` constants + `validate_sbv_config()` + config
    test -- pure addition, no behavior change anywhere else.
-2. `nflverse_source.py` extensions (players, depth_charts, stats_player
-   fetches) + tests -- infrastructure only, nothing consumes it yet.
+2. **Landed.** `nflverse_source.py` extensions (`players` and `depth_charts`
+   fetches only -- `stats_player` reuses the existing `fetch_and_normalize()`
+   as-is, confirmed already present, see section 3) + tests --
+   infrastructure only, nothing consumes it yet. Surfaced a real,
+   previously-unknown schema break in `depth_charts_2025.csv` (see
+   section 3) that Commit 7 (`acquisition_cost.py`) will need to
+   address.
 3. New MFL client (`mfl_client.py`) + fetch script + tests --
    infrastructure only.
 4. `data/manual/mmc_2010_manual_overrides.csv` (empty, headers only) +

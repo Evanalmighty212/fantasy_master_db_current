@@ -67,6 +67,33 @@ Integrity model, restated precisely:
   - Season NOT in the manifest -> refuse to proceed until someone
     deliberately calls register_manifest_entry() for it. A manifest
     entry is never written as a side effect of a normal fetch.
+
+EXTENDED TO TWO MORE nflverse RELEASES (Stars-by-Value acquisition-cost
+classifier, see research/dataset3/STARS_BY_VALUE_IMPLEMENTATION_PLAN.md
+section 3): `players` (draft capital) and `depth_charts` (rookie-QB
+Week-1-starter correction). Same asset-ID pinning + sha256 verification
++ explicit-registration-only model as stats_player above, sharing this
+module's low-level HTTP/hash/manifest-file primitives. Two real shape
+differences from stats_player, each reflected below:
+  - `players` is NOT season-grain -- nflverse publishes it as one file
+    (players.csv) covering every player and every draft year at once,
+    refreshed as a whole. There is no per-season asset to pin
+    separately, so register_players_manifest_entry()/fetch_players()
+    take no season argument, and the manifest stores a single
+    top-level "players" entry rather than a "seasons" dict.
+  - `depth_charts` IS season-grain (depth_charts_<season>.csv, one
+    file per season, verified present for every season nflverse
+    publishes from 2001 through the current season), so it mirrors
+    stats_player's per-season pattern almost exactly -- its entries
+    live under a "depth_charts": {"seasons": {...}} key, kept separate
+    from stats_player's top-level "seasons" key so the two release's
+    season-keyed entries can never collide.
+Neither addition writes a normalize_*() step: unlike stats_player
+(which needed a real REG-only filter and a team->recent_team rename to
+match existing downstream expectations), both players.csv and
+depth_charts_<season>.csv are consumed by brand-new SBV code with no
+pre-existing schema to match, so fetch_players()/fetch_depth_chart()
+return the raw parsed CSV as-is.
 """
 
 import hashlib
@@ -98,6 +125,40 @@ SCHEMA_VERSION = "nflverse_stats_player_v1"
 CACHE_DIR = Path("data/raw/nflverse/annual")
 MANIFEST_PATH = Path(__file__).resolve().parent / "nflverse_source_manifest.json"
 
+# --- players (draft capital) -- single file, no season grain ---
+PLAYERS_RELEASE_TAG = "players"
+PLAYERS_ASSET_NAME = "players.csv"
+# Bump if nflverse changes players.csv's column set (verified current
+# columns include gsis_id, position, draft_year, draft_round,
+# draft_pick, draft_team, rookie_season -- confirmed directly against
+# a live download, 2026-07-25, 25,036 rows / 39 columns).
+PLAYERS_SCHEMA_VERSION = "nflverse_players_v1"
+PLAYERS_CACHE_PATH = Path("data/raw/nflverse/reference/players.csv")
+
+# --- depth_charts (rookie-QB Week-1-starter correction) -- season grain ---
+DEPTH_CHARTS_RELEASE_TAG = "depth_charts"
+DEPTH_CHARTS_ASSET_NAME_TEMPLATE = "depth_charts_{season}.csv"
+# Bump if nflverse changes depth_charts's column set (verified current
+# columns include season, club_code, week, game_type, depth_team,
+# position, gsis_id -- confirmed identical for every one of 2006-2024,
+# 2026-07-25).
+#
+# REAL, VERIFIED SCHEMA BREAK AT 2025: nflverse's depth_charts_2025.csv
+# uses a completely different 12-column schema (dt, team, player_name,
+# espn_id, gsis_id, pos_grp_id, pos_grp, pos_id, pos_name, pos_abb,
+# pos_slot, pos_rank -- no week/game_type/depth_team/position columns
+# at all, ~15x the row count of any other season, apparently a
+# different upstream vendor/pipeline as of this migration). This
+# module still registers and fetches 2025 (raw bytes, pinned and
+# hash-verified like every other season -- fetching is schema-agnostic
+# by design), but NO consumer code in this repo normalizes or
+# interprets the 2025 shape yet. Anything that reads depth_team,
+# game_type, position, or week from fetch_depth_chart(2025) will KeyError
+# immediately -- a deliberate fail-loud outcome, not a bug, until a
+# real decision is made about whether/how to support the new schema.
+DEPTH_CHARTS_SCHEMA_VERSION = "nflverse_depth_charts_v1"
+DEPTH_CHARTS_CACHE_DIR = Path("data/raw/nflverse/annual")
+
 # Verified directly against 2006-2024 (5,227-row 2024 sample, then all
 # 19 seasons): this rename is lossless -- 100% of team assignments
 # agree between the old (recent_team) and new (team) release naming.
@@ -122,18 +183,26 @@ def _save_manifest(manifest: dict) -> None:
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
+def _lookup_asset_id_by_name(release_tag: str, asset_name: str) -> dict:
+    """Generic form behind _lookup_asset_id() below -- queries one
+    release's asset list once and finds the entry with the given
+    filename. Shared by all three releases this module fetches from
+    (stats_player, players, depth_charts); only called by a
+    register_*_manifest_entry() function, never by a bare fetch."""
+    resp = requests.get(f"{GITHUB_API_BASE}/releases/tags/{release_tag}", timeout=30)
+    resp.raise_for_status()
+    assets = resp.json().get("assets", [])
+    for a in assets:
+        if a["name"] == asset_name:
+            return {"asset_id": a["id"], "upstream_updated_at": a["updated_at"]}
+    raise RuntimeError(f"No asset named {asset_name} found in the {release_tag} release.")
+
+
 def _lookup_asset_id(season: int) -> dict:
     """Queries the release's asset list once and finds the entry for
     this season's file -- only called by register_manifest_entry(),
     never by a bare fetch."""
-    resp = requests.get(f"{GITHUB_API_BASE}/releases/tags/{RELEASE_TAG}", timeout=30)
-    resp.raise_for_status()
-    assets = resp.json().get("assets", [])
-    name = ASSET_NAME_TEMPLATE.format(season=season)
-    for a in assets:
-        if a["name"] == name:
-            return {"asset_id": a["id"], "upstream_updated_at": a["updated_at"]}
-    raise RuntimeError(f"No asset named {name} found in the {RELEASE_TAG} release.")
+    return _lookup_asset_id_by_name(RELEASE_TAG, ASSET_NAME_TEMPLATE.format(season=season))
 
 
 def _download_by_asset_id(asset_id: int, local_path: Path) -> None:
@@ -237,3 +306,148 @@ def normalize_weekly(raw_path: Path) -> pd.DataFrame:
 def fetch_and_normalize(season: int) -> pd.DataFrame:
     path = fetch_season_raw(season)
     return normalize_weekly(path)
+
+
+# --- players (draft capital) -- single file, no season grain ---
+
+
+def register_players_manifest_entry(force: bool = False) -> dict:
+    """The ONLY function that writes or updates the "players" manifest
+    entry -- same integrity model as register_manifest_entry() above,
+    see module docstring's PINNING/REPRODUCIBILITY sections. There is
+    no per-season asset here (see "EXTENDED TO TWO MORE..." in the
+    module docstring), so this stores one entry, not a seasons dict."""
+    asset_info = _lookup_asset_id_by_name(PLAYERS_RELEASE_TAG, PLAYERS_ASSET_NAME)
+
+    if force or not PLAYERS_CACHE_PATH.exists():
+        _download_by_asset_id(asset_info["asset_id"], PLAYERS_CACHE_PATH)
+
+    manifest = _load_manifest()
+    with open(PLAYERS_CACHE_PATH, "rb") as f:
+        row_count = sum(1 for _ in f) - 1  # minus header
+    manifest["players"] = {
+        "asset_id": asset_info["asset_id"],
+        "upstream_updated_at": asset_info["upstream_updated_at"],
+        "asset_url": f"{GITHUB_API_BASE}/releases/assets/{asset_info['asset_id']}",
+        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        "sha256": _sha256(PLAYERS_CACHE_PATH),
+        "schema_version": PLAYERS_SCHEMA_VERSION,
+        "row_count": row_count,
+    }
+    _save_manifest(manifest)
+    return manifest["players"]
+
+
+def fetch_players_raw() -> Path:
+    """Downloads (or reuses a cached copy of) players.csv BY ITS
+    PINNED ASSET ID from the committed manifest, then verifies it
+    against the manifest's recorded sha256 before returning the local
+    path. Never writes the manifest itself."""
+    manifest = _load_manifest()
+    recorded = manifest.get("players")
+    if recorded is None:
+        raise RuntimeError(
+            f"players.csv has no entry in {MANIFEST_PATH.name}. Call "
+            f"register_players_manifest_entry() deliberately to record "
+            f"its baseline asset id and hash before it can be used by "
+            f"the pipeline -- this is never done automatically."
+        )
+
+    if not PLAYERS_CACHE_PATH.exists():
+        _download_by_asset_id(recorded["asset_id"], PLAYERS_CACHE_PATH)
+
+    file_hash = _sha256(PLAYERS_CACHE_PATH)
+    if recorded["sha256"] != file_hash:
+        raise RuntimeError(
+            f"INTEGRITY CHECK FAILED for players.csv: the file at "
+            f"{recorded['asset_url']} no longer matches the sha256 recorded "
+            f"in {MANIFEST_PATH.name} (recorded {recorded['sha256'][:12]}..., "
+            f"got {file_hash[:12]}...). Do not silently proceed. Investigate "
+            f"what changed, then deliberately call "
+            f"register_players_manifest_entry(force=True) to accept the new "
+            f"data as the new baseline."
+        )
+    return PLAYERS_CACHE_PATH
+
+
+def fetch_players() -> pd.DataFrame:
+    """Raw players.csv as-is -- no normalize step, see module
+    docstring's "EXTENDED TO TWO MORE..." section for why."""
+    path = fetch_players_raw()
+    return pd.read_csv(path, low_memory=False)
+
+
+# --- depth_charts (rookie-QB Week-1-starter correction) -- season grain ---
+
+
+def register_depth_chart_manifest_entry(season: int, force: bool = False) -> dict:
+    """The ONLY function that writes or updates a depth_charts manifest
+    entry -- mirrors register_manifest_entry() above exactly, just
+    keyed under manifest["depth_charts"]["seasons"] instead of the
+    top-level "seasons" key stats_player uses, so the two releases'
+    season-keyed entries can never collide."""
+    local_path = DEPTH_CHARTS_CACHE_DIR / f"depth_charts_{season}.csv"
+    asset_info = _lookup_asset_id_by_name(
+        DEPTH_CHARTS_RELEASE_TAG, DEPTH_CHARTS_ASSET_NAME_TEMPLATE.format(season=season)
+    )
+
+    if force or not local_path.exists():
+        _download_by_asset_id(asset_info["asset_id"], local_path)
+
+    manifest = _load_manifest()
+    manifest.setdefault("depth_charts", {"seasons": {}})
+    with open(local_path, "rb") as f:
+        row_count = sum(1 for _ in f) - 1  # minus header
+    manifest["depth_charts"]["seasons"][str(season)] = {
+        "asset_id": asset_info["asset_id"],
+        "upstream_updated_at": asset_info["upstream_updated_at"],
+        "asset_url": f"{GITHUB_API_BASE}/releases/assets/{asset_info['asset_id']}",
+        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        "sha256": _sha256(local_path),
+        "schema_version": DEPTH_CHARTS_SCHEMA_VERSION,
+        "row_count": row_count,
+    }
+    _save_manifest(manifest)
+    return manifest["depth_charts"]["seasons"][str(season)]
+
+
+def fetch_depth_chart_raw(season: int) -> Path:
+    """Downloads (or reuses a cached copy of) one season's raw
+    depth_charts file BY ITS PINNED ASSET ID from the committed
+    manifest, then verifies it against the manifest's recorded sha256
+    before returning the local path. Never writes the manifest
+    itself."""
+    manifest = _load_manifest()
+    recorded = manifest.get("depth_charts", {}).get("seasons", {}).get(str(season))
+    if recorded is None:
+        raise RuntimeError(
+            f"depth_charts season {season} has no entry in {MANIFEST_PATH.name}. "
+            f"If this is a genuinely new season, call "
+            f"register_depth_chart_manifest_entry({season}) deliberately to "
+            f"record its baseline asset id and hash before it can be used by "
+            f"the pipeline -- this is never done automatically."
+        )
+
+    local_path = DEPTH_CHARTS_CACHE_DIR / f"depth_charts_{season}.csv"
+    if not local_path.exists():
+        _download_by_asset_id(recorded["asset_id"], local_path)
+
+    file_hash = _sha256(local_path)
+    if recorded["sha256"] != file_hash:
+        raise RuntimeError(
+            f"INTEGRITY CHECK FAILED for depth_charts season {season}: the "
+            f"file at {recorded['asset_url']} no longer matches the sha256 "
+            f"recorded in {MANIFEST_PATH.name} (recorded "
+            f"{recorded['sha256'][:12]}..., got {file_hash[:12]}...). Do not "
+            f"silently proceed. Investigate what changed, then deliberately "
+            f"call register_depth_chart_manifest_entry({season}, force=True) "
+            f"to accept the new data as the new baseline."
+        )
+    return local_path
+
+
+def fetch_depth_chart(season: int) -> pd.DataFrame:
+    """Raw depth_charts_<season>.csv as-is -- no normalize step, see
+    module docstring's "EXTENDED TO TWO MORE..." section for why."""
+    path = fetch_depth_chart_raw(season)
+    return pd.read_csv(path, low_memory=False)

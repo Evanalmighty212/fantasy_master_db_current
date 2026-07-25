@@ -24,6 +24,16 @@ on, not speculative coverage:
   the migration (2010 and 2025 both re-fetched clean from an emptied
   cache), reproduced here with a mocked network call so it runs
   offline in CI.
+
+TestPlayersFetch and TestDepthChartFetch cover the players/depth_charts
+extension added for the Stars-by-Value acquisition-cost classifier
+(see STARS_BY_VALUE_IMPLEMENTATION_PLAN.md section 3). Same integrity
+model as stats_player above, so the same three behaviors matter here
+too: unrecorded season/no-players-entry raises, hash mismatch raises,
+and an empty local cache with a still-valid manifest entry re-fetches
+cleanly. Not re-testing normalize_weekly-equivalent logic here because
+there isn't one -- both fetch_players() and fetch_depth_chart() return
+the raw parsed CSV as-is (see module docstring).
 """
 
 import sys
@@ -176,3 +186,175 @@ class TestEmptyCacheRetrieval:
         with patch("requests.get", return_value=_fake_response(b"a,b\n1,999\n")):
             with pytest.raises(RuntimeError, match="INTEGRITY CHECK FAILED"):
                 ns.fetch_season_raw(1999)
+
+
+class TestPlayersFetch:
+    """players.csv is NOT season-grain (one file, all draft years) --
+    these tests protect the single-entry manifest shape (manifest["players"],
+    not a seasons dict) and the same fail-loud integrity behaviors as
+    stats_player, adapted for that shape."""
+
+    def test_raises_on_unregistered_players_entry(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ns, "PLAYERS_CACHE_PATH", tmp_path / "players.csv")
+        monkeypatch.setattr(ns, "MANIFEST_PATH", tmp_path / "manifest.json")
+
+        with pytest.raises(RuntimeError, match="no entry in"):
+            ns.fetch_players_raw()
+
+    def test_register_then_fetch_passes_when_hash_matches(self, tmp_path, monkeypatch):
+        cache_path = tmp_path / "players.csv"
+        monkeypatch.setattr(ns, "PLAYERS_CACHE_PATH", cache_path)
+        monkeypatch.setattr(ns, "MANIFEST_PATH", tmp_path / "manifest.json")
+
+        content = b"gsis_id,position,draft_round\n00-001,QB,1\n"
+        with patch("nflverse_source._lookup_asset_id_by_name", return_value={"asset_id": 333, "upstream_updated_at": "t"}), \
+             patch("requests.get", return_value=_fake_response(content)):
+            ns.register_players_manifest_entry()
+
+        result_path = ns.fetch_players_raw()
+        assert result_path == cache_path
+        assert result_path.read_bytes() == content
+
+    def test_raises_on_hash_mismatch(self, tmp_path, monkeypatch):
+        cache_path = tmp_path / "players.csv"
+        monkeypatch.setattr(ns, "PLAYERS_CACHE_PATH", cache_path)
+        monkeypatch.setattr(ns, "MANIFEST_PATH", tmp_path / "manifest.json")
+
+        with patch("nflverse_source._lookup_asset_id_by_name", return_value={"asset_id": 333, "upstream_updated_at": "t"}), \
+             patch("requests.get", return_value=_fake_response(b"gsis_id,position\n00-001,QB\n")):
+            ns.register_players_manifest_entry()
+
+        cache_path.write_text("gsis_id,position\n00-001,RB\n")  # simulate upstream drift
+
+        with pytest.raises(RuntimeError, match="INTEGRITY CHECK FAILED"):
+            ns.fetch_players_raw()
+
+    def test_fetch_downloads_when_cache_is_empty(self, tmp_path, monkeypatch):
+        cache_path = tmp_path / "players.csv"
+        monkeypatch.setattr(ns, "PLAYERS_CACHE_PATH", cache_path)
+        monkeypatch.setattr(ns, "MANIFEST_PATH", tmp_path / "manifest.json")
+
+        content = b"gsis_id,position\n00-001,QB\n"
+        with patch("nflverse_source._lookup_asset_id_by_name", return_value={"asset_id": 444, "upstream_updated_at": "t"}), \
+             patch("requests.get", return_value=_fake_response(content)):
+            ns.register_players_manifest_entry()
+
+        cache_path.unlink()  # simulate a fresh clone: manifest committed, cache absent
+
+        with patch("requests.get", return_value=_fake_response(content)) as mock_get:
+            result_path = ns.fetch_players_raw()
+
+        assert result_path.exists()
+        assert result_path.read_bytes() == content
+        mock_get.assert_called_once()
+
+    def test_fetch_players_returns_dataframe(self, tmp_path, monkeypatch):
+        cache_path = tmp_path / "players.csv"
+        monkeypatch.setattr(ns, "PLAYERS_CACHE_PATH", cache_path)
+        monkeypatch.setattr(ns, "MANIFEST_PATH", tmp_path / "manifest.json")
+
+        content = b"gsis_id,position,draft_round\n00-001,QB,1\n00-002,RB,\n"
+        with patch("nflverse_source._lookup_asset_id_by_name", return_value={"asset_id": 555, "upstream_updated_at": "t"}), \
+             patch("requests.get", return_value=_fake_response(content)):
+            ns.register_players_manifest_entry()
+
+        out = ns.fetch_players()
+        assert list(out["gsis_id"]) == ["00-001", "00-002"]
+        assert list(out["position"]) == ["QB", "RB"]
+
+
+class TestDepthChartFetch:
+    """depth_charts IS season-grain like stats_player, but keyed under
+    manifest["depth_charts"]["seasons"] rather than the top-level
+    "seasons" key -- these tests protect that the two namespaces don't
+    collide and that the same fail-loud integrity behaviors hold."""
+
+    def test_raises_on_unrecorded_season(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ns, "DEPTH_CHARTS_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(ns, "MANIFEST_PATH", tmp_path / "manifest.json")
+
+        with pytest.raises(RuntimeError, match="no entry in"):
+            ns.fetch_depth_chart_raw(1999)
+
+    def test_register_then_fetch_passes_when_hash_matches(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ns, "DEPTH_CHARTS_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(ns, "MANIFEST_PATH", tmp_path / "manifest.json")
+
+        content = b"season,club_code,week,game_type,depth_team,position,gsis_id\n1999,KC,1,REG,1,QB,00-001\n"
+        with patch("nflverse_source._lookup_asset_id_by_name", return_value={"asset_id": 666, "upstream_updated_at": "t"}), \
+             patch("requests.get", return_value=_fake_response(content)):
+            ns.register_depth_chart_manifest_entry(1999)
+
+        result_path = ns.fetch_depth_chart_raw(1999)
+        assert result_path == tmp_path / "depth_charts_1999.csv"
+        assert result_path.read_bytes() == content
+
+    def test_stats_player_and_depth_chart_season_keys_do_not_collide(self, tmp_path, monkeypatch):
+        """The exact scenario the separate manifest namespace exists to
+        prevent: registering the same season number for both releases
+        must not let one entry clobber the other."""
+        monkeypatch.setattr(ns, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(ns, "DEPTH_CHARTS_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(ns, "MANIFEST_PATH", tmp_path / "manifest.json")
+
+        with patch("nflverse_source._lookup_asset_id", return_value={"asset_id": 111, "upstream_updated_at": "t"}), \
+             patch("requests.get", return_value=_fake_response(b"a,b\n1,2\n")):
+            ns.register_manifest_entry(2020)
+
+        with patch("nflverse_source._lookup_asset_id_by_name", return_value={"asset_id": 777, "upstream_updated_at": "t"}), \
+             patch("requests.get", return_value=_fake_response(b"c,d\n3,4\n")):
+            ns.register_depth_chart_manifest_entry(2020)
+
+        stats_path = ns.fetch_season_raw(2020)
+        depth_path = ns.fetch_depth_chart_raw(2020)
+        assert stats_path.read_bytes() == b"a,b\n1,2\n"
+        assert depth_path.read_bytes() == b"c,d\n3,4\n"
+
+    def test_raises_on_hash_mismatch(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ns, "DEPTH_CHARTS_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(ns, "MANIFEST_PATH", tmp_path / "manifest.json")
+        local_path = tmp_path / "depth_charts_1999.csv"
+
+        with patch("nflverse_source._lookup_asset_id_by_name", return_value={"asset_id": 888, "upstream_updated_at": "t"}), \
+             patch("requests.get", return_value=_fake_response(b"a,b\n1,2\n")):
+            ns.register_depth_chart_manifest_entry(1999)
+
+        local_path.write_text("a,b\n1,999\n")  # simulate upstream drift
+
+        with pytest.raises(RuntimeError, match="INTEGRITY CHECK FAILED"):
+            ns.fetch_depth_chart_raw(1999)
+
+    def test_fetch_downloads_when_cache_is_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ns, "DEPTH_CHARTS_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(ns, "MANIFEST_PATH", tmp_path / "manifest.json")
+
+        content = b"season,club_code,week,game_type,depth_team,position,gsis_id\n1999,KC,1,REG,1,QB,00-001\n"
+        with patch("nflverse_source._lookup_asset_id_by_name", return_value={"asset_id": 999, "upstream_updated_at": "t"}), \
+             patch("requests.get", return_value=_fake_response(content)):
+            ns.register_depth_chart_manifest_entry(1999)
+
+        (tmp_path / "depth_charts_1999.csv").unlink()
+
+        with patch("requests.get", return_value=_fake_response(content)) as mock_get:
+            result_path = ns.fetch_depth_chart_raw(1999)
+
+        assert result_path.exists()
+        assert result_path.read_bytes() == content
+        mock_get.assert_called_once()
+
+    def test_fetch_depth_chart_returns_dataframe(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ns, "DEPTH_CHARTS_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(ns, "MANIFEST_PATH", tmp_path / "manifest.json")
+
+        content = (
+            b"season,club_code,week,game_type,depth_team,position,gsis_id\n"
+            b"1999,KC,1,REG,1,QB,00-001\n"
+            b"1999,KC,1,REG,2,QB,00-002\n"
+        )
+        with patch("nflverse_source._lookup_asset_id_by_name", return_value={"asset_id": 1010, "upstream_updated_at": "t"}), \
+             patch("requests.get", return_value=_fake_response(content)):
+            ns.register_depth_chart_manifest_entry(1999)
+
+        out = ns.fetch_depth_chart(1999)
+        assert list(out["depth_team"]) == [1, 2]
+        assert list(out["gsis_id"]) == ["00-001", "00-002"]
