@@ -2,11 +2,18 @@
 
 Implementation-neutral scaffolding for evaluating an "absolute-impact,
 stars-by-value" alternative to Dataset 3's current relative
-top-10%-by-position target -- **no methodological choice is made
-here.** Expected-production curve, replacement level, weighting,
-absolute threshold, and raw-vs-percentage outperformance are all still
-open. This directory makes it possible to evaluate those choices once
-they're made; it doesn't make them.
+top-10%-by-position target.
+
+**The methodology is now settled** -- see
+`STARS_BY_VALUE_METHODOLOGY.md` for the full, current decision record
+(production composite, minimal-market-cost baseline, position
+thresholds, label schema) and `STARS_BY_VALUE_IMPLEMENTATION_PLAN.md`
+for how it turns into pipeline code. Everything in this directory,
+including the calibration scripts indexed below, is the exploratory
+work that *led* to those settled decisions -- a research log, not an
+independent source of truth. Where this README or a script's own
+comments disagree with `STARS_BY_VALUE_METHODOLOGY.md`, the
+methodology document wins.
 
 Not part of the production pipeline. Nothing under `scripts/`,
 `config.py`, or the `docs/*_SPECIFICATION.md` files is touched by
@@ -35,6 +42,56 @@ python -m pytest research/dataset3/tests/                    # tests for lib/ on
 | `comparison_harness.py` | Scores the broad dataset under multiple `ScoringDefinition`s (current LWI, the preserved relative top-10%-by-position benchmark, and any future candidate) and reports annual/positional qualifying counts, top seasons, and rank changes. The one non-LWI definition included is explicitly labeled DEMO-ONLY -- a placeholder to prove the harness works, not a proposal. |
 | `human_review_export.py` | Full CSV plus TWO shortlists -- a rank-based one with POSITION-SPECIFIC cutoffs (2x each position's own LWI replacement threshold, imported from `config.py`; a flat cutoff across positions was tried and rejected during review since it under-covers deep positions like RB/WR relative to QB), and a value-based one (beat own overall ADP, no rank cutoff at all, so it catches real value stories the rank-based list structurally can't). Includes undrafted/unresolved players throughout, not just current LWI-eligible ones. |
 | `tests/test_lib.py` | Tests for `lib/` only, per the task's "test reusable code" scope -- the one-off table scripts are thin wrappers around `lib/` and aren't separately tested. Isolated from the production `tests/` suite at the repo root on purpose. |
+
+## Calibration scripts (later investigation -- production formula, replacement level, expected production, thresholds)
+
+These aren't a pipeline to re-run in order -- they're a chronological
+research log, the equivalent of dated lab notebook entries. Several
+scripts on the same question supersede an earlier one on that same
+question (e.g. `expected_production_by_round_investigation.py` ->
+`..._position_adjustment_investigation.py` -> `..._residual_diagnostics.py`
+-> `..._temporal_validation.py` is the actual order the offset/recency
+questions were resolved in, each building on the last, not four
+independent takes). **`STARS_BY_VALUE_METHODOLOGY.md` is the
+authoritative record of what was concluded and why -- these scripts
+are the evidence and reproducibility trail behind it, cited there by
+name (`Source: ...`) at the relevant decision, not an independent
+narrative.** Deliberately not added to "Run order" above for the same
+reason -- there is no single reproducible output to regenerate by
+running them in sequence.
+
+**Production formula / AATP / shrinkage**:
+- `production_weight_and_boundary_calibration.py` -- the AATP
+  construction (`build_adp_aware_aatp()`), the most-reused function
+  across every later script in this group.
+- `production_formula_and_active_window_comparison.py` -- production
+  weight and meaningful-ADP boundary comparisons ahead of the AATP
+  build above.
+- `normalized_shrinkage_comparison.py` -- the normalized-vs-ordinary
+  shrinkage math that led to k=5.
+- `short_season_ppg_adjustment_comparison.py` -- short-season
+  treatment alternatives compared before settling on normalized
+  shrinkage.
+
+**Replacement level**:
+- `replacement_level_definition_comparison.py`
+- `replacement_flex_allocation_sensitivity.py`
+- `replacement_par_position_adjustment_selection.py`
+- `replacement_cross_position_calibration_check.py` -- the first
+  appearance of the RB/TE cross-position scale asymmetry, later
+  resolved via position-specific thresholds (section 10).
+
+**Expected production by round** (chronological -- each supersedes/extends the last):
+- `expected_production_by_round_investigation.py`
+- `expected_production_position_adjustment_investigation.py`
+- `expected_production_position_adjustment_residual_diagnostics.py`
+- `expected_production_replacement_adjusted_retest.py`
+- `expected_production_temporal_validation.py`
+- `aatp_round_refit_and_short_season_calibration.py`
+
+**League-winner label / threshold calibration**:
+- `league_winner_label_framework_comparison.py`
+- `league_winner_value_signal_and_floor_calibration.py`
 
 ## Known data limitations carried through from the audit
 
