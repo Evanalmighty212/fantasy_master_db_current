@@ -226,3 +226,349 @@ def validate_lwi_config():
         raise ValueError(
             "Invalid LWI configuration in config.py:\n  - " + "\n  - ".join(errors)
         )
+
+
+# =====================================================================
+# --- Stars-by-Value (SBV) parameters -- Dataset 3 historical label ---
+# =====================================================================
+# See research/dataset3/STARS_BY_VALUE_METHODOLOGY.md for the full
+# settled decision record (sections 1-11) and
+# research/dataset3/STARS_BY_VALUE_IMPLEMENTATION_PLAN.md for how this
+# turns into pipeline code. Kept FULLY SEPARATE from the LWI_* block
+# above on purpose -- Stars-by-Value (Dataset 3) and LWI (Dataset 1)
+# are two different specs, with their own, independently-calibrated
+# replacement-level definitions and formulas. Never read an LWI_*
+# constant from SBV code, or vice versa, even where a name or shape
+# coincidentally matches (see TestNoAccidentalLwiReuse in
+# tests/test_sbv_config.py).
+#
+# Every constant below is tagged [SETTLED METHODOLOGY] (a real,
+# empirically-calibrated decision recorded in
+# STARS_BY_VALUE_METHODOLOGY.md -- change it there first, this file
+# second) or [IMPLEMENTATION METADATA] (a name, path, or grouping
+# that supports the settled methodology but isn't itself a
+# methodological decision).
+
+# [IMPLEMENTATION METADATA] Version identifier for the SBV formula/
+# schema as a whole -- bump whenever any SBV_* value below changes in
+# a way that would make output non-comparable to a prior run,
+# mirroring LWI_VERSION's convention. Also the value stamped into
+# every row of the expected-production lookup cache
+# (SBV_EXPECTED_PRODUCTION_LOOKUP_PATH) so a stale cache can be
+# detected and rejected rather than silently used.
+SBV_VERSION = "1.0"
+
+# [IMPLEMENTATION METADATA] The four positions Stars-by-Value applies
+# to. A player-season at any other position is always out_of_scope
+# (provenance out_of_scope_non_skill_position) -- see SBV_STATUSES.
+SBV_POSITIONS = ("QB", "RB", "WR", "TE")
+
+# [SETTLED METHODOLOGY] Section 7 -- honest expanding-window fitting:
+# minimum prior seasons required before any E_P prediction is made,
+# and the season trustworthy ADP data begins. SBV_FIRST_SCOREABLE_SEASON
+# is DERIVED from the other two (2007 + 3 = 2010), not an
+# independently chosen cutoff -- validate_sbv_config() checks this
+# arithmetic directly rather than letting the three drift apart.
+SBV_TRUSTWORTHY_ADP_START_SEASON = 2007
+SBV_MIN_PRIOR_SEASONS = 3
+SBV_FIRST_SCOREABLE_SEASON = 2010
+
+# [SETTLED METHODOLOGY] Section 2 -- verified historical regular-season
+# length, NOT derived from max(games_played) in the data (two known
+# single-row anomalies traced to mid-season team changes, not real
+# 17/18-game seasons -- see section 2). SBV_SEASON_LENGTH_ERA_CUTOFF is
+# the first season using the 17-game length; every season before it
+# uses 16.
+SBV_SEASON_LENGTH_16_GAME = 16
+SBV_SEASON_LENGTH_17_GAME = 17
+SBV_SEASON_LENGTH_ERA_CUTOFF = 2021
+
+# [SETTLED METHODOLOGY] Section 3 -- normalized reliability shrinkage.
+# A continuous confidence parameter, not a minimum-games cutoff -- it
+# reaches exactly 1.0 (full trust) only at a complete season. See
+# section 3 for why k=5 was chosen over k=2/4/6/7/8.
+SBV_SHRINKAGE_K = 5
+
+# [SETTLED METHODOLOGY] Section 4 -- production composite weights.
+# Provisional 50/50 per section 4's own text -- alternative splits
+# were tested and found statistically indistinguishable, but the
+# weight choice itself is explicitly left open pending further
+# calibration, unlike the other constants in this block. Recorded
+# here because it's the value actually in use, not because it's
+# beyond revisiting.
+SBV_PRODUCTION_WEIGHT_AATP = 0.5
+SBV_PRODUCTION_WEIGHT_PPG_EQ = 0.5
+
+# [SETTLED METHODOLOGY] Section 5 -- meaningful-production gate
+# (p82.5): fixed, position-specific production-composite floors,
+# calibrated once from the full historical reference population and
+# held constant across seasons (the Absolute Impact property applied
+# to the gate itself).
+SBV_PRODUCTION_GATE_FLOOR = {
+    "QB": 142.599891,
+    "RB": 113.712500,
+    "WR": 98.105667,
+    "TE": 66.679583,
+}
+
+# [SETTLED METHODOLOGY] Section 5 -- the replacement-level definition
+# SBV uses (flex_rb_wr_heavy). DISTINCT from LWI_REPLACEMENT_RANK_THRESHOLDS
+# above -- do not conflate the two specs' replacement definitions,
+# even though both ultimately compute "replacement level" from roster
+# math. The rank cutoffs and flex split differ from LWI's on purpose
+# (independently calibrated, not a shared value).
+SBV_REPLACEMENT_ROSTER_PRESET = "12_team_standard"
+SBV_REPLACEMENT_RANK_CUTOFFS = {"QB": 12, "RB": 29, "WR": 29, "TE": 13}
+SBV_REPLACEMENT_FLEX_ALLOCATION = {"RB": 0.45, "WR": 0.45, "TE": 0.10}
+SBV_REPLACEMENT_WINDOW = 12
+
+# [SETTLED METHODOLOGY] Section 7 -- expected-production-by-round
+# fitting. QB_RB is the settled positional-offset variant (statistically
+# indistinguishable from the full four-position ceiling, while TE-only/
+# WR-only barely beat doing nothing). Recency weighting (5-year half-
+# life) is QB-SPECIFIC -- reconfirmed significant for QB only, not RB
+# or WR, under the fully settled construction.
+SBV_ROUND_OFFSET_POSITIONS = frozenset({"QB", "RB"})
+SBV_RECENCY_HALF_LIFE_YEARS = 5
+SBV_RECENCY_POSITIONS = frozenset({"QB"})
+
+# [SETTLED METHODOLOGY] Section 10 -- lambda (the weight on the
+# acquisition-cost penalty in Stars-by-Value Score = P - lambda x E_P)
+# and the final, settled position-specific Star thresholds. Both are
+# calibration choices supported by face validity, sensitivity
+# analysis, and narrative-blind review -- explicitly NOT discovered
+# natural breakpoints (section 10's "Gap analysis" found no dominant
+# natural break inside the plausible region for any position).
+SBV_LAMBDA = 0.35
+SBV_STAR_THRESHOLD = {"QB": 176.5, "RB": 188, "WR": 171, "TE": 134}
+
+# [SETTLED METHODOLOGY] Section 9 -- minimal-market-cost expectation:
+# MMC_E_P(position, season) = opportunity_probability(position) x 0.5
+# x replacement_ppg(position) x G(season). Both the probabilities and
+# the replacement rates below are FROZEN, already-calibrated outputs
+# (equal-weighted full history 2007-2024; checked for era drift across
+# four eras and found none large or monotonic enough to justify
+# recency weighting) -- never recomputed live from a fresh
+# stats_player/MFL fetch at scoring time. The published headline
+# figures (31.0/23.1/35.7/19.3) are specifically the 17-game-era
+# (G=2021+) values -- season-varying G is applied at scoring time in
+# code, not baked into a single constant here.
+SBV_MMC_OPPORTUNITY_PROBABILITY = {"QB": 0.247, "RB": 0.290, "WR": 0.368, "TE": 0.285}
+SBV_MMC_REPLACEMENT_PPG = {"QB": 14.746, "RB": 9.361, "WR": 11.423, "TE": 7.970}
+
+# [SETTLED METHODOLOGY] Section 9 -- the "meaningful usage" definition
+# used ONLY to calibrate SBV_MMC_OPPORTUNITY_PROBABILITY above (a real,
+# usage-based opportunity-rate estimate from a broad pre-outcome
+# population, deliberately never fantasy points or the p82.5 gate).
+# NOT consulted by scoring logic at runtime -- kept here for
+# traceability if the probabilities are ever recalibrated. Explicitly
+# documented in the methodology as "a convention, not a uniquely
+# correct cutoff," which is exactly why it must stay a named config
+# constant rather than an inline magic number.
+SBV_MMC_USAGE_DEFINITION = {
+    "QB": {"stat": "attempts", "min": 100},
+    "RB": {"stat": "touches", "min": 40},
+    "WR": {"stat": "targets", "min": 20},
+    "TE": {"stat": "targets", "min": 20},
+}
+
+# [IMPLEMENTATION METADATA] Section 9 -- MFL corroboration window and
+# query period. MFL has no usable historical ADP data before 2011 at
+# any query period (confirmed directly) -- the 2010 cohort uses the
+# manual-override fallback (SBV_MMC_2010_OVERRIDE_PATH) instead.
+# PERIOD must always be passed explicitly as AUG15 -- the
+# unparameterized default MFL report blends in-season activity and is
+# NOT a preseason snapshot (see docs/ADP_SOURCE_MATRIX.md's
+# PERIOD-contamination finding).
+SBV_MFL_AVAILABLE_FROM_SEASON = 2011
+SBV_MFL_PERIOD = "AUG15"
+
+# [SETTLED METHODOLOGY] Section 11 -- the seven mutually exclusive
+# label statuses and the ten structured provenance values. Single
+# source of truth: import these everywhere else that needs to
+# validate or branch on status/provenance, rather than restating the
+# list (and risking it drifting out of sync).
+SBV_STATUSES = (
+    "adp_scored",
+    "unscoreable_adp_needs_review",
+    "minimal_market_cost_scored",
+    "unscoreable_drafted_adp_missing",
+    "unscoreable_ambiguous",
+    "below_production_gate",
+    "out_of_scope",
+)
+SBV_PROVENANCE_TYPES = (
+    "adp_matched_clean",
+    "adp_matched_needs_review",
+    "mmc_verified_corroborated",
+    "mmc_verified_2010_manual_override",
+    "evidence_drafted_unresolved",
+    "evidence_ambiguous_disagreement",
+    "below_production_gate",
+    "out_of_scope_non_skill_position",
+    "out_of_scope_temporal_window",
+    "out_of_scope_insufficient_participation",
+)
+
+# [IMPLEMENTATION METADATA] Canonical artifact paths -- see the
+# implementation plan's decisions #1 (separate Parquet output, not
+# merged into the LWI master table), #2 (materialized E_P lookup
+# cache), #3 (the 2010 manual-override file), and #5 (Parquet
+# canonical, CSV a generated convenience export, never authoritative
+# for dtype).
+SBV_OUTPUT_PARQUET_PATH = "data/processed/stars_by_value_player_seasons.parquet"
+SBV_OUTPUT_CSV_EXPORT_PATH = "data/exports/stars_by_value_player_seasons.csv"
+SBV_OUTPUT_CSV_SCHEMA_PATH = "data/exports/stars_by_value_player_seasons_SCHEMA.md"
+SBV_EXPECTED_PRODUCTION_LOOKUP_PATH = "data/processed/sbv_expected_production_lookup.parquet"
+SBV_MMC_2010_OVERRIDE_PATH = "data/manual/mmc_2010_manual_overrides.csv"
+
+
+def validate_sbv_config():
+    """
+    Fail loudly on an invalid SBV configuration rather than silently
+    scoring/labeling from bad inputs -- mirrors validate_lwi_config()'s
+    role and calling convention exactly. Intended to be called at the
+    start of every SBV pipeline stage (08-11), not optional.
+    """
+    errors = []
+
+    def _check_position_keys(name, d):
+        if set(d.keys()) != set(SBV_POSITIONS):
+            errors.append(
+                f"{name} keys must be exactly {set(SBV_POSITIONS)}, got {set(d.keys())}"
+            )
+
+    # --- temporal derivation (not just asserted in a comment) ---
+    if SBV_FIRST_SCOREABLE_SEASON != SBV_TRUSTWORTHY_ADP_START_SEASON + SBV_MIN_PRIOR_SEASONS:
+        errors.append(
+            "SBV_FIRST_SCOREABLE_SEASON must equal SBV_TRUSTWORTHY_ADP_START_SEASON + "
+            f"SBV_MIN_PRIOR_SEASONS ({SBV_TRUSTWORTHY_ADP_START_SEASON} + "
+            f"{SBV_MIN_PRIOR_SEASONS} = {SBV_TRUSTWORTHY_ADP_START_SEASON + SBV_MIN_PRIOR_SEASONS}), "
+            f"got {SBV_FIRST_SCOREABLE_SEASON}"
+        )
+    if not isinstance(SBV_MIN_PRIOR_SEASONS, int) or SBV_MIN_PRIOR_SEASONS < 1:
+        errors.append(f"SBV_MIN_PRIOR_SEASONS must be a positive integer, got {SBV_MIN_PRIOR_SEASONS}")
+
+    # --- season length ---
+    if SBV_SEASON_LENGTH_16_GAME >= SBV_SEASON_LENGTH_17_GAME:
+        errors.append(
+            f"SBV_SEASON_LENGTH_16_GAME ({SBV_SEASON_LENGTH_16_GAME}) must be less than "
+            f"SBV_SEASON_LENGTH_17_GAME ({SBV_SEASON_LENGTH_17_GAME})"
+        )
+    if not isinstance(SBV_SEASON_LENGTH_ERA_CUTOFF, int):
+        errors.append(f"SBV_SEASON_LENGTH_ERA_CUTOFF must be an integer season, got {SBV_SEASON_LENGTH_ERA_CUTOFF}")
+
+    # --- shrinkage k ---
+    if not isinstance(SBV_SHRINKAGE_K, (int, float)) or SBV_SHRINKAGE_K <= 0:
+        errors.append(f"SBV_SHRINKAGE_K must be a positive number, got {SBV_SHRINKAGE_K}")
+
+    # --- production composite weights sum to 1.0 ---
+    prod_weight_sum = SBV_PRODUCTION_WEIGHT_AATP + SBV_PRODUCTION_WEIGHT_PPG_EQ
+    if abs(prod_weight_sum - 1.0) > 1e-6:
+        errors.append(
+            f"SBV_PRODUCTION_WEIGHT_AATP + SBV_PRODUCTION_WEIGHT_PPG_EQ must sum to 1.0, "
+            f"got {prod_weight_sum}"
+        )
+
+    # --- position-complete, positive-valued dicts ---
+    for name, d in [
+        ("SBV_PRODUCTION_GATE_FLOOR", SBV_PRODUCTION_GATE_FLOOR),
+        ("SBV_REPLACEMENT_RANK_CUTOFFS", SBV_REPLACEMENT_RANK_CUTOFFS),
+        ("SBV_STAR_THRESHOLD", SBV_STAR_THRESHOLD),
+        ("SBV_MMC_OPPORTUNITY_PROBABILITY", SBV_MMC_OPPORTUNITY_PROBABILITY),
+        ("SBV_MMC_REPLACEMENT_PPG", SBV_MMC_REPLACEMENT_PPG),
+        ("SBV_MMC_USAGE_DEFINITION", SBV_MMC_USAGE_DEFINITION),
+    ]:
+        _check_position_keys(name, d)
+
+    for pos, floor in SBV_PRODUCTION_GATE_FLOOR.items():
+        if not isinstance(floor, (int, float)) or floor <= 0:
+            errors.append(f"SBV_PRODUCTION_GATE_FLOOR['{pos}'] must be a positive number, got {floor}")
+    for pos, thr in SBV_STAR_THRESHOLD.items():
+        if not isinstance(thr, (int, float)) or thr <= 0:
+            errors.append(f"SBV_STAR_THRESHOLD['{pos}'] must be a positive number, got {thr}")
+
+    # --- threshold ORDERING: the production gate must be a lower bar
+    # than the final Star threshold for every position -- the gate is
+    # a prerequisite to be "in the conversation," not the final bar
+    # itself (section 11's four-step processing order depends on this
+    # actually being true, not just documented as true). ---
+    for pos in SBV_POSITIONS:
+        if pos in SBV_PRODUCTION_GATE_FLOOR and pos in SBV_STAR_THRESHOLD:
+            if SBV_PRODUCTION_GATE_FLOOR[pos] >= SBV_STAR_THRESHOLD[pos]:
+                errors.append(
+                    f"SBV_PRODUCTION_GATE_FLOOR['{pos}'] ({SBV_PRODUCTION_GATE_FLOOR[pos]}) "
+                    f"must be strictly less than SBV_STAR_THRESHOLD['{pos}'] "
+                    f"({SBV_STAR_THRESHOLD[pos]}) -- the gate must be an easier bar than "
+                    "the final threshold"
+                )
+
+    # --- replacement definition ---
+    for pos, cutoff in SBV_REPLACEMENT_RANK_CUTOFFS.items():
+        if not isinstance(cutoff, int) or cutoff <= 0:
+            errors.append(f"SBV_REPLACEMENT_RANK_CUTOFFS['{pos}'] must be a positive integer, got {cutoff}")
+    flex_sum = sum(SBV_REPLACEMENT_FLEX_ALLOCATION.values())
+    if abs(flex_sum - 1.0) > 1e-6:
+        errors.append(f"SBV_REPLACEMENT_FLEX_ALLOCATION must sum to 1.0, got {flex_sum}")
+    if not isinstance(SBV_REPLACEMENT_WINDOW, int) or SBV_REPLACEMENT_WINDOW <= 0:
+        errors.append(f"SBV_REPLACEMENT_WINDOW must be a positive integer, got {SBV_REPLACEMENT_WINDOW}")
+
+    # --- positional-offset / recency settings ---
+    if not SBV_ROUND_OFFSET_POSITIONS.issubset(set(SBV_POSITIONS)):
+        errors.append(f"SBV_ROUND_OFFSET_POSITIONS must be a subset of {SBV_POSITIONS}, got {SBV_ROUND_OFFSET_POSITIONS}")
+    if not SBV_RECENCY_POSITIONS.issubset(set(SBV_POSITIONS)):
+        errors.append(f"SBV_RECENCY_POSITIONS must be a subset of {SBV_POSITIONS}, got {SBV_RECENCY_POSITIONS}")
+    if not isinstance(SBV_RECENCY_HALF_LIFE_YEARS, (int, float)) or SBV_RECENCY_HALF_LIFE_YEARS <= 0:
+        errors.append(f"SBV_RECENCY_HALF_LIFE_YEARS must be a positive number, got {SBV_RECENCY_HALF_LIFE_YEARS}")
+
+    # --- lambda ---
+    if not isinstance(SBV_LAMBDA, (int, float)) or not (0 < SBV_LAMBDA < 1):
+        errors.append(f"SBV_LAMBDA must be a number strictly between 0 and 1, got {SBV_LAMBDA}")
+
+    # --- MMC opportunity probabilities in (0, 1), replacement PPG positive ---
+    for pos, p in SBV_MMC_OPPORTUNITY_PROBABILITY.items():
+        if not isinstance(p, (int, float)) or not (0 < p < 1):
+            errors.append(f"SBV_MMC_OPPORTUNITY_PROBABILITY['{pos}'] must be in (0, 1), got {p}")
+    for pos, ppg in SBV_MMC_REPLACEMENT_PPG.items():
+        if not isinstance(ppg, (int, float)) or ppg <= 0:
+            errors.append(f"SBV_MMC_REPLACEMENT_PPG['{pos}'] must be a positive number, got {ppg}")
+    for pos, usage in SBV_MMC_USAGE_DEFINITION.items():
+        if not isinstance(usage, dict) or "stat" not in usage or "min" not in usage:
+            errors.append(f"SBV_MMC_USAGE_DEFINITION['{pos}'] must be a dict with 'stat' and 'min' keys, got {usage}")
+        elif not isinstance(usage["min"], (int, float)) or usage["min"] <= 0:
+            errors.append(f"SBV_MMC_USAGE_DEFINITION['{pos}']['min'] must be a positive number, got {usage['min']}")
+
+    # --- MFL settings ---
+    if not isinstance(SBV_MFL_AVAILABLE_FROM_SEASON, int):
+        errors.append(f"SBV_MFL_AVAILABLE_FROM_SEASON must be an integer season, got {SBV_MFL_AVAILABLE_FROM_SEASON}")
+    if SBV_MFL_PERIOD != "AUG15":
+        errors.append(
+            f"SBV_MFL_PERIOD must be 'AUG15' -- the only period verified to be a clean "
+            f"preseason snapshot (see docs/ADP_SOURCE_MATRIX.md), got {SBV_MFL_PERIOD!r}"
+        )
+
+    # --- status / provenance enums: no duplicates ---
+    if len(SBV_STATUSES) != len(set(SBV_STATUSES)):
+        errors.append(f"SBV_STATUSES must not contain duplicates, got {SBV_STATUSES}")
+    if len(SBV_PROVENANCE_TYPES) != len(set(SBV_PROVENANCE_TYPES)):
+        errors.append(f"SBV_PROVENANCE_TYPES must not contain duplicates, got {SBV_PROVENANCE_TYPES}")
+    if len(SBV_STATUSES) != 7:
+        errors.append(f"SBV_STATUSES must have exactly 7 values (section 11), got {len(SBV_STATUSES)}")
+
+    # --- artifact paths: non-empty strings with the expected extension ---
+    for name, path, expected_ext in [
+        ("SBV_OUTPUT_PARQUET_PATH", SBV_OUTPUT_PARQUET_PATH, ".parquet"),
+        ("SBV_OUTPUT_CSV_EXPORT_PATH", SBV_OUTPUT_CSV_EXPORT_PATH, ".csv"),
+        ("SBV_OUTPUT_CSV_SCHEMA_PATH", SBV_OUTPUT_CSV_SCHEMA_PATH, ".md"),
+        ("SBV_EXPECTED_PRODUCTION_LOOKUP_PATH", SBV_EXPECTED_PRODUCTION_LOOKUP_PATH, ".parquet"),
+        ("SBV_MMC_2010_OVERRIDE_PATH", SBV_MMC_2010_OVERRIDE_PATH, ".csv"),
+    ]:
+        if not isinstance(path, str) or not path.strip():
+            errors.append(f"{name} must be a non-empty string, got {path!r}")
+        elif not path.endswith(expected_ext):
+            errors.append(f"{name} must end with '{expected_ext}', got {path!r}")
+
+    if errors:
+        raise ValueError(
+            "Invalid SBV configuration in config.py:\n  - " + "\n  - ".join(errors)
+        )
