@@ -630,9 +630,42 @@ each leaves the repo in a working state):
    needs undrafted players present in the rank pool -- fixed by
    reordering `scripts/09` to compute AATP on the full population
    first, matching the oracle's own construction order exactly.
-7. `lib/stars_by_value/acquisition_cost.py` (classifier + corroboration
-   + 2010 fallback -- the real new-code effort) + tests against the 6
-   ground-truth cases.
+7. **Landed.** `lib/stars_by_value/acquisition_cost.py` (classifier +
+   corroboration + 2010 fallback -- the real new-code effort, no
+   research-script oracle) + tests against the 6 ground-truth cases.
+   Prose settled record (docs/ADP_SOURCE_MATRIX.md "No-ADP remediation"
+   parts 1-4) translated into an explicit routing table BEFORE
+   implementation, reviewed and approved -- see acquisition_cost.py's
+   own module docstring for the complete table and its two deliberate
+   asymmetries (`ambiguous` + low MFL resolves to MMC exactly like
+   `likely_undrafted`, since a non-committal classifier doesn't
+   contradict a real low-prevalence signal; but classifier-alone can
+   resolve `likely_drafted_missing_evidence` -> drafted-missing when
+   MFL is merely unmatched, while it can NEVER resolve to MMC without
+   real MFL corroboration -- a one-directional rule already settled
+   before this commit). New `SBV_CLASSIFIER_*` and
+   `SBV_MFL_MMC_CORROBORATION_THRESHOLD_PCT` config constants
+   (threshold=20%, strict `<`) with `validate_sbv_config()` checks.
+   Two real findings from this pass, not previously documented
+   anywhere: (1) Kyren Williams 2023 and Gary Barnidge 2015 -- named
+   regression cases with no prior classifier/MFL data on record --
+   were queried live against the real MFL API and cross-checked
+   against real nflverse draft capital; both are non-rookie-season
+   players with no qualifying prior production (landing in
+   `ambiguous`, not `likely_undrafted`), and Barnidge is a real
+   "matched, zero selection" case (present in MFL's 2015 player
+   directory, absent from the AUG15 ADP report entirely). (2) Mike
+   Vick 2010's required `evidence_drafted_unresolved` outcome has no
+   mechanical path from the classifier + the existing 2-type 2010
+   override schema alone (the classifier itself lands him in
+   `ambiguous`, matching the settled record's own admission that this
+   miss was deliberately not patched) -- implemented as a narrow,
+   explicitly named, individually tested historical exception
+   (`VICK_2010_GSIS_ID`) rather than expanding the override schema
+   for one case, per explicit direction. A `usable_adp` 2010 override
+   does not produce an acquisition-cost status at all -- it returns
+   the override's `adp_overall`/`adp_round` and the row exits to the
+   normal ADP-scored path, confirmed as the intended contract.
 8. `lib/stars_by_value/minimal_market_cost.py` + season-varying-`G`
    tests.
 9. `lib/stars_by_value/labeling.py` (status routing) + the full
@@ -649,14 +682,19 @@ each leaves the repo in a working state):
 
 - **Promotable with light rework**: `player_matching.py` and
   `nflverse_source.py` (reused outright).
-- **Built (Commits 2-6, landed)**: `nflverse_source.py`'s `players`/`depth_charts`
+- **Built (Commits 2-7, landed)**: `nflverse_source.py`'s `players`/`depth_charts`
   extensions, `scripts/mfl_client.py`, `lib/stars_by_value/mmc_2010_overrides.py`,
   `lib/stars_by_value/production.py`, `lib/replacement.py`,
-  `lib/stars_by_value/expected_production.py`, `scripts/09_fit_sbv_expected_production.py`.
-- **Must still be written from scratch**: the classifier, the
-  depth-chart correction, the 3-way MFL corroboration, the 2010-cohort
-  fallback, the status-routing/labeling module. None of this exists as
-  saved code today -- all of it ran once, in this conversation,
+  `lib/stars_by_value/expected_production.py`, `scripts/09_fit_sbv_expected_production.py`,
+  `lib/stars_by_value/acquisition_cost.py` (classifier, rookie-QB
+  depth-chart correction, 3-way MFL corroboration, 2010-cohort
+  fallback).
+- **Must still be written from scratch**: the status-routing/labeling
+  module (`labeling.py`) and `minimal_market_cost.py` (the position-specific
+  numeric MMC expectation formula -- acquisition_cost.py only
+  classifies WHICH rows are MMC-eligible, it does not compute the
+  score). None of this exists as saved code today -- all of it ran
+  once, in this conversation,
   against scratch-space files.
 
 ## Research-only assumptions that must not silently enter production

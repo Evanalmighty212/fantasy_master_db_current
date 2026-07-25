@@ -372,6 +372,30 @@ SBV_MMC_USAGE_DEFINITION = {
     "TE": {"stat": "targets", "min": 20},
 }
 
+# [SETTLED METHODOLOGY] docs/ADP_SOURCE_MATRIX.md "No-ADP remediation"
+# parts 3-4 -- the acquisition-cost classifier's rule-based thresholds.
+# Hand-chosen heuristics, never themselves calibrated (explicitly
+# disclosed as such in the settled record) -- disclosed as tunable
+# judgment calls here, not embedded in acquisition_cost.py's logic.
+SBV_CLASSIFIER_PRIOR_SEASONS_LOOKBACK = 3
+SBV_CLASSIFIER_PRIOR_PRODUCTION_MIN_GAMES = 4
+SBV_CLASSIFIER_PRIOR_PRODUCTION_MIN_POINTS = 80.0
+# NFL draft "Day 1-2" = rounds 1-3 (rounds 1, 2-3 on separate calendar
+# days but grouped here per the classifier's own two-way split); "Day
+# 3" = rounds 4-7. SBV_CLASSIFIER_DAY_1_2_MAX_ROUND is the boundary --
+# draft_round <= this value is Day 1-2, anything higher (through 7) is
+# Day 3.
+SBV_CLASSIFIER_DAY_1_2_MAX_ROUND = 3
+
+# [SETTLED METHODOLOGY] docs/ADP_SOURCE_MATRIX.md part 4's threshold
+# sweep -- 20% is "the first threshold that groups all three low-signal
+# named cases together" (Cruz 6.7%, Herbert 17.9%, Nacua 18.5%), used
+# as a strict "<" boundary (the settled record only ever describes
+# cases as "below" this value; no case sits exactly at 20.0%, so the
+# boundary direction itself is an inference from that language, not a
+# directly-tested edge case).
+SBV_MFL_MMC_CORROBORATION_THRESHOLD_PCT = 20.0
+
 # [IMPLEMENTATION METADATA] Section 9 -- MFL corroboration window and
 # query period. MFL has no usable historical ADP data before 2011 at
 # any query period (confirmed directly) -- the 2010 cohort uses the
@@ -595,6 +619,33 @@ def validate_sbv_config():
             errors.append(f"SBV_MMC_USAGE_DEFINITION['{pos}'] must be a dict with 'stat' and 'min' keys, got {usage}")
         elif not isinstance(usage["min"], (int, float)) or usage["min"] <= 0:
             errors.append(f"SBV_MMC_USAGE_DEFINITION['{pos}']['min'] must be a positive number, got {usage['min']}")
+
+    # --- acquisition-cost classifier thresholds ---
+    if not isinstance(SBV_CLASSIFIER_PRIOR_SEASONS_LOOKBACK, int) or SBV_CLASSIFIER_PRIOR_SEASONS_LOOKBACK < 1:
+        errors.append(
+            f"SBV_CLASSIFIER_PRIOR_SEASONS_LOOKBACK must be a positive integer, got "
+            f"{SBV_CLASSIFIER_PRIOR_SEASONS_LOOKBACK}"
+        )
+    if not isinstance(SBV_CLASSIFIER_PRIOR_PRODUCTION_MIN_GAMES, int) or SBV_CLASSIFIER_PRIOR_PRODUCTION_MIN_GAMES < 1:
+        errors.append(
+            f"SBV_CLASSIFIER_PRIOR_PRODUCTION_MIN_GAMES must be a positive integer, got "
+            f"{SBV_CLASSIFIER_PRIOR_PRODUCTION_MIN_GAMES}"
+        )
+    if not isinstance(SBV_CLASSIFIER_PRIOR_PRODUCTION_MIN_POINTS, (int, float)) or SBV_CLASSIFIER_PRIOR_PRODUCTION_MIN_POINTS <= 0:
+        errors.append(
+            f"SBV_CLASSIFIER_PRIOR_PRODUCTION_MIN_POINTS must be a positive number, got "
+            f"{SBV_CLASSIFIER_PRIOR_PRODUCTION_MIN_POINTS}"
+        )
+    if not isinstance(SBV_CLASSIFIER_DAY_1_2_MAX_ROUND, int) or not (1 <= SBV_CLASSIFIER_DAY_1_2_MAX_ROUND < 7):
+        errors.append(
+            f"SBV_CLASSIFIER_DAY_1_2_MAX_ROUND must be an integer in [1, 7), got "
+            f"{SBV_CLASSIFIER_DAY_1_2_MAX_ROUND}"
+        )
+    if not isinstance(SBV_MFL_MMC_CORROBORATION_THRESHOLD_PCT, (int, float)) or not (0 < SBV_MFL_MMC_CORROBORATION_THRESHOLD_PCT < 100):
+        errors.append(
+            f"SBV_MFL_MMC_CORROBORATION_THRESHOLD_PCT must be in (0, 100), got "
+            f"{SBV_MFL_MMC_CORROBORATION_THRESHOLD_PCT}"
+        )
 
     # --- MFL settings ---
     if not isinstance(SBV_MFL_AVAILABLE_FROM_SEASON, int):
