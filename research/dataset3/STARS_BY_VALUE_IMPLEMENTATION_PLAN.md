@@ -612,9 +612,24 @@ each leaves the repo in a working state):
    validates structural preconditions and raises loudly on violation
    rather than silently filtering; population scoping is upstream
    routing's job (not yet built).
-6. `lib/stars_by_value/expected_production.py` + `scripts/09_fit_sbv_expected_production.py`
+6. **Landed.** `lib/stars_by_value/expected_production.py` + `scripts/09_fit_sbv_expected_production.py`
    (materialized lookup table, section 9) + leakage tests + version-check
-   test.
+   test. Oracle chain read in full (six chronological research
+   scripts) -- see expected_production.py's own module docstring for
+   which script supplies the round mapping, expanding-window
+   mechanics, QB_RB offset selection, and the equal-vs-recency
+   comparison. One synthesis had no single-script oracle: no research
+   script runs a combined fit with QB recency-weighted while RB/WR/TE
+   are simultaneously equal-weighted -- that combination is a direct
+   reading of the final oracle script's own per-position MAE
+   comparison, documented explicitly, not an independent invention.
+   A real bug was caught by the oracle-parity test during this
+   promotion (not left to silently ship): filtering to the ADP-matched
+   population BEFORE calling `compute_aatp()` silently produces wrong
+   replacement_ppg/AATP values, because `replacement_level_from_rank()`
+   needs undrafted players present in the rank pool -- fixed by
+   reordering `scripts/09` to compute AATP on the full population
+   first, matching the oracle's own construction order exactly.
 7. `lib/stars_by_value/acquisition_cost.py` (classifier + corroboration
    + 2010 fallback -- the real new-code effort) + tests against the 6
    ground-truth cases.
@@ -632,12 +647,12 @@ each leaves the repo in a working state):
 
 ## What already exists vs. what must be built
 
-- **Promotable with light rework**: `expected_production_by_round_investigation.py`'s
-  fitting logic, `player_matching.py` and `nflverse_source.py` (reused
-  outright).
-- **Built (Commits 2-5, landed)**: `nflverse_source.py`'s `players`/`depth_charts`
+- **Promotable with light rework**: `player_matching.py` and
+  `nflverse_source.py` (reused outright).
+- **Built (Commits 2-6, landed)**: `nflverse_source.py`'s `players`/`depth_charts`
   extensions, `scripts/mfl_client.py`, `lib/stars_by_value/mmc_2010_overrides.py`,
-  `lib/stars_by_value/production.py`, `lib/replacement.py`.
+  `lib/stars_by_value/production.py`, `lib/replacement.py`,
+  `lib/stars_by_value/expected_production.py`, `scripts/09_fit_sbv_expected_production.py`.
 - **Must still be written from scratch**: the classifier, the
   depth-chart correction, the 3-way MFL corroboration, the 2010-cohort
   fallback, the status-routing/labeling module. None of this exists as
