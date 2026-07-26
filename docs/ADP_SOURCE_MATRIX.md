@@ -353,9 +353,32 @@ Not yet evaluated.
 
 ## Sleeper
 
-Status:
+### Status
 
-Not yet evaluated.
+🔴 Evaluated (2026-07) -- no usable ADP surface found
+
+### Findings
+
+- `api.sleeper.app` is fully reachable (confirmed live: `GET /v1/state/nfl`
+  returns real season-state JSON, HTTP 200) and `robots.txt` places no
+  restriction on any crawler, including AI agents.
+- No aggregate ADP endpoint exists on the documented public API --
+  `api.sleeper.app` exposes player/league/roster/draft-by-id data, not
+  a market-wide ADP report. `sleeper.com` has no public `/adp`-style
+  consumer page either (`/adp`, `/football/adp`, `/rankings/adp`,
+  `/draft/adp` all return HTTP 404).
+- Unlike FFC/MFL/RTSports, Sleeper's business is a draft *platform*,
+  not an ADP-publishing product -- third parties (e.g. FFToday's
+  blended consensus page, see below) apparently derive Sleeper-based
+  ranks from Sleeper's own internal/undocumented tooling, not a source
+  this project could reach directly and reproducibly.
+
+### Verdict
+
+Not viable as a direct-acquisition candidate -- there is no public data
+surface to acquire, reachable or not. Not disqualified by policy or
+robots.txt; disqualified because the data doesn't exist where a
+reproducible pipeline could reach it.
 
 ---
 
@@ -527,9 +550,99 @@ concrete next step if 2025 ADP resolution is revisited later.
 
 ## RTSports
 
-Status:
+### Status
 
-Not yet evaluated.
+🔴 Evaluated (2026-07) -- real ADP surface found, but blocked on two
+independent grounds
+
+### Findings
+
+- `rtsports.com/adp` (allowed by `rtsports.com/robots.txt` for general
+  crawlers) redirects (HTTP 302) to
+  `www.freedraftguide.com/fantasy-football/average-draft-position` --
+  RTSports' actual ADP product lives on its sister site
+  "Free Draft Guide," not on rtsports.com itself. This is the real
+  source behind the "RT" column in FFToday's modern consensus page
+  (confirmed via the literal `<a href="https://rtsports.com/">RTSports</a>`
+  credit link in the captured FFToday HTML).
+- **`freedraftguide.com/robots.txt` explicitly disallows `ClaudeBot`
+  from the entire site** (`User-agent: ClaudeBot` / `Disallow: /`),
+  alongside several other named AI crawlers (GPTBot, CCBot, Bytespider,
+  Google-Extended, Applebot-Extended, Amazonbot, meta-externalagent).
+  One page fetch happened in the same investigative pass as the
+  robots.txt check itself (both run together before the disallow was
+  confirmed); no further requests were made once it was, and none
+  should be -- this is a real, explicit, site-owner restriction
+  targeting AI agents specifically, not a technical obstacle to route
+  around with a different identity or tooling. If this source is ever
+  pursued, it would need a human-run, manual acquisition process, not
+  an automated fetch by this or any AI agent -- a decision for Evan to
+  make, not something to build a workaround for.
+- Independent of the robots.txt question, the page fetched is titled
+  "2026 ADP" -- a live, continuously-updating current-season number
+  (the same "not a frozen historical artifact" problem this project
+  already rejected MFL's raw aggregate report for), not a preserved
+  2025 preseason snapshot. Even a permitted fetch today would not
+  reproduce what the market looked like before 2025's actual draft
+  season.
+
+### Verdict
+
+Not viable as a direct-acquisition candidate for this project, on two
+independent grounds: (1) the actual data lives behind an explicit
+ClaudeBot/AI-crawler disallow on freedraftguide.com, which this project
+respects rather than works around; (2) the page itself is a live
+current-season aggregate, not an archived 2025 snapshot, so even
+permitted access wouldn't solve the reproducibility problem this
+project requires.
+
+### A frozen, single-platform RTSports snapshot already exists in-repo
+
+FFToday's already-captured 2025 page (dated 8/29/25, see the FFToday
+section above) embeds RTSports' own standalone rank as one of its three
+source columns (`rtsports_rank` in
+`research/diagnostics/adp_2025_investigation/parsed/fftoday_2025_ppr_consensus.csv`)
+-- 248/283 players covered, 28 QB and 27 TE specifically. This is a
+real, dated, single-platform (not blended) RTSports data point,
+legitimately obtained via FFToday (which permits automated access),
+without touching freedraftguide.com at all. It's still a derived
+integer rank, not raw mean-pick ADP, so it doesn't resolve the
+scale-compatibility problem on its own -- but it is a genuine,
+already-available independent validation point for any MFL correction
+work, separate from the 3-source blended `avg_rank`.
+
+### Manual recovery requirements, if pursued
+
+Not attempted here (RTSports' AI-crawler restriction is respected, not
+worked around; the below is a specification, not an executed fetch).
+For an RTSports/Free Draft Guide 2025 snapshot to be usable:
+
+1. **Must be dated to the 2025 preseason window** (ideally within a
+   week or two of the 2025-08-15-to-kickoff convention already used
+   elsewhere in this pipeline), not today's live "2026 ADP" page.
+2. **Must disclose its own methodology** -- a real mean-pick ADP with a
+   stated number of real drafts (like MFL's `n_drafts`), not an
+   undisclosed-methodology rank, to actually resolve (not just
+   relocate) the scale-compatibility problem.
+3. **A Wayback Machine snapshot is the most plausible avenue** --
+   `archive.org`'s own `robots.txt` places no AI-crawler restriction
+   (confirmed directly), so checking `web.archive.org` for an archived
+   copy of `rtsports.com/adp` or the freedraftguide.com ADP page is not
+   the same restricted action as fetching freedraftguide.com live. One
+   precedent snapshot was found for `rtsports.com/adp` from **2023-08-11**
+   (same redirect behavior as today) via the Wayback CDX API, which is
+   encouraging -- Wayback appears to have crawled this exact page
+   around past preseasons. A specific 2025-dated snapshot was not
+   confirmed either way this session (the CDX API returned inconsistent
+   503s/timeouts under repeated querying, not a "no results" answer) --
+   checking `https://web.archive.org/web/2025*/https://rtsports.com/adp`
+   directly in a browser is the concrete next manual step, not
+   something this pass resolved.
+4. **If no 2025 snapshot exists**, a dated export or CSV Evan obtains
+   directly from RTSports/Free Draft Guide (e.g. a support request, a
+   paid historical-data product, or any other human-mediated channel)
+   would need the same two properties above -- 2025-dated, disclosed
+   methodology -- to be usable, independent of how it's obtained.
 
 ---
 
@@ -1309,3 +1422,276 @@ separate step.
 - **Next experiment**: Direct Sleeper and RTSports acquisition
   (bypassing FFToday's blend), preserving raw ADP rather than derived
   ranks.
+
+---
+
+### 2026-07 -- Direct Sleeper/RTSports acquisition attempted, both blocked
+
+- **Date**: 2026-07 (immediate follow-up to the entry above; 2025
+  integration is now a blocking prerequisite for the SBV orchestration
+  commit, not deferred work -- see
+  `research/dataset3/STARS_BY_VALUE_IMPLEMENTATION_PLAN.md` section 2a/13)
+- **Evidence**: live probing against `api.sleeper.app`, `sleeper.com`,
+  `rtsports.com`, and `freedraftguide.com` this session -- see the
+  Sleeper and RTSports sections above for full findings.
+- **Findings**: Sleeper has no public ADP data surface at all (not a
+  policy restriction -- the data simply isn't published anywhere
+  reachable). RTSports' real ADP product lives on `freedraftguide.com`,
+  which explicitly disallows `ClaudeBot` and other AI crawlers in
+  `robots.txt` -- respected, not routed around -- and even a permitted
+  fetch would return a live 2026 aggregate, not an archived 2025
+  snapshot.
+- **Decision**: Neither direct-acquisition candidate is usable. No
+  source promoted. This reopens (does not resolve) the question of an
+  explicit, reviewed MFL QB/TE bias-correction methodology as the
+  remaining realistic path to a canonical whole-master-DB 2025 source
+  -- a genuine methodology decision, pending explicit approval, not
+  decided by this entry.
+- **Confidence level**: High that neither Sleeper nor RTSports is
+  reachable for this project's purposes today, for two independent and
+  unrelated reasons (no data surface; explicit AI-crawler policy +
+  wrong data shape).
+- **Next experiment**: none automated remaining on this branch. A
+  manual, human-run RTSports/Free Draft Guide acquisition is
+  conceivable but out of scope for this project's stated preference
+  for reproducible pipelines over manual downloads, and wasn't pursued
+  here.
+
+---
+
+### 2026-07 -- MFL QB/TE correction study (three candidate methods, not yet selected)
+
+- **Date**: 2026-07
+- **Evidence**: `research/diagnostics/mfl_pipeline/output/adp_all_non_keeper.csv`
+  (576-row MFL reconstruction), `research/diagnostics/adp_2025_investigation/parsed/mfl_vs_fftoday_comparison.csv`
+  (228-player overlap, the fit/training basis), `research/diagnostics/mfl/espn_vs_mfl_2025_comparison.csv`
+  (23-player independent ESPN benchmark, 4 of them QB/TE -- the true
+  held-out test set, never used to fit anything). RB/WR excluded from
+  this study by design (raw MFL already agrees closely with consensus
+  for those positions, ~7 rank median diff -- no evidence justifies
+  changing them).
+- **Three candidates fit on the 35 QB / 36 TE training rows**, each
+  producing a corrected value from MFL's raw `mean_adp`:
+  - **A -- additive shift**: `mean_adp + median(consensus - mfl)`
+    (QB +25.5, TE +19.8). Simplest, fully transparent.
+  - **B -- quantile mapping**: replace each MFL QB/TE's percentile
+    (within the MFL QB/TE training distribution) with the value at the
+    matching percentile of the consensus training distribution. Cannot
+    produce a value outside the real observed target range, by
+    construction.
+  - **C -- affine (OLS) recalibration**: `avg_rank = a + b * mean_adp`
+    per position (QB: `-9.96 + 1.324x`, r2=0.948; TE: `-33.45 + 1.416x`,
+    r2=0.900). Justified over a pure shift because slope != 1 for both
+    positions -- MFL doesn't just start QB/TE early, it compresses the
+    round spread, worsening with pick depth.
+- **Findings (the decisive evidence is the 4-case independent ESPN
+  benchmark, never used to fit any method)**:
+  - Method B wins 3 of 4 held-out cases decisively (Trey McBride:
+    raw err 6.7 -> 0.3; Josh Allen: 16.1 -> 0.7; Joe Burrow: 17.8 ->
+    4.2) and is competitive on the fourth (Dak Prescott).
+  - **Method C is worse than doing nothing on 2 of 4 held-out cases**
+    (Josh Allen 16.1 -> 24.6; Joe Burrow 17.8 -> 22.5) despite the best
+    in-sample r2 -- a real overfitting/generalization failure, not a
+    close call.
+  - **Method C also produces an implausible negative corrected ADP**
+    for the earliest-drafted QB (Josh Allen: -1.7 in-sample, -4.0 on
+    the held-out check) -- a hard, structural flaw of an unclamped
+    linear extrapolation, not a rounding artifact.
+  - Method A is a solid, unspectacular middle: improves on raw for 3 of
+    4 held-out cases, never catastrophically wrong, but well behind
+    Method B where B does well. Its uniform shift also visibly distorts
+    which QBs land in rounds 1-3 (raw and B both keep 5 QBs there,
+    matching real-world expectation of only elite arms going that
+    early; A drops it to 1).
+  - Dak Prescott remains a large residual error under every method
+    (raw 49.1 -> best correction, C, still 38.2) -- flagged as a
+    genuine named-case risk, not smoothed over.
+  - No method was selected on the basis of median positional gap alone
+    -- the deciding evidence is the independent held-out comparison and
+    the implausible-value check, per explicit instruction.
+- **Decision**: **Not yet decided.** Method B (quantile mapping) is the
+  strongest candidate on every held-out and structural-safety measure
+  checked; Method C is disqualified by its own held-out failures and
+  implausible extremes; Method A remains a fallback if simplicity is
+  weighted above accuracy. No correction has been selected or
+  implemented -- pending explicit approval.
+- **Confidence level**: Medium -- the held-out benchmark is real and
+  independent but only 4 QB/TE cases; a larger validation set (e.g. the
+  28 QB / 27 TE standalone RTSports ranks embedded in the FFToday
+  capture, see the RTSports section above) would strengthen this before
+  final selection.
+- **Next experiment**: re-run this same comparison against the
+  standalone RTSports rank column (28 QB / 27 TE) as a second,
+  independent check before final selection.
+
+---
+
+### 2026-07 -- MFL correction study, round 2: full-population stats, RTSports cross-check, downstream SBV impact
+
+- **Date**: 2026-07 (Method C dropped per its round-1 held-out
+  failures and implausible negative values -- this round compares only
+  A and B, at the full 54-QB/58-TE population, per explicit request)
+- **Full-population error stats** (median / p90 / max absolute error;
+  the 71-row overlap vs. `avg_rank` -- **Method B's numbers here are
+  partly circular**, since B was fit to reproduce this exact
+  distribution's order statistics; A's are not):
+  - QB: raw 25.5/66.3/91.0 -> A 17.4/40.9/65.5 -> B 4.5/28.4/41.5
+  - TE: raw 19.8/76.6/94.4 -> A 23.4/56.9/74.7 -> B 12.2/38.0/84.5
+- **Standalone RTSports cross-check** (28 QB / 27 TE, genuinely more
+  independent -- contributed only 1/3 to the `avg_rank` fitting target,
+  not identical to it):
+  - QB: raw 19.4/44.9/80.6 -> A 14.2/31.9/55.1 -> **B 12.4/25.6/48.7
+    (still best)**
+  - TE: raw 10.3/42.5/61.4 -> A 20.7/30.2/41.6 -> B 17.3/35.6/54.1 --
+    **neither correction beats raw MFL on median error here**, though B
+    is still clearly better than A. Flagged honestly, not smoothed
+    over: this complicates TE specifically -- the `avg_rank`-based TE
+    bias may be driven more by the Sleeper/ESPN components of the blend
+    than by an RTSports-specific pattern.
+- **Order preservation**: Spearman rho vs. raw `mean_adp`, full
+  population -- A = 1.000000 (exact, by construction), B = 0.994 (QB)
+  / 0.996 (TE). Effectively fully order-preserving for both.
+- **Round-boundary crossings**, full population: QB -- A 54/54 change
+  round (max jump 3), B 45/54 (max jump 7). TE -- A 58/58 (max jump 2),
+  B 47/58 (max jump 6). A's uniform shift touches every player by a
+  small, predictable amount; B reorders more within-position, with a
+  few larger jumps.
+- **Implausible-value check**, full population: no negatives, no
+  out-of-range values for either A or B (QB: A 31.7-376.5, B
+  21.3-280.0; TE: A 47.1-347.3, B 19.7-269.0).
+- **Downstream Stars-by-Value impact** (real, not simulated): matched
+  101/112 MFL QB/TE by name to real 2025 master-DB rows with
+  `games_played >= 1` (90% match rate). Computed real `P` via
+  `lib/stars_by_value/production.py` (existing, tested code, real 2025
+  stats -- the season is already complete). `E_P` uses the **2024
+  fitted lookup as an explicit stand-in proxy** (2025 itself has no
+  real fitted `E_P` yet -- that's Phase 3, still blocked on this
+  decision). Result: **0 of 101 players' final Star/non-Star label
+  differs between Method A's round assignment and Method B's**, despite
+  individual round differences of up to 6-7 rounds for some players.
+  Both methods produce exactly 1 real 2025 Star QB/TE from this
+  population, same player either way.
+- **Acquisition-cost classification**: structurally moot for this
+  comparison, not a discriminating factor -- once any MFL-based source
+  is promoted, corrected QB/TE rows become `adp_scored` and never reach
+  `acquisition_cost.py` at all (that step only runs for `no_adp_match`
+  rows, per the settled 4-step order). Both methods bypass it
+  identically.
+- **Decision**: Not yet made. Given equal downstream label impact (0
+  flips either way), the choice reduces to accuracy and structural
+  safety, where B still leads on 3 of 4 comparisons (avg_rank QB/TE,
+  RTSports QB) and ties/loses only on RTSports TE median error --
+  still not a clean sweep, disclosed rather than rounded up to one.
+- **Confidence level**: Medium-high for QB (multiple independent checks
+  agree B is best). Medium for TE (RTSports check complicates the
+  picture; avg_rank check still favors B but with the known circularity
+  caveat).
+- **Next experiment**: none required before a decision -- this was the
+  requested final validation round.
+
+---
+
+### 2026-07 -- 2025 depth-chart Week 1 mapping validated against the real nflverse schedule
+
+- **Date**: 2026-07
+- **Evidence**: `nflverse/nflverse-data` release tag `schedules`, asset
+  `games.csv` -- confirmed to exist via the public GitHub API (not yet
+  fetched into the production pipeline; this was a one-time research
+  verification, mirroring how `players`/`depth_charts` were confirmed
+  before being wired into `nflverse_source.py`). Real per-team 2025
+  Week 1 REG kickoff dates range 2025-09-04 (Thursday opener,
+  DAL@PHI) through 2025-09-08 (MIN@CHI, Monday).
+- **Findings**: replacing the earlier shared-date approximation
+  (single project-wide 2025-09-04 for every team) with each team's real
+  Week 1 date and taking the latest `depth_charts_2025.csv` snapshot
+  (`dt`) on or before it reproduces the identical, correct result for
+  every 2025 rookie QB already checked: Cam Ward (`pos_rank=1`, the
+  only true Week 1 starter in the class), Jaxson Dart/Dillon
+  Gabriel/Shedeur Sanders/Tyler Shough correctly behind their real
+  Week 1 starters, remaining Day-3/UDFA rookies correctly absent from
+  the active-roster depth chart or clearly buried at `pos_rank` 3-4.
+- **Decision**: the per-team-schedule definition is validated and ready
+  for production use. `nflverse-data`'s `schedules` release
+  (`games.csv`) is the identified canonical source -- a single,
+  all-seasons file, same "no season grain" fetch shape already used for
+  `players.csv`.
+- **Confidence level**: High -- every real 2025 rookie QB with an
+  active-roster presence resolves to a real-world-correct starter/
+  backup split under the schedule-precise definition, matching the
+  approximation's results exactly (the earlier shared-date proxy turned
+  out not to have introduced any error for this specific check, but the
+  schedule-based version is the one that should ship).
+- **Next experiment**: none remaining for this definition -- ready for
+  `acquisition_cost.py`'s Phase 2 implementation once Phase 1's source
+  decision lands.
+
+---
+
+### 2026-07 -- Final 2025 ADP decision: raw MFL AUG15 canonical, Method B rejected as a numeric input
+
+- **Date**: 2026-07
+- **Decision**: **Canonical `overall_adp` for 2025, all four positions
+  (QB/RB/WR/TE alike), is raw MFL AUG15 `mean_adp`**, source-labeled
+  `mfl_aug15_2025`. Method B's quantile-mapped output survives only as
+  a disclosed, NEVER-CONSUMED QB/TE sensitivity field
+  (`mfl_2025_sensitivity_market_rank`, named as a rank deliberately --
+  see `scripts/mfl_2025_adp_correction.py`'s module docstring). RB/WR
+  were never corrected in any version of this study.
+- **Why raw MFL, given its own documented QB/TE bias**: this decision
+  does **not** establish raw MFL is unbiased for QB/TE -- the bias is
+  real and stays on the record (two-round validation study above: QB
+  high-confidence bias, TE moderate-confidence, genuine market-source
+  disagreement, Mark Andrews the clearest disclosed counterexample).
+  What was established, across two full studies, is that **no tested
+  method can convert the corrected ordering onto a more defensible
+  mean-pick ADP scale than simply leaving the units alone**:
+  1. Method B's output is mathematically rank-scale (inherited from
+     FFToday `avg_rank`, an average of platform RANKS), not genuine
+     mean-pick ADP -- writing it into `overall_adp` would silently
+     recreate the exact rank-vs-ADP incompatibility that already
+     disqualified FFToday from canonical status elsewhere in this
+     document.
+  2. A follow-up historical FFC rank-to-ADP reconstruction study
+     walk-forward validated four candidate conversion curves
+     (prior-season, pooled-recent-5, recency-weighted, simple
+     monotonic interpolation) against real FFC ADP, 2014-2024. **The
+     naive "rank IS the ADP" baseline beat every one of them on every
+     metric** (median error 1.28 vs. the best fitted method's 2.83;
+     correct-round-rate 89.4% vs. 76.4%). Per the pre-committed
+     fallback rule, this result means no historically-validated
+     conversion clears the bar -- not that one was found and adopted.
+  Raw MFL mean_adp preserves genuine mean-pick units and historical
+  comparability, for both LWI and SBV, at the cost of leaving the
+  known QB/TE bias uncorrected in the number actually consumed
+  downstream. That tradeoff was judged safer than introducing a
+  units error into the canonical pipeline.
+- **Provenance retained**: `overall_adp_mfl_raw` (defensive copy of
+  the raw value), `mfl_2025_sensitivity_market_rank` (QB/TE only, NULL
+  for RB/WR), `adp_source="mfl_aug15_2025"`. Snapshot retrieval
+  date/hash is not duplicated per-row -- already recorded once per
+  season/endpoint in `scripts/mfl_source_manifest.json`, looked up via
+  `(season=2025, source="mfl_aug15_2025")`. Matching confidence
+  (`data_quality_flag`, from the unmodified `player_matching.py`
+  pipeline) and source-level confidence (the QB/TE bias documented
+  here) are deliberately kept as two separate, never-blended concepts
+  -- a well-matched QB with a known-biased source stays
+  `matched_clean`, not downgraded because of a position-level source
+  fact that has nothing to do with match quality.
+- **Mechanically enforced, not just documented**: no scoring or
+  eligibility path (`05_calculate_metrics.py`, `adp_round()`, E_P
+  fitting, SBV labeling/acquisition-cost/production) may ever read
+  `mfl_2025_sensitivity_market_rank` --
+  `tests/test_mfl_2025_adp_correction.py`'s
+  `TestSensitivityFieldNeverConsumedDownstream` scans every real
+  consumer's source for the field name and fails if any reference
+  exists.
+- **Confidence level**: High that this is the safest available
+  canonical choice given what's been tested. Not a claim that the
+  QB/TE bias is resolved -- it remains a known, disclosed, uncorrected
+  limitation of 2025's canonical ADP for those two positions
+  specifically.
+- **Next steps**: run the real 2025 MFL population through
+  `player_matching.py` (real `matched_clean`/`matched_needs_review`/
+  `no_adp_match` counts, duplicate/collision audit) before any
+  canonical value is written to the master DB -- not yet done as of
+  this entry.
