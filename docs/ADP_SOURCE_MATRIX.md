@@ -1695,3 +1695,118 @@ separate step.
   `no_adp_match` counts, duplicate/collision audit) before any
   canonical value is written to the master DB -- not yet done as of
   this entry.
+
+---
+
+### 2026-07 -- 2025 ADP matching audit (Commit D), Travis Hunter investigation, and needs-review resolution
+
+- **Date**: 2026-07
+- **Evidence**: `research/diagnostics/adp_2025_investigation/audit_2025_adp_matching.py`
+  -- a committed, read-only, reproducible research artifact. Runs the
+  real raw MFL AUG15 2025 population through the existing, unmodified
+  `player_matching.py` -- no new matching logic, no master DB writes.
+- **Initial pass** (371 real skill-position candidates): 342
+  `matched_clean`, 4 `matched_needs_review`, 25 `no_adp_match`, 0
+  duplicates/collisions. 58% of `matched_clean` fall within ADP <=170
+  (the 2020-2024 typical historical depth) -- real, comparable
+  coverage where it matters most for E_P fitting and scoring.
+- **The 25 unmatched, verified not assumed**: checked each notable
+  name directly against `season_results_ppr_2006_2025.csv` rather than
+  trusting the "no match" reason string. Almost all (Joe Mixon 164 real
+  MFL drafts, Brandon Aiyuk 106, Tank Dell, Alexander Mattison, Logan
+  Woodside, Sam Hartman, etc.) have **zero 2025 nflverse stats rows at
+  all** -- not a matching failure. Real players drafted heavily
+  pre-season who then recorded no real per-week production (consistent
+  with real 2025 injury/absence situations). Since the master DB's base
+  population is anchored to nflverse's real stats table, not the ADP
+  source, these would never become master DB rows regardless of match
+  outcome -- not a Commit D defect.
+
+#### Travis Hunter -- investigated as a blocking data-quality case
+
+- **Real root cause identified, not assumed**: Travis Hunter (185 real
+  MFL drafts, ADP 79.4 -- a real, notable early pick, consistent with
+  his real profile as the 2024 Heisman winner and #2 overall 2025
+  pick) has genuine, substantial real offensive production **in the
+  raw weekly nflverse source** -- confirmed directly against
+  `data/raw/nflverse/annual/stats_player_week_2025.csv` by his real
+  `gsis_id` (`00-0040718`): 7 weeks, 46 total touches, up to 24.1 PPR
+  points in week 7. He is NOT absent from nflverse's data.
+- **He is lost during aggregation, not fetch.** nflverse's own
+  `players.csv` reference and the raw weekly file both tag him
+  `position="CB"` (his real, listed primary position -- he plays both
+  ways). `scripts/03_download_stats.py`'s Step 2
+  (`weekly = weekly[weekly["position"].isin(SKILL_POSITIONS)]`)
+  unconditionally drops every non-QB/RB/WR/TE-tagged row **before**
+  Step 5b's `position_overrides.csv` mechanism ever runs -- so by the
+  time the existing tweener-correction mechanism (built for Jordan
+  Matthews/Devin Funchess/N'Keal Harry, all TE-vs-WR cases that
+  survive the Step 2 filter either way) could apply, his rows are
+  already gone. This is a materially different, harder case than the
+  ones `position_overrides.csv` was designed for: CB-vs-WR (skill vs.
+  non-skill), not TE-vs-WR (skill vs. skill). The existing override
+  mechanism cannot rescue him as currently wired -- fixing this would
+  require applying overrides before, not after, the skill-position
+  filter, a real change to `03_download_stats.py`, not something this
+  audit does unilaterally.
+- **Systematic check for other cases**: scanned every 2025 player
+  tagged with a non-skill position in the raw weekly source for real
+  offensive involvement (43 found). Kyle Juszczyk (FB, 67.7 total
+  points) is numerically larger but a different, already-implicit
+  scope boundary -- fullbacks are excluded by the same `SKILL_POSITIONS`
+  definition as K/DST, not a data bug. Bo Melton (CB, 24.2 points) is a
+  smaller, mixed case (mostly kickoff-return yardage, a handful of real
+  WR-style targets). Everyone else drops off sharply or is clearly a
+  single defensive/special-teams scoring play (0-1 touches). **Travis
+  Hunter is the one real, consequential, disclosed exception** -- a
+  genuine skill-position-caliber player excluded from the fantasy
+  results aggregate by a scope-boundary side effect, not a scope
+  decision made about him specifically.
+- **Decision**: not fixed in this pass. Flagged as a real, open
+  data-quality gap for a future, separately-scoped
+  `03_download_stats.py` change (apply `position_overrides.csv` before
+  the `SKILL_POSITIONS` filter, or add a dedicated allow-list for
+  confirmed two-way skill contributors) -- out of scope for Commit D,
+  which only runs existing matching rules unchanged.
+
+#### `matched_needs_review` resolution (explicit human review, all four resolved)
+
+| Case | Fuzzy score | Resolution | Basis |
+|---|---|---|---|
+| Chigoziem Okonkwo -> "Chig Okonkwo" | 82.76 | **Approved** -- override added | Confirmed same player (TE, gsis_id `00-0037809`) via nflverse's `players.csv` |
+| Kenneth Gainwell -> "Kenny Gainwell" | 86.67 | **Approved** -- override added | Confirmed same player (RB, gsis_id `00-0036919`) |
+| Joshua Palmer -> "Josh Palmer" | 91.67 | **Approved** -- override added | Confirmed same player (WR, gsis_id `00-0036988`) |
+| Amari Cooper -> "Darius Cooper" | 80.00 (review floor) | **Rejected** | Real Amari Cooper has zero 2025 nflverse stats rows -- same "drafted, no real production" pattern as Mixon/Aiyuk above, not this specific pairing being a real identity |
+
+Three approved rows added to `data/manual/player_name_overrides.csv`
+(the existing, unmodified override mechanism -- checked first, 100%
+confidence, exactly how Vick 2011-2013 was already handled). The
+rejected pairing has no override and gets none -- `player_matching.py`
+itself is unmodified, so its unchanged fuzzy logic will keep proposing
+this same low-confidence match on every future run; the audit script
+explicitly reclassifies it for reporting, a real, disclosed limitation
+of not having a negative-override mechanism, not silently patched over.
+
+#### Final post-review counts
+
+| Status | Count |
+|---|---|
+| `matched_clean` | 345 (342 + 3 approved) |
+| `matched_needs_review` | 0 (all four resolved) |
+| `no_adp_match` (rejected pairing) | 1 (Amari Cooper) |
+| `no_adp_match` (never matched) | 25 |
+| **Total candidates** | **371** |
+
+- **Sensitivity field re-confirmed inert** after the override changes:
+  identical matching result with `mfl_2025_sensitivity_market_rank`
+  present or dropped.
+- **Confidence level**: High in the matching audit's own counts and
+  the three approved identities. Medium-high on Travis Hunter's root
+  cause (verified directly against real source data, not inferred) but
+  the FIX itself is undecided and out of scope here.
+- **Next steps**: Commit E (master DB rebuild) still not proposed.
+  Travis Hunter's resolution (a `03_download_stats.py` change) is a
+  separate, real decision to make before or independently of Commit E
+  -- his exclusion is a pre-existing condition of the whole master DB
+  build, not created by this audit, but now disclosed rather than
+  silently absorbed into "no_adp_match."
