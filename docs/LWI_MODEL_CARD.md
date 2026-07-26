@@ -8,9 +8,12 @@ match). 48 regression tests passing, full pipeline reruns clean.
 
 ## Purpose
 
-Ranks historical fantasy football seasons (2006-2024, PPR scoring) by
+Ranks historical fantasy football seasons (2006-2025, PPR scoring) by
 **league-winning value** -- how much a player outperformed the actual
 draft capital spent on them -- rather than by raw fantasy production.
+**LWI is a retrospective index, not a live/incremental one -- see
+"Data vintage and reproducibility" under Known limitations before
+citing any specific score or rank as a fixed fact.**
 A player who was the consensus #1 overall pick and simply delivered
 what was expected is a good season, but not automatically a
 league-winning *value*; a player drafted late who massively
@@ -37,9 +40,10 @@ repo).
 
 ```
 expected_finish = isotonic_regression(overall_adp -> overall_finish)
-                   fit on all OTHER 18 seasons (leave-one-season-out,
-                   monotonic-smoothed so noise never lets an earlier
-                   pick have a worse expected finish than a later one)
+                   fit on all OTHER seasons in the current corpus
+                   (leave-one-season-out, monotonic-smoothed so noise
+                   never lets an earlier pick have a worse expected
+                   finish than a later one)
 
 eva_raw = expected_finish - actual_overall_finish
 eva_component = minmax_normalize(eva_raw, within season)
@@ -102,22 +106,52 @@ clipping itself is auditable, not hidden inside one opaque step.
 
 ## Validation performed
 
-All tests run against real 2006-2024 data (2,643 eligible
-player-seasons, `fantasy_master_db_current` repo).
+**ORIGINAL validation (v2.1 release, ~2026-06)**, preserved here as
+decision history, NOT current -- see the re-verification note
+immediately below for reproducible current numbers. All tests run
+against real 2006-2024 data (2,643 eligible player-seasons,
+`fantasy_master_db_current` repo; 2025 was not yet integrated).
 
 **Known-winner control group** (real, well-documented breakout/value
 seasons): Cooper Kupp 2021, Cam Newton 2011, Robert Griffin III 2012,
 Josh Gordon 2013, Devonta Freeman 2015, David Johnson 2016, Alvin
 Kamara 2017, Patrick Mahomes 2018, Lamar Jackson 2019, Peyton Hillis
 2010. All 10 land in the top 3.2% of all eligible seasons under v2.1
-(verified directly against production output); median rank 16, worst
-rank 84 (David Johnson 2016).
+(verified directly against production output at the time); median rank
+16, worst rank 84 (David Johnson 2016).
 
 **False-positive control group** (real, well-known "elite but not a
 value pick" seasons): Arian Foster 2012, Rob Gronkowski 2015, Antonio
 Brown 2017, Travis Kelce 2019, Dalvin Cook 2020. Median rank 596 of
 2,643 (77th percentile), best (closest to top) rank 370 -- clearly
 separated from the top tier, not mistaken for historic value picks.
+
+---
+
+**RE-VERIFICATION (2026-07-26, current/reproducible)**, run after the
+2025 ADP provenance fix (see CHANGELOG.md) and the "Data vintage and
+reproducibility" limitation documented above. The ORIGINAL numbers
+above were already stale relative to production output BEFORE this
+fix touched anything (a smaller, separate, pre-existing drift -- the
+2006-2024-scope known-winner median/worst rank had already moved to
+14/92 sometime after the v2.1 release, most likely from the nflverse
+`stats_player` migration documented in CHANGELOG.md; this was not
+caught until this re-verification). These numbers are what a fresh
+pipeline run actually produces as of season coverage 2006-2025, data
+vintage 2026-07-26:
+
+Same 2006-2024-only scope as the original validation (n=2,650
+eligible), for direct comparability: **known-winner median rank 13.5,
+worst rank 94 (David Johnson 2016); false-positive median rank 614.**
+Full corpus including 2025 (n=2,871): known-winner median rank 16.5,
+worst rank 107; false-positive median rank 671. Separation between the
+two control groups is essentially unchanged from the original
+validation in both scopes -- the qualitative conclusion (known-winners
+cluster tightly near the top; false positives sit clearly outside it)
+holds. Only the exact numbers moved, consistent with "Data vintage and
+reproducibility" above. Re-verify and update this block again the next
+time a season is added or a historical correction is merged, rather
+than letting it drift silently.
 
 **Ablation study**: removed each component one at a time and measured
 top-100 rank movement. Impact scales proportionately with each
@@ -250,6 +284,40 @@ miscalibrated once more players are actually verified and scored.
 ---
 
 ## Known limitations
+
+**Data vintage and reproducibility (documented 2026-07, not previously
+stated anywhere in this card).** Component 1's LOSO fit uses "all
+OTHER seasons in the current corpus" -- deliberately, so no season's
+own performance defines its own baseline (see Component 1 in detail,
+above) and so the metric's meaning doesn't drift with how strong one
+particular season's draft class happened to be. That design is a
+retrospective-analysis choice, not a bug -- but it has a real,
+previously-undocumented consequence: **the corpus is not closed in
+practice.** Every time a season is added or corrected, EVERY other
+season's `expected_finish_loso` (and everything downstream of it --
+`eva_raw`, Component 1, `lwi_score`) gets refit and shifts by a small
+amount. Confirmed directly: merging the 2026-07 2025-ADP-provenance
+fix (see CHANGELOG.md) shifted `expected_finish_loso` for 2,643/2,650
+2006-2024 rows (median 1.06 finish-position-units, max 32.6) and
+`lwi_score` for 1,409/2,650 of them (median 0.23 points, max 3.84;
+142 rows moved more than a full point). The shift was small and
+concentrated in the densely-packed middle of the score distribution --
+the top-25 all-time leaderboard was 24/25 stable and the known-winner/
+false-positive control groups (below) stayed cleanly separated -- but
+it means **no specific LWI score or rank is a fixed, permanently
+reproducible fact** the way e.g. a player's real season stat line is.
+A citation of "player X ranked #N all-time" is only true as of a
+specific data vintage (season coverage + any corrections applied up to
+that point), not a stable property of the index. **Practical
+implication**: any published ranking, export, or report built from
+this pipeline should identify its through-season/data version (e.g.
+"LWI rankings, data through the 2025 season, as of 2026-07-26") rather
+than presenting scores/ranks as version-free facts. This project does
+not yet freeze or version-tag full regenerations -- that would be a
+separate, additive practice to adopt going forward, not a reason to
+withhold a correction (see CHANGELOG.md's 2026-07 entry for the
+reasoning behind accepting the 2025 ADP fix's historical ripple rather
+than reverting it or freezing to a stale vintage).
 
 **~~Cross-position min-max sensitivity~~ -- FOUND AND FIXED, not an
 open limitation.** An earlier version's Component 4 used plain min-max

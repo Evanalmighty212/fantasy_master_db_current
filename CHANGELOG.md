@@ -5,6 +5,69 @@ recorded here. For the full "why" behind each decision, see
 `docs/LWI_MODEL_CARD.md` (design history) and `docs/METRIC_SPECIFICATION.md`
 (exact current formulas).
 
+## 2025 ADP provenance fix and its historical ripple (2026-07-26)
+
+**Not an LWI formula change -- `LWI_VERSION` stays 2.1.** A real data-
+provenance bug, not a methodology change: `scripts/2025_adp_integration.py`
+was reading `research/diagnostics/mfl_pipeline/output/adp_all_non_keeper.csv`
+-- an explicitly isolated research artifact ("never wired into the
+canonical ADP pipeline," per that pipeline's own README) -- instead of
+the real, validated MFL AUG15 production cache
+(`data/raw/mfl/adp_2025_period_aug15.json`, fetched via `mfl_client.py`).
+Confirmed materially different for real players (e.g. Travis Hunter:
+79.42 from the isolated pipeline vs. 60.90 from the real production
+report, an 18.5-pick gap, large enough to shift `adp_round`). Fixed in
+`scripts/2025_adp_integration.py` via a new `_load_production_mfl_2025_adp()`
+loader that reuses `mfl_client.py`'s existing fetch/cache/integrity
+conventions instead of a second parser -- see that commit for the full
+before/after audit (named cases: Josh Allen, Bijan Robinson, Ja'Marr
+Chase, Trey McBride, Travis Hunter).
+
+**Downstream effect on 2006-2024 (the historical ripple)**: Component
+1's leave-one-season-out (LOSO) fit uses all OTHER seasons in the
+corpus, by design (see `docs/LWI_MODEL_CARD.md`'s "Data vintage and
+reproducibility" limitation, added alongside this entry). Correcting
+2025's ADP therefore refit every other season's `expected_finish_loso`
+too: 2,643/2,650 2006-2024 rows shifted (median 1.06 finish-position-
+units, max 32.6), and `lwi_score` moved for 1,409/2,650 of them (median
+0.23 points, max 3.84; 142 rows moved more than a full point). **Zero
+2006-2024 rows changed LWI eligibility.** Confirmed via a full stability
+audit before accepting the regenerated outputs:
+- Spearman correlation between pre- and post-fix `lwi_score`: 0.996
+  (2,871 rows common to both, eligible in both).
+- All-time top-25 leaderboard: 24/25 unchanged (Josh Jacobs 2022
+  dropped out; Deebo Samuel Sr. 2021 entered at Cooper Kupp 2021's new
+  #1 -- Kupp itself moved from #5 to #1, still comfortably top-tier).
+- Known-winner vs. false-positive control groups (same seasons as the
+  Model Card's original validation) remain cleanly separated: 2006-2024-
+  only median rank moved 14.0 -> 13.5 (known-winners) and 609 -> 614
+  (false positives) -- not a meaningful change.
+- Rank-position churn (>5/>10/>25 places) is large in raw counts
+  (2,482/2,147/1,238 of 2,871 rows) but concentrated in the densely-
+  packed middle/bottom of the score distribution, not the top: median
+  rank shift is 9 places in the best-ranked decile vs. 54 in the
+  worst-ranked decile; restricted to the top 100, only 3 rows shifted
+  more than 25 ranks.
+
+**Decision (Option 1 of 3 considered)**: regenerate and accept the
+corrected outputs, rather than reopening the LOSO design (nothing in
+the audit suggests it's flawed -- it produced exactly the ripple its
+own documented design implies) or freezing Dataset 1 to a pre-fix
+vintage (which would mean permanently keeping the wrong 2025 ADP data
+in "official" output). The vintage-instability property the ripple
+exposed is real and now documented (`docs/LWI_MODEL_CARD.md`), but is a
+separate, forward-looking consideration -- not a reason to withhold a
+correction that was already known to be necessary.
+
+**Documentation refreshed alongside this fix, not silently**: the
+Model Card's "Validation performed" section had known-winner/false-
+positive numbers (median rank 16, worst rank 84, FP median 596) that
+were already stale relative to production output BEFORE this fix
+touched anything -- a smaller, separate, pre-existing drift, most
+likely from the nflverse `stats_player` migration above. Original
+numbers preserved in place as dated decision history, not deleted;
+current reproducible numbers added alongside them.
+
 ## Data source migration -- nflverse `stats_player` release (2006-2025)
 
 **Not an LWI formula change -- `LWI_VERSION` stays 2.1.** This is a
