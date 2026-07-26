@@ -6,8 +6,21 @@ name: Fetch MFL Historical ADP Data (2011-2024 backfill)
 # a schedule since a historical backfill is a one-time (or occasional
 # re-run for a specific season) deliberate act, not something to run
 # automatically.
+#
+# Leave the "seasons" input blank for the standard 2011-2024 backfill
+# (unchanged default -- same as every prior run of this workflow). Fill
+# it in (e.g. "2025" or "2011-2014,2025") to fetch a specific season or
+# set of seasons instead -- see scripts/mfl_historical_backfill.py's
+# parse_seasons_arg() for the exact accepted syntax and validation.
+# Added 2026-07 so a one-off season never needs a second, near-duplicate
+# workflow.
 on:
   workflow_dispatch:
+    inputs:
+      seasons:
+        description: 'Seasons to fetch (blank = standard 2011-2024 backfill). Examples: "2025" or "2011-2014,2025"'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -27,8 +40,15 @@ jobs:
       - name: Install dependencies
         run: pip install requests pandas
 
-      - name: Run historical MFL backfill (seasons 2011-2024)
-        run: python scripts/mfl_historical_backfill.py
+      - name: Run historical MFL backfill
+        env:
+          SEASONS_INPUT: ${{ inputs.seasons }}
+        run: |
+          if [ -n "$SEASONS_INPUT" ]; then
+            python scripts/mfl_historical_backfill.py --seasons "$SEASONS_INPUT"
+          else
+            python scripts/mfl_historical_backfill.py
+          fi
 
       - name: Show summary
         run: cat data/raw/mfl/historical_backfill_summary.csv
