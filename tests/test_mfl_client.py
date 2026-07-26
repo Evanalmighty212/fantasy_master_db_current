@@ -33,6 +33,12 @@ module's own docstring, not speculative coverage:
   backoff, and a loud final failure (deliberately NOT the isolated
   research client's {"_error": ...} sentinel -- see module docstring
   for why this module's batch size doesn't need that).
+- TestDiscoverValidatedSeasons protects discover_validated_seasons()
+  (added 2026-07): the season-availability list must come from the
+  manifest + real on-disk hashes at run time, never a hardcoded list a
+  caller has to remember to edit -- this is what let
+  11_calculate_stars_by_value.py drop its MFL_CACHE_SEASONS constant
+  entirely.
 """
 
 import json
@@ -216,6 +222,92 @@ class TestCommittedRegistry:
         entry = manifest["players"]["seasons"]["2020"]
         assert entry["total_drafts"] is None
         assert entry["row_count"] == 1
+
+
+class TestDiscoverValidatedSeasons:
+    """Covers mfl_client.discover_validated_seasons() -- added 2026-07
+    to replace 11_calculate_stars_by_value.py's hardcoded
+    MFL_CACHE_SEASONS tuple, which itself had to be manually widened
+    each time a new season's data was backfilled (first (2015, 2023),
+    then a manually-edited 2011-2024). This function derives the
+    available-season list from the manifest + real on-disk hashes at
+    run time, so no caller needs a per-season code edit ever again."""
+
+    def _fetch_season(self, season, adp_body=None, players_body=None):
+        """Bootstraps a real, validated season via the normal fetch
+        path (mocked network) -- writes both the local file and its
+        manifest entry exactly as a real run would."""
+        with patch("requests.get", return_value=_fake_response(adp_body or ADP_BODY)):
+            mc.fetch_adp(season)
+        with patch("requests.get", return_value=_fake_response(players_body or PLAYERS_BODY)):
+            mc.fetch_players(season)
+
+    def test_no_manifest_returns_empty(self):
+        assert mc.discover_validated_seasons() == []
+
+    def test_newly_fetched_season_is_discovered_automatically(self):
+        """No SEASONS list anywhere -- fetching a season is sufficient
+        for discover_validated_seasons() to report it, with no source
+        change."""
+        assert mc.discover_validated_seasons() == []
+        self._fetch_season(2013)
+        assert mc.discover_validated_seasons() == [2013]
+
+    def test_a_second_newly_fetched_season_is_also_discovered_automatically(self):
+        self._fetch_season(2013)
+        self._fetch_season(2019)
+        assert mc.discover_validated_seasons() == [2013, 2019]
+
+    def test_season_missing_players_report_is_excluded(self):
+        """Only adp fetched -- classify_row() needs both reports, so a
+        season with just one is not usable."""
+        with patch("requests.get", return_value=_fake_response(ADP_BODY)):
+            mc.fetch_adp(2014)
+        assert mc.discover_validated_seasons() == []
+
+    def test_season_missing_adp_report_is_excluded(self):
+        with patch("requests.get", return_value=_fake_response(PLAYERS_BODY)):
+            mc.fetch_players(2014)
+        assert mc.discover_validated_seasons() == []
+
+    def test_season_with_manifest_entry_but_missing_local_file_is_excluded(self):
+        """Manifest says it was fetched, but the file itself isn't on
+        disk (e.g. a fresh clone with the manifest committed but
+        data/raw/mfl/ gitignored and not repopulated) -- must not be
+        reported as available."""
+        self._fetch_season(2016)
+        (mc.CACHE_DIR / "adp_2016_period_aug15.json").unlink()
+        assert mc.discover_validated_seasons() == []
+
+    def test_season_with_hash_mismatched_file_is_excluded(self):
+        """The file on disk doesn't match what the manifest recorded
+        -- same real-world case TestIntegrityModel's mismatch test
+        covers for fetch_adp() itself, but here it must just be
+        silently excluded from discovery, not raised (discovery is
+        read-only; a caller that needs this season fetched calls
+        fetch_adp() directly and gets the loud error)."""
+        self._fetch_season(2017)
+        (mc.CACHE_DIR / "adp_2017_period_aug15.json").write_text('{"tampered": true}')
+        assert mc.discover_validated_seasons() == []
+
+    def test_valid_season_alongside_mismatched_season_only_returns_the_valid_one(self):
+        self._fetch_season(2016)
+        self._fetch_season(2017)
+        (mc.CACHE_DIR / "adp_2017_period_aug15.json").write_text('{"tampered": true}')
+        assert mc.discover_validated_seasons() == [2016]
+
+    def test_2025_is_discovered_when_its_valid_snapshot_is_present(self):
+        """The real, current-season case this whole change was for:
+        2025 is treated like any other season -- no special-casing, no
+        code edit required once a validated snapshot exists for it."""
+        self._fetch_season(2025)
+        assert mc.discover_validated_seasons() == [2025]
+
+    def test_returns_sorted_seasons_regardless_of_fetch_order(self):
+        self._fetch_season(2024)
+        self._fetch_season(2012)
+        self._fetch_season(2018)
+        assert mc.discover_validated_seasons() == [2012, 2018, 2024]
 
     def test_manifest_includes_reproducibility_caveat_note(self, tmp_path):
         with patch("requests.get", return_value=_fake_response(ADP_BODY)):

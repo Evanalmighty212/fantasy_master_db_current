@@ -32,11 +32,40 @@ REAL, DISCLOSED SCOPE LIMIT found by the first diagnostic run
 (2026-07): acquisition_cost.py's classify_row() fails loudly (by
 design, not a bug) if a 2011+, no_adp_match, gate-clearing row is
 processed without real MFL AUG15 corroboration data for that season.
-Locally cached MFL responses exist for only 2 historical seasons
-(2015, 2023). Fetching the other 13 historical seasons live would mean
-many new external API calls -- reserved for the sanctioned GitHub
-Actions path per this project's own convention, not attempted here
-(see "Historical MFL backfill" as its own follow-up).
+Locally cached MFL responses originally existed for only 2 historical
+seasons (2015, 2023). Fetching the other 13 historical seasons live
+would mean many new external API calls -- reserved for the sanctioned
+GitHub Actions path per this project's own convention, not attempted
+here (see "Historical MFL backfill" as its own follow-up).
+
+RESOLVED (2026-07, third pass): the "Historical MFL backfill" GitHub
+Actions workflow (.github/workflows/fetch_mfl_historical.yml) was run
+and its artifact merged in, adding real cached MFL AUG15 data for 12
+more seasons (2011-2014, 2016-2022, 2024) -- 2015 and 2023 were left
+exactly as they already were (see scripts/mfl_source_manifest.json's
+2015 entry for why: an honest legacy record with a real on-disk
+sha256/row_count but no invented retrieval timestamp). All 14 seasons
+2011-2024 now have real cached MFL AUG15 data.
+
+CHANGED (2026-07, fourth pass): this script no longer hardcodes which
+seasons count as "MFL-cached" -- the third pass's fix (a literal
+MFL_CACHE_SEASONS tuple, manually widened from (2015, 2023) to
+2011-2024) was itself a version of the same problem it was fixing: a
+season list baked into source code that a future backfill would need
+another code edit to pick up. This script now calls
+mfl_client.discover_validated_seasons() at run time instead, which
+derives the available-season list straight from
+scripts/mfl_source_manifest.json + real on-disk file hashes -- no
+season list lives in this file at all anymore. NOTE: this means 2025
+is picked up automatically too, IF a validated MFL AUG15 snapshot for
+2025 exists in data/raw/mfl/ with a matching manifest entry -- as of
+this pass, it does NOT (2025's MFL data used for the ADP-correction
+research lives in research/diagnostics/mfl_pipeline/, an isolated,
+differently-shaped per-league scrape, never wired into
+scripts/mfl_client.py's manifest/cache). The 228 real 2025 rows
+deferred for "no cached MFL AUG15 data" reflect that real, currently
+unresolved gap, not a code defect -- see the per-run report for the
+current count.
 
 RESOLVED (2026-07, second pass): 118 real 2025 rows had `adp_round > 15`,
 beyond the E_P lookup's fitted depth (matching FFC's historical
@@ -67,11 +96,11 @@ import config
 from lib.stars_by_value import production as prod
 from lib.stars_by_value import expected_production as ep
 from lib.stars_by_value import labeling
+import mfl_client
 import nflverse_source
 
 MASTER_PATH = REPO_ROOT / f"data/master/master_historical_db_{config.SEASONS[0]}_{config.SEASONS[-1]}.csv"
 EP_LOOKUP_PATH = REPO_ROOT / config.SBV_EXPECTED_PRODUCTION_LOOKUP_PATH
-MFL_CACHE_SEASONS = (2015, 2023)  # real cached MFL AUG15 responses -- see module docstring
 
 DEFERRED_REASON_NO_MFL_DATA = "no cached MFL AUG15 data for this season"
 # NOTE: the former DEFERRED_REASON_ROUND_TOO_DEEP category no longer
@@ -83,12 +112,16 @@ DEFERRED_REASON_NO_MFL_DATA = "no cached MFL AUG15 data for this season"
 # --- Pure population-shaping logic (no file I/O) -- directly unit-testable ---
 
 
-def split_processable(pop: pd.DataFrame, ep_lookup: pd.DataFrame, mfl_cache_seasons=MFL_CACHE_SEASONS):
+def split_processable(pop: pd.DataFrame, ep_lookup: pd.DataFrame, mfl_cache_seasons):
     """Splits pop into (processable, deferred). deferred carries a
     'deferred_reason' column -- never silently dropped, never guessed
     at. A row can only be deferred for a reason listed at module scope
     above (DEFERRED_REASON_*), so check_build_completeness() can name
     exactly what's missing.
+
+    mfl_cache_seasons has no default -- callers must pass it explicitly
+    (main() gets it from mfl_client.discover_validated_seasons(); tests
+    pass a fixed tuple). No hardcoded season list lives in this module.
 
     NOTE (2026-07): rows whose adp_round exceeds the E_P lookup's
     fitted depth are NO LONGER deferred here -- labeling.py now
@@ -156,7 +189,7 @@ def build_population():
     return pop
 
 
-def run_label_rows(processable: pd.DataFrame, ep_lookup: pd.DataFrame, full_pop: pd.DataFrame):
+def run_label_rows(processable: pd.DataFrame, ep_lookup: pd.DataFrame, full_pop: pd.DataFrame, mfl_cache_seasons):
     """full_pop must be the COMPLETE population (including rows
     deferred THIS run) -- classify_draft_status()'s prior-season
     lookback needs to see a player's real prior-season production
@@ -165,7 +198,12 @@ def run_label_rows(processable: pd.DataFrame, ep_lookup: pd.DataFrame, full_pop:
     caught by comparing two runs' status breakdowns (unscoreable_ambiguous/
     minimal_market_cost_scored/unscoreable_drafted_adp_missing counts
     shifted between runs with no other change) -- fixed before this
-    was ever treated as canonical."""
+    was ever treated as canonical.
+
+    mfl_cache_seasons has no default -- see split_processable()'s
+    docstring; must be the SAME list passed there so a row already
+    marked processable (because its season was cache-validated) always
+    finds real MFL data loaded here too."""
     players_df = nflverse_source.fetch_players()
     history_df = full_pop[["season", "player_id", "games_played", "fantasy_points_ppr"]]
     overrides_2010_df = pd.read_csv(REPO_ROOT / config.SBV_MMC_2010_OVERRIDE_PATH)
@@ -179,7 +217,7 @@ def run_label_rows(processable: pd.DataFrame, ep_lookup: pd.DataFrame, full_pop:
             depth_charts_by_season[season] = pd.read_csv(dc_path, low_memory=False)
 
     mfl_adp_by_season, mfl_players_by_season = {}, {}
-    for season in MFL_CACHE_SEASONS:
+    for season in mfl_cache_seasons:
         adp_resp, players_resp = load_mfl_cached(season)
         if adp_resp is not None:
             mfl_adp_by_season[season] = adp_resp
@@ -238,23 +276,29 @@ def main():
     args = parser.parse_args()
 
     print(f"Mode: {args.mode}")
+
+    mfl_cache_seasons = mfl_client.discover_validated_seasons()
+    print(f"Discovered {len(mfl_cache_seasons)} validated MFL-cached season(s): {mfl_cache_seasons}")
+
     print("Step 1: Assembling real master-DB population, computing P...")
     pop = build_population()
     print(f"  {len(pop)} real rows (positions {config.SBV_POSITIONS}, non-null required fields)")
 
     ep_lookup = pd.read_parquet(EP_LOOKUP_PATH)
-    processable, deferred = split_processable(pop, ep_lookup)
+    processable, deferred = split_processable(pop, ep_lookup, mfl_cache_seasons=mfl_cache_seasons)
     print(f"Step 2: Population split -- {len(processable)} processable now, {len(deferred)} deferred")
     if len(deferred):
         print("  Deferred by reason:")
         print(deferred.groupby("deferred_reason").size().to_string())
+        print("  Deferred by season:")
+        print(deferred.groupby("season").size().to_string())
 
     if args.mode == "canonical":
         print("Step 3: Checking build-completeness contract (canonical mode)...")
         check_build_completeness(deferred)  # raises if len(deferred) > 0 -- never reaches Step 4 otherwise
 
     print("Step 4: Running labeling.label_rows() on the processable population...")
-    out = run_label_rows(processable, ep_lookup, full_pop=pop)
+    out = run_label_rows(processable, ep_lookup, full_pop=pop, mfl_cache_seasons=mfl_cache_seasons)
 
     print("\nFinal status breakdown (processable population only):")
     print(out["star_by_value_status"].value_counts())

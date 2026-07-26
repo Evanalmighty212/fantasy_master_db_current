@@ -1,6 +1,103 @@
 {
   "adp": {
     "seasons": {
+      "2011": {
+        "retrieved_at": "2026-07-26T04:08:41.056835+00:00",
+        "row_count": 428,
+        "sbv_version": "1.0",
+        "sha256": "f5710537bfbb92e0347d8b2d86f53f026d40210a3f1560faa1c01dd5a48faf2d",
+        "total_drafts": "11065",
+        "url": "https://api.myfantasyleague.com/2011/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
+      "2012": {
+        "retrieved_at": "2026-07-26T04:08:45.133817+00:00",
+        "row_count": 424,
+        "sbv_version": "1.0",
+        "sha256": "54e95ab70cedb60aea6e416bc2046d62b848a3185ddedb9ddce46985afcff6f2",
+        "total_drafts": "12991",
+        "url": "https://api.myfantasyleague.com/2012/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
+      "2013": {
+        "retrieved_at": "2026-07-26T04:08:49.176033+00:00",
+        "row_count": 417,
+        "sbv_version": "1.0",
+        "sha256": "e800dfcbf7717e9cd4acac06e75e57d4cebee97aa7eb4fe90230e3ee36ed06ca",
+        "total_drafts": "14112",
+        "url": "https://api.myfantasyleague.com/2013/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
+      "2014": {
+        "retrieved_at": "2026-07-26T04:08:53.201882+00:00",
+        "row_count": 428,
+        "sbv_version": "1.0",
+        "sha256": "6a08d5be19606f2dcad9f8224f52387b4c642c045e818a51da7ba280ee82ecf9",
+        "total_drafts": "15877",
+        "url": "https://api.myfantasyleague.com/2014/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
+      "2015": {
+        "retrieved_at": null,
+        "retrieved_at_note": "legacy local snapshot that predates this manifest's season-tracking -- fetched via an untracked ad hoc process before this manifest existed. Original retrieval timestamp was never recorded and is not invented here.",
+        "row_count": 415,
+        "sbv_version": "1.0",
+        "sha256": "5cbe6d1cd0f23c5440bda68567871b8f77b4ad942f8b1748619480324e43a49c",
+        "total_drafts": "4628",
+        "url": "https://api.myfantasyleague.com/2015/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
+      "2016": {
+        "retrieved_at": "2026-07-26T04:09:01.015271+00:00",
+        "row_count": 391,
+        "sbv_version": "1.0",
+        "sha256": "b938e55f9c40c49330c6ba850495381daa1b3ae259336e1cf8168f98ef2a640a",
+        "total_drafts": "6117",
+        "url": "https://api.myfantasyleague.com/2016/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
+      "2017": {
+        "retrieved_at": "2026-07-26T04:09:04.892346+00:00",
+        "row_count": 377,
+        "sbv_version": "1.0",
+        "sha256": "3ddd80942062629cad60c63b4b247a0f713cbe79fee4892b12e4ad4e78a47a2b",
+        "total_drafts": "7654",
+        "url": "https://api.myfantasyleague.com/2017/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
+      "2018": {
+        "retrieved_at": "2026-07-26T04:09:08.836197+00:00",
+        "row_count": 381,
+        "sbv_version": "1.0",
+        "sha256": "34470e43c8e96625d569d477bf4af9674d49f3e4e6779b602968c3f25a0f53c5",
+        "total_drafts": "7141",
+        "url": "https://api.myfantasyleague.com/2018/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
+      "2019": {
+        "retrieved_at": "2026-07-26T04:09:12.816584+00:00",
+        "row_count": 402,
+        "sbv_version": "1.0",
+        "sha256": "46c466c21bb56a7992e726cfa81e5d80086c74d9f1543339c25a7a472f7ee27c",
+        "total_drafts": "6601",
+        "url": "https://api.myfantasyleague.com/2019/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
+      "2020": {
+        "retrieved_at": "2026-07-26T04:09:17.536225+00:00",
+        "row_count": 369,
+        "sbv_version": "1.0",
+        "sha256": "a131ca78fe9d7d3a9f59e7ba0372a97019b5289392bfe06689a2b7abf5d351a9",
+        "total_drafts": "7392",
+        "url": "https://api.myfantasyleague.com/2020/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
+      "2021": {
+        "retrieved_at": "2026-07-26T04:09:21.495216+00:00",
+        "row_count": 364,
+        "sbv_version": "1.0",
+        "sha256": "d80878d05c2f4652eff18f2e42494232ade4f3e39498221647574bef1bc17383",
+        "total_drafts": "8176",
+        "url": "https://api.myfantasyleague.com/2021/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
+      "2022": {
+        "retrieved_at": "2026-07-26T04:09:25.539401+00:00",
+        "row_count": 360,
+        "sbv_version": "1.0",
+        "sha256": "b986ff9b16fcf9192140065c5c112ce397298a6a1b08c9ad5d75ecadbc1e8a03",
+        "total_drafts": "7538",
+        "url": "https://api.myfantasyleague.com/2022/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
       "2023": {
         "retrieved_at": "2026-07-25T20:32:39.660778+00:00",
         "row_count": 391,
@@ -8,12 +105,117 @@
         "sha256": "130c3aac7b4b09dc514739d6d9d19daf82ca5c77a855c3ba97668f1be3477294",
         "total_drafts": "9970",
         "url": "https://api.myfantasyleague.com/2023/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
+      "2024": {
+        "retrieved_at": "2026-07-26T04:09:33.625189+00:00",
+        "row_count": 389,
+        "sbv_version": "1.0",
+        "sha256": "bc67b8a7c739478282a161b00d02c2c5e1c6425b8950cbcb083cabd8dcf1fca3",
+        "total_drafts": "9468",
+        "url": "https://api.myfantasyleague.com/2024/export?TYPE=adp&PERIOD=AUG15&JSON=1"
       }
     }
   },
   "note": "This registry documents the exact MFL snapshot used for each season/endpoint at the time it was fetched (URL and query parameters, retrieval timestamp, sha256, totalDrafts where applicable, row count, sbv_version). MFL's underlying reports are live, continuously-growing aggregates -- re-fetching the same season later will very likely NOT reproduce the same bytes (confirmed directly: season 2023's totalDrafts grew from 7,923 to 9,970 between two real queries on different dates, see mfl_client.py's module docstring). This registry proves what was used; it cannot by itself recreate the original bytes. A future immutable archive of the raw responses may be needed for full reproducibility.",
   "players": {
     "seasons": {
+      "2011": {
+        "retrieved_at": "2026-07-26T04:08:42.936351+00:00",
+        "row_count": 2453,
+        "sbv_version": "1.0",
+        "sha256": "fd22c5d0e42156fd05516b87a04e7ea689c910f37cb99d379b10f12cf89af3fb",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2011/export?TYPE=players&JSON=1"
+      },
+      "2012": {
+        "retrieved_at": "2026-07-26T04:08:47.051671+00:00",
+        "row_count": 2528,
+        "sbv_version": "1.0",
+        "sha256": "c9f8ba9fe074ab6ded59f44900ed6ba7db6d574ebd0f621b2250a062cd9066c7",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2012/export?TYPE=players&JSON=1"
+      },
+      "2013": {
+        "retrieved_at": "2026-07-26T04:08:51.062222+00:00",
+        "row_count": 2469,
+        "sbv_version": "1.0",
+        "sha256": "509ae343d8efd55dbc958dbc3939bd20fb1d13bcb8c80db9f267c65898c14a22",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2013/export?TYPE=players&JSON=1"
+      },
+      "2014": {
+        "retrieved_at": "2026-07-26T04:08:55.117988+00:00",
+        "row_count": 2496,
+        "sbv_version": "1.0",
+        "sha256": "a2c0813b12970926b6c7e914f867f3c13143ba01fbbbc94687cfc46aeeff85b7",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2014/export?TYPE=players&JSON=1"
+      },
+      "2015": {
+        "retrieved_at": null,
+        "retrieved_at_note": "legacy local snapshot that predates this manifest's season-tracking -- fetched via an untracked ad hoc process before this manifest existed. Original retrieval timestamp was never recorded and is not invented here.",
+        "row_count": 2551,
+        "sbv_version": "1.0",
+        "sha256": "1f41797a43f7a4bbc805fde7d1591391744989c59d1898c468b1d07fac4ff952",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2015/export?TYPE=players&JSON=1"
+      },
+      "2016": {
+        "retrieved_at": "2026-07-26T04:09:02.931997+00:00",
+        "row_count": 2647,
+        "sbv_version": "1.0",
+        "sha256": "a5a36336eeeb23f84a2a436a45b218fd57368eb3407ada9b0e70d69485f3c11c",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2016/export?TYPE=players&JSON=1"
+      },
+      "2017": {
+        "retrieved_at": "2026-07-26T04:09:06.828068+00:00",
+        "row_count": 2613,
+        "sbv_version": "1.0",
+        "sha256": "cba6ffe48d3f67984d42c884675028128c402e855d76960b1590cbd6720413e5",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2017/export?TYPE=players&JSON=1"
+      },
+      "2018": {
+        "retrieved_at": "2026-07-26T04:09:10.738593+00:00",
+        "row_count": 2661,
+        "sbv_version": "1.0",
+        "sha256": "5fbd272af2326e9559303dafe3df19357e23ed367ec65f9f31bbc761612bf1b2",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2018/export?TYPE=players&JSON=1"
+      },
+      "2019": {
+        "retrieved_at": "2026-07-26T04:09:14.763822+00:00",
+        "row_count": 2711,
+        "sbv_version": "1.0",
+        "sha256": "6750d7fcdc85dfc5ac97ee954944d572c4ec41c8af0002f9ebbdf30653b7dff5",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2019/export?TYPE=players&JSON=1"
+      },
+      "2020": {
+        "retrieved_at": "2026-07-26T04:09:19.488150+00:00",
+        "row_count": 2716,
+        "sbv_version": "1.0",
+        "sha256": "c0a48b31127853b353d40337826be056397a402fe6416824c2f0b94547fc41be",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2020/export?TYPE=players&JSON=1"
+      },
+      "2021": {
+        "retrieved_at": "2026-07-26T04:09:23.454278+00:00",
+        "row_count": 2819,
+        "sbv_version": "1.0",
+        "sha256": "f2d8b0d5fd43b4132a728dc74cecbdac7c91b47cf35a0a10d5c1d90a67088cc8",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2021/export?TYPE=players&JSON=1"
+      },
+      "2022": {
+        "retrieved_at": "2026-07-26T04:09:27.499040+00:00",
+        "row_count": 2885,
+        "sbv_version": "1.0",
+        "sha256": "b5b7afdeacc085950e53a6b167e0b3c73d3d90ea3d20f40a282d5214a26a7051",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2022/export?TYPE=players&JSON=1"
+      },
       "2023": {
         "retrieved_at": "2026-07-25T20:32:41.736080+00:00",
         "row_count": 2800,
@@ -21,6 +223,14 @@
         "sha256": "f427bbaf2d76c6713e7811de7d2abfb169b7a6c5364583bb68db7a84ad5842d9",
         "total_drafts": null,
         "url": "https://api.myfantasyleague.com/2023/export?TYPE=players&JSON=1"
+      },
+      "2024": {
+        "retrieved_at": "2026-07-26T04:09:35.587991+00:00",
+        "row_count": 2752,
+        "sbv_version": "1.0",
+        "sha256": "1cff9db41e959dab3412b1c75812d2be6a3e27d462e13133a2baaafe96177c17",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2024/export?TYPE=players&JSON=1"
       }
     }
   }

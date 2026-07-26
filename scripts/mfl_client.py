@@ -292,3 +292,46 @@ def fetch_players(season: int, force_refresh: bool = False) -> dict:
     url = f"{API_BASE_TEMPLATE.format(season=season)}?TYPE=players&JSON=1"
     local_path = CACHE_DIR / f"players_{season}.json"
     return _fetch_cached(season, "players", url, local_path, force_refresh)
+
+
+def discover_validated_seasons() -> list:
+    """The single source of truth for "which seasons does this project
+    actually have validated MFL data for" -- callers (e.g.
+    11_calculate_stars_by_value.py) must read this instead of
+    hardcoding a season list, so a newly fetched or backfilled season
+    becomes available everywhere automatically, with no source-code
+    edit required.
+
+    A season counts as available only when ALL of the following hold:
+      - it has a manifest entry under BOTH adp.seasons and
+        players.seasons (a season with only one report cached is not
+        usable -- classify_row() needs both);
+      - both local files actually exist on disk;
+      - both files' real sha256 matches the manifest's recorded
+        sha256 for that season/report (the same check _fetch_cached()
+        does on a normal fetch -- see module docstring's INTEGRITY
+        MODEL).
+
+    This is a read-only query, not a fetch -- a season failing any of
+    the above is silently excluded from the returned list, never
+    raised. A caller that specifically needs that season fetched
+    should call fetch_adp()/fetch_players() directly, which raises
+    loudly on a real integrity mismatch instead of just skipping it."""
+    manifest = _load_manifest()
+    adp_seasons = manifest.get("adp", {}).get("seasons", {})
+    players_seasons = manifest.get("players", {}).get("seasons", {})
+
+    available = []
+    for season_str in set(adp_seasons) & set(players_seasons):
+        season = int(season_str)
+        adp_path = CACHE_DIR / f"adp_{season}_period_{SBV_MFL_PERIOD.lower()}.json"
+        players_path = CACHE_DIR / f"players_{season}.json"
+        if not adp_path.exists() or not players_path.exists():
+            continue
+        if _sha256(adp_path) != adp_seasons[season_str]["sha256"]:
+            continue
+        if _sha256(players_path) != players_seasons[season_str]["sha256"]:
+            continue
+        available.append(season)
+
+    return sorted(available)

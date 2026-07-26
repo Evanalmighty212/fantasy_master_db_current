@@ -13,6 +13,11 @@ refuse to write any output at all if anything is deferred, for any
 reason. TestCheckBuildCompleteness is the most important class here --
 it's the mechanism that makes it structurally impossible for a
 canonical artifact to silently exclude rows.
+
+TestNoHardcodedSeasonList protects the 2026-07 removal of this
+module's own MFL_CACHE_SEASONS constant, in favor of
+mfl_client.discover_validated_seasons() called at run time -- see that
+function's own tests in tests/test_mfl_client.py.
 """
 
 import importlib.util
@@ -184,6 +189,45 @@ class TestHistoryDfUsesFullPopulation:
         import inspect
         sig = inspect.signature(MOD.run_label_rows)
         assert "full_pop" in sig.parameters
+
+
+class TestNoHardcodedSeasonList:
+    """2026-07: this module's own hardcoded MFL_CACHE_SEASONS tuple
+    was itself a version of the exact problem it was created to fix --
+    a season list baked into source code that had to be manually
+    widened (first (2015, 2023), then a hand-edited 2011-2024) every
+    time more MFL data was backfilled. It's replaced by
+    mfl_client.discover_validated_seasons(), called once in main() and
+    threaded through explicitly -- see
+    tests/test_mfl_client.py::TestDiscoverValidatedSeasons for that
+    function's own coverage. These are structural/source checks: the
+    property being protected is "no per-season code edit is ever
+    required again," which a runtime test on fixed data can't fully
+    demonstrate by itself."""
+
+    def test_module_has_no_mfl_cache_seasons_constant(self):
+        assert not hasattr(MOD, "MFL_CACHE_SEASONS")
+
+    def test_main_discovers_seasons_via_mfl_client(self):
+        import inspect
+        source = inspect.getsource(MOD.main)
+        assert "mfl_client.discover_validated_seasons()" in source
+
+    def test_split_processable_has_no_default_season_list(self):
+        import inspect
+        sig = inspect.signature(MOD.split_processable)
+        assert sig.parameters["mfl_cache_seasons"].default is inspect.Parameter.empty
+
+    def test_run_label_rows_has_no_default_season_list(self):
+        import inspect
+        sig = inspect.signature(MOD.run_label_rows)
+        assert "mfl_cache_seasons" in sig.parameters
+        assert sig.parameters["mfl_cache_seasons"].default is inspect.Parameter.empty
+
+    def test_run_label_rows_uses_the_passed_in_seasons_not_a_module_constant(self):
+        import inspect
+        source = inspect.getsource(MOD.run_label_rows)
+        assert "for season in mfl_cache_seasons:" in source
 
 
 class TestOutputPathsNeverCollide:
