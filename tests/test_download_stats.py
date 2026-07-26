@@ -119,6 +119,171 @@ class TestDuplicateWeekHandling:
         assert row["fantasy_points_ppr"] == 37.0  # 15 + 20 + 2, not double-counted
 
 
+def _write_position_overrides(tmp_path, *rows):
+    """Writes data/manual/position_overrides.csv inside tmp_path (the
+    redirected RAW_DIR-adjacent cwd from load_module) -- load_module's
+    monkeypatch.chdir means load_position_overrides() looks for this
+    file relative to tmp_path, not the real repo file. Rows: dicts with
+    player_id, season ('' for all seasons), correct_position, notes."""
+    path = tmp_path / "data" / "manual" / "position_overrides.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(list(rows), columns=["player_id", "season", "correct_position", "notes"]).to_csv(path, index=False)
+
+
+class TestPositionOverrideRescuesNonSkillTaggedPlayer:
+    """Fix #10 (2026-07, Travis Hunter data-quality gap): a player whose
+    LISTED position is entirely outside SKILL_POSITIONS (not a
+    within-skill TE-vs-WR mislabel like Matthews/Funchess) was
+    previously dropped by Step 2 before Step 5b's override mechanism
+    ever ran. These tests prove the fix rescues an explicitly
+    overridden player while leaving every other non-skill-tagged
+    player -- including OTHER CBs, FBs, and defensive scorers with no
+    override entry -- excluded exactly as before."""
+
+    def test_travis_hunter_real_case_included_with_real_production(self, tmp_path, monkeypatch):
+        """Real gsis_id and real 2025 weekly totals (7 weeks, 46
+        touches, up to 24.1 PPR points in week 7), confirmed directly
+        against data/raw/nflverse/annual/stats_player_week_2025.csv
+        during the 2026-07 audit -- not synthetic numbers."""
+        _write_position_overrides(tmp_path, {
+            "player_id": "00-0040718", "season": "", "correct_position": "WR",
+            "notes": "Travis Hunter -- see data/manual/position_overrides.csv",
+        })
+        rows = [
+            make_weekly_row(2025, 1, "00-0040718", "Travis Hunter", "CB", "JAX", targets=8, points=9.3),
+            make_weekly_row(2025, 2, "00-0040718", "Travis Hunter", "CB", "JAX", targets=6, points=5.2),
+            make_weekly_row(2025, 3, "00-0040718", "Travis Hunter", "CB", "JAX", targets=2, points=3.1),
+            make_weekly_row(2025, 4, "00-0040718", "Travis Hunter", "CB", "JAX", targets=5, points=7.2),
+            make_weekly_row(2025, 5, "00-0040718", "Travis Hunter", "CB", "JAX", targets=3, points=9.4),
+            make_weekly_row(2025, 6, "00-0040718", "Travis Hunter", "CB", "JAX", targets=7, points=5.5),
+            make_weekly_row(2025, 7, "00-0040718", "Travis Hunter", "CB", "JAX", targets=14, points=24.1),
+        ]
+        weekly_df = pd.DataFrame(rows)
+
+        with patch("nflverse_source.fetch_and_normalize", return_value=weekly_df):
+            mod = load_module(tmp_path, monkeypatch)
+            mod.SEASONS = [2025]
+            season = mod.build_season_results()
+
+        matching = season[season.player_id == "00-0040718"]
+        assert len(matching) == 1, "Travis Hunter was excluded -- fix #10 regression"
+        row = matching.iloc[0]
+        assert row["position"] == "WR"
+        assert row["games_played"] == 7
+        assert row["fantasy_points_ppr"] == pytest.approx(63.8, abs=0.05)
+
+    def test_ordinary_cb_without_override_stays_excluded(self, tmp_path, monkeypatch):
+        """The narrow-rescue guarantee: a DIFFERENT CB with real
+        offensive involvement but NO position_overrides.csv entry must
+        NOT be rescued -- proves the fix does not broaden the eligible
+        population to all CBs. A real skill-position companion row is
+        included alongside it, matching how real weekly data always
+        contains a mix of positions (an all-excluded population is not
+        a realistic scenario this pipeline needs to handle)."""
+        _write_position_overrides(tmp_path, {
+            "player_id": "00-0040718", "season": "", "correct_position": "WR", "notes": "Travis Hunter",
+        })
+        rows = [
+            make_weekly_row(2025, 1, "00-OTHER-CB", "Some Other CB", "CB", "AAA", targets=3, points=4.0),
+            make_weekly_row(2025, 2, "00-OTHER-CB", "Some Other CB", "CB", "AAA", targets=2, points=2.5),
+            make_weekly_row(2025, 1, "00-REAL-WR", "Real Skill Player", "WR", "AAA", targets=5, points=8.0),
+        ]
+        weekly_df = pd.DataFrame(rows)
+
+        with patch("nflverse_source.fetch_and_normalize", return_value=weekly_df):
+            mod = load_module(tmp_path, monkeypatch)
+            mod.SEASONS = [2025]
+            season = mod.build_season_results()
+
+        assert len(season[season.player_id == "00-OTHER-CB"]) == 0, (
+            "An ordinary CB with no override entry was rescued -- the fix "
+            "must not broaden the eligible population beyond explicit overrides."
+        )
+        assert len(season[season.player_id == "00-REAL-WR"]) == 1
+
+    def test_fb_without_override_stays_excluded(self, tmp_path, monkeypatch):
+        """Fullbacks remain out of v1.0 scope -- the fix must not
+        sweep in FB just because it now runs pre-filter."""
+        rows = [
+            make_weekly_row(2025, 1, "00-SOME-FB", "Some Fullback", "FB", "BBB", carries=3, points=6.0),
+            make_weekly_row(2025, 1, "00-REAL-WR2", "Real Skill Player", "WR", "BBB", targets=5, points=8.0),
+        ]
+        weekly_df = pd.DataFrame(rows)
+
+        with patch("nflverse_source.fetch_and_normalize", return_value=weekly_df):
+            mod = load_module(tmp_path, monkeypatch)
+            mod.SEASONS = [2025]
+            season = mod.build_season_results()
+
+        assert len(season[season.player_id == "00-SOME-FB"]) == 0
+        assert len(season[season.player_id == "00-REAL-WR2"]) == 1
+
+    def test_defensive_scorer_with_incidental_points_stays_excluded(self, tmp_path, monkeypatch):
+        """A defensive player who scores fantasy points via a
+        pick-six/fumble return (real fantasy_points_ppr, zero
+        offensive touches) must not be rescued just because the
+        override mechanism now runs earlier."""
+        rows = [
+            make_weekly_row(2025, 3, "00-DEF-SCORE", "Some Defender", "CB", "CCC",
+                             attempts=0, carries=0, targets=0, points=6.0),
+            make_weekly_row(2025, 1, "00-REAL-WR3", "Real Skill Player", "WR", "CCC", targets=5, points=8.0),
+        ]
+        weekly_df = pd.DataFrame(rows)
+
+        with patch("nflverse_source.fetch_and_normalize", return_value=weekly_df):
+            mod = load_module(tmp_path, monkeypatch)
+            mod.SEASONS = [2025]
+            season = mod.build_season_results()
+
+        assert len(season[season.player_id == "00-DEF-SCORE"]) == 0
+        assert len(season[season.player_id == "00-REAL-WR3"]) == 1
+
+    def test_only_explicitly_listed_player_ids_are_rescued_mixed_population(self, tmp_path, monkeypatch):
+        """A combined population check: override present for one
+        player only, several other non-skill-tagged players present --
+        exactly one is rescued, matching the override table exactly,
+        not a pattern/heuristic."""
+        _write_position_overrides(tmp_path, {
+            "player_id": "00-RESCUED", "season": "", "correct_position": "WR", "notes": "test override",
+        })
+        rows = [
+            make_weekly_row(2025, 1, "00-RESCUED", "Rescued Player", "CB", "AAA", targets=5, points=8.0),
+            make_weekly_row(2025, 1, "00-NOT-RESCUED-1", "Not Rescued FB", "FB", "BBB", carries=2, points=3.0),
+            make_weekly_row(2025, 1, "00-NOT-RESCUED-2", "Not Rescued CB", "CB", "CCC", targets=1, points=1.5),
+        ]
+        weekly_df = pd.DataFrame(rows)
+
+        with patch("nflverse_source.fetch_and_normalize", return_value=weekly_df):
+            mod = load_module(tmp_path, monkeypatch)
+            mod.SEASONS = [2025]
+            season = mod.build_season_results()
+
+        assert set(season["player_id"]) == {"00-RESCUED"}
+        assert season[season.player_id == "00-RESCUED"].iloc[0]["position"] == "WR"
+
+    def test_within_skill_position_override_still_works_unchanged(self, tmp_path, monkeypatch):
+        """Regression guard: the pre-existing Matthews/Funchess-style
+        case (already skill-tagged, e.g. TE-vs-WR) must still work
+        exactly as before -- fix #10 adds a rescue path, it doesn't
+        change the existing within-skill override behavior."""
+        _write_position_overrides(tmp_path, {
+            "player_id": "00-TWEENER", "season": "", "correct_position": "WR", "notes": "test tweener",
+        })
+        rows = [
+            make_weekly_row(2025, 1, "00-TWEENER", "Tweener Player", "TE", "DDD", targets=6, points=10.0),
+        ]
+        weekly_df = pd.DataFrame(rows)
+
+        with patch("nflverse_source.fetch_and_normalize", return_value=weekly_df):
+            mod = load_module(tmp_path, monkeypatch)
+            mod.SEASONS = [2025]
+            season = mod.build_season_results()
+
+        matching = season[season.player_id == "00-TWEENER"]
+        assert len(matching) == 1
+        assert matching.iloc[0]["position"] == "WR"
+
+
 class TestTeamHandlingDoesNotFragmentSeason:
     def test_traded_player_gets_one_row_not_two(self, tmp_path, monkeypatch):
         # Regression test for the original Priority 1 bug: recent_team

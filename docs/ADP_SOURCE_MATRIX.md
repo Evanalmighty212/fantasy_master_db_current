@@ -1810,3 +1810,62 @@ of not having a negative-override mechanism, not silently patched over.
   -- his exclusion is a pre-existing condition of the whole master DB
   build, not created by this audit, but now disclosed rather than
   silently absorbed into "no_adp_match."
+
+---
+
+### 2026-07 -- Travis Hunter fixed: position override now applied before the skill-position filter
+
+- **Date**: 2026-07
+- **Decision**: treated as a real pipeline bug, not an acceptable
+  missing-data case, and fixed -- resolved before Commit E rather than
+  deferred alongside it.
+- **The narrowest fix**: `scripts/03_download_stats.py`'s existing
+  `apply_position_overrides()` (unchanged function, unchanged strict
+  player_id-keyed matching) is now ALSO called on the raw weekly data
+  at a new Step 1b, before Step 2's `SKILL_POSITIONS` filter -- not
+  only at the existing Step 5b (season level, after the filter). This
+  is a narrow rescue path, not a broadened population: only player_ids
+  with a real, explicit `data/manual/position_overrides.csv` entry are
+  ever affected. Every other non-skill-tagged row (every other CB,
+  every FB, every defensive score) is filtered exactly as before --
+  confirmed both by 6 new regression tests
+  (`tests/test_download_stats.py::TestPositionOverrideRescuesNonSkillTaggedPlayer`)
+  and directly against the real, full 2025 production data (below).
+- **Travis Hunter added to `data/manual/position_overrides.csv`**:
+  `player_id=00-0040718`, blank season (applies to all his seasons,
+  same convention as Matthews/Funchess), `correct_position=WR`.
+- **Verified on real, full production data**, not just synthetic
+  tests: re-ran `scripts/03_download_stats.py` end-to-end against the
+  real, already-cached 2006-2025 raw weekly data (no new network
+  fetch -- cache-hit on every season). Travis Hunter now appears in
+  the regenerated `season_results_ppr_2006_2025.csv` with
+  `position=WR`, `games_played=7`, `fantasy_points_ppr=63.8`,
+  `position_finish_ppr=97` -- his real numbers. Matthews/Funchess
+  (13 total player-seasons across both) remained correctly `WR`,
+  confirming the pre-existing override path is untouched by this
+  change.
+- **Narrow-rescue-path re-confirmed on the full real population**: of
+  the same 43 non-skill-tagged 2025 players with real offensive
+  involvement identified in the prior audit entry, **exactly one**
+  (Travis Hunter) now appears in the regenerated season results.
+  Every other one -- Kyle Juszczyk (FB, 67.7 points, numerically
+  larger than Hunter), Bo Melton (CB), Connor Heyward (FB), and the
+  rest -- remains correctly excluded. The fix rescues only the
+  explicitly approved exception, nothing else.
+- **Re-ran the 2025 ADP matching audit** (`audit_2025_adp_matching.py`,
+  unchanged) against the regenerated season results:
+
+| Status | Before fix | After fix |
+|---|---|---|
+| `matched_clean` | 345 | **346** |
+| `matched_needs_review` | 0 | 0 |
+| `no_adp_match` (Amari Cooper, rejected) | 1 | 1 |
+| `no_adp_match` (never matched) | 25 | **24** |
+| **Total candidates** | 371 | 371 |
+
+  Sensitivity field re-confirmed inert after the fix.
+- **Confidence level**: High -- verified against real source data at
+  every step (raw weekly stats, regenerated season results, the real
+  matching audit), not inferred from the synthetic tests alone.
+- **Next steps**: Commit E (master DB rebuild) can now proceed with
+  Travis Hunter genuinely included, not silently missing.

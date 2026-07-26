@@ -77,6 +77,23 @@ Fixes applied (Priority 1 audit, see docs/ or PR notes):
    rename across all 19 old-schema seasons) and adds integrity
    checking via a committed manifest so a future silent upstream
    revision can never pass through unnoticed.
+10. Position overrides are now ALSO applied to the raw weekly data
+    before the SKILL_POSITIONS filter (Step 1b), not only to the
+    aggregated season rows (Step 5b) -- found via a real 2026-07 audit
+    that Travis Hunter (2025), listed CB by nflverse despite real,
+    substantial offensive production (he plays both ways), was being
+    dropped entirely by the filter before fix #8's override mechanism
+    ever got a chance to run. Fix #8's cases (Matthews/Funchess) are
+    all TE-vs-WR -- already skill-tagged either way, so they always
+    survived the filter regardless of when the override ran; Hunter's
+    case is CB-vs-WR (non-skill vs. skill), a materially different
+    situation the original ordering couldn't handle. Narrow by
+    construction: only player_ids with a real, explicit
+    position_overrides.csv entry are ever rescued this way -- every
+    other non-skill-tagged row (every other CB, every FB, every
+    defensive score) is filtered exactly as before. See
+    TestNarrowRescuePathDoesNotBroadenPopulation in
+    tests/test_03_download_stats.py.
 
 Input:  config.SEASONS
         data/manual/position_overrides.csv (optional, hand-maintained)
@@ -197,6 +214,28 @@ def build_season_results():
 
     pd.DataFrame(failed).to_csv(RAW_DIR / "weekly_download_failures.csv", index=False)
 
+    print("Step 1b: Applying position overrides BEFORE the skill-position filter...")
+    # Fix #10 (2026-07, Travis Hunter data-quality gap): a player whose
+    # LISTED position is entirely OUTSIDE SKILL_POSITIONS (e.g. Travis
+    # Hunter, tagged CB by nflverse despite real, substantial offensive
+    # production -- he plays both ways) was previously dropped by Step 2
+    # before Step 5b's override mechanism ever ran, so no override could
+    # rescue him -- position_overrides.csv was only ever applied to rows
+    # that had ALREADY survived the skill-position filter (the
+    # Matthews/Funchess/Harry cases are all TE-vs-WR, i.e. already
+    # skill-tagged either way). Reuses apply_position_overrides()
+    # UNCHANGED -- same function, same strict player_id-keyed matching,
+    # just called on the raw weekly rows in addition to (not instead of)
+    # the aggregated season rows at Step 5b. This is a narrow rescue
+    # path, not a broadened population: only player_ids with a REAL,
+    # explicit entry in position_overrides.csv are ever affected here --
+    # every other non-skill-tagged row (every other CB, every FB, every
+    # defensive score) is filtered exactly as before. See
+    # TestNarrowRescuePathDoesNotBroadenPopulation in
+    # tests/test_03_download_stats.py for the mechanical guarantee.
+    position_overrides = load_position_overrides()
+    weekly = apply_position_overrides(weekly, position_overrides)
+
     print("Step 2: Filtering to QB/RB/WR/TE (v1.0 scope)...")
     before = len(weekly)
     weekly = weekly[weekly["position"].isin(SKILL_POSITIONS)].copy()
@@ -281,7 +320,12 @@ def build_season_results():
     # MUST happen before Step 6's ranking -- position_finish_ppr is
     # computed per (season, position) group, so overrides need to be
     # applied first or a corrected player would still be ranked within
-    # their WRONG position group.
+    # their WRONG position group. Redundant-but-harmless for anyone
+    # already corrected at Step 1b (position is already right, so this
+    # is a no-op for them) -- still required for players who only need a
+    # WITHIN-skill-position relabel (Jordan Matthews/Devin Funchess:
+    # TE-vs-WR, already skill either way, so they survive Step 2
+    # regardless and only need this season-level correction).
     position_overrides = load_position_overrides()
     season = apply_position_overrides(season, position_overrides)
 
