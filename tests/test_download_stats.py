@@ -284,6 +284,89 @@ class TestPositionOverrideRescuesNonSkillTaggedPlayer:
         assert matching.iloc[0]["position"] == "WR"
 
 
+class TestPositionOverrideIsIdempotent:
+    """apply_position_overrides() now runs twice in the real pipeline
+    (Step 1b on weekly rows, Step 5b on season rows) -- these tests
+    prove that's safe: applying the SAME override table a second time
+    to already-corrected data is a true no-op, never a second
+    transformation. Checked both as a direct function-level property
+    and end-to-end through the real Step 1b + Step 5b ordering."""
+
+    def test_apply_position_overrides_is_idempotent_directly(self):
+        """apply_position_overrides(df) and
+        apply_position_overrides(apply_position_overrides(df)) must be
+        identical -- a second application changes nothing."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("download_stats_idem", SCRIPT_PATH)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        overrides = pd.DataFrame([
+            {"player_id": "00-0040718", "season": "", "correct_position": "WR", "notes": "Travis Hunter"},
+        ])
+        base = pd.DataFrame([
+            {"season": 2025, "player_id": "00-0040718", "position": "CB", "fantasy_points_ppr": 63.8},
+            {"season": 2025, "player_id": "00-OTHER", "position": "RB", "fantasy_points_ppr": 10.0},
+        ])
+
+        once = mod.apply_position_overrides(base.copy(), overrides)
+        twice = mod.apply_position_overrides(once.copy(), overrides)
+
+        pd.testing.assert_frame_equal(once.reset_index(drop=True), twice.reset_index(drop=True))
+
+    def test_travis_hunter_unchanged_by_a_forced_third_application(self, tmp_path, monkeypatch):
+        """End-to-end through the real Step 1b + Step 5b pipeline,
+        then a MANUALLY forced third apply_position_overrides() call on
+        the final season output -- proves he's not "transformed twice"
+        by the new ordering, and a hypothetical extra pass changes
+        nothing further."""
+        _write_position_overrides(tmp_path, {
+            "player_id": "00-0040718", "season": "", "correct_position": "WR", "notes": "Travis Hunter",
+        })
+        rows = [
+            make_weekly_row(2025, w, "00-0040718", "Travis Hunter", "CB", "JAX", targets=t, points=p)
+            for w, t, p in [(1, 8, 9.3), (2, 6, 5.2), (3, 2, 3.1), (4, 5, 7.2), (5, 3, 9.4), (6, 7, 5.5), (7, 14, 24.1)]
+        ]
+        weekly_df = pd.DataFrame(rows)
+
+        with patch("nflverse_source.fetch_and_normalize", return_value=weekly_df):
+            mod = load_module(tmp_path, monkeypatch)
+            mod.SEASONS = [2025]
+            season = mod.build_season_results()
+
+        row = season[season.player_id == "00-0040718"].iloc[0]
+        assert row["position"] == "WR"
+        assert row["fantasy_points_ppr"] == pytest.approx(63.8, abs=0.05)
+
+        overrides = mod.load_position_overrides()
+        season_again = mod.apply_position_overrides(season.copy(), overrides)
+        pd.testing.assert_frame_equal(season.reset_index(drop=True), season_again.reset_index(drop=True))
+
+    def test_matthews_funchess_style_override_unchanged_by_second_pass(self, tmp_path, monkeypatch):
+        """Same idempotency guarantee for the pre-existing
+        within-skill-position case (already TE-vs-WR, no Step 1b
+        rescue needed, but Step 5b + a forced extra pass must still be
+        a no-op)."""
+        _write_position_overrides(tmp_path, {
+            "player_id": "00-TWEENER", "season": "", "correct_position": "WR", "notes": "test tweener",
+        })
+        rows = [
+            make_weekly_row(2025, 1, "00-TWEENER", "Tweener Player", "TE", "DDD", targets=6, points=10.0),
+        ]
+        weekly_df = pd.DataFrame(rows)
+
+        with patch("nflverse_source.fetch_and_normalize", return_value=weekly_df):
+            mod = load_module(tmp_path, monkeypatch)
+            mod.SEASONS = [2025]
+            season = mod.build_season_results()
+
+        assert season[season.player_id == "00-TWEENER"].iloc[0]["position"] == "WR"
+
+        overrides = mod.load_position_overrides()
+        season_again = mod.apply_position_overrides(season.copy(), overrides)
+        pd.testing.assert_frame_equal(season.reset_index(drop=True), season_again.reset_index(drop=True))
+
+
 class TestTeamHandlingDoesNotFragmentSeason:
     def test_traded_player_gets_one_row_not_two(self, tmp_path, monkeypatch):
         # Regression test for the original Priority 1 bug: recent_team
