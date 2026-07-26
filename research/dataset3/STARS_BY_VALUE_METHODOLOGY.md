@@ -1253,8 +1253,12 @@ adjust against.
   specifically -- classifier output alone is never sufficient on its
   own, for any season.
 - Pipeline logic may branch on `star_by_value_status` and
-  `star_by_value_provenance_type`, but must never parse
-  `star_by_value_evidence_notes`.
+  `star_by_value_provenance_type`, but must never read the separate
+  evidence-audit artifact (`data/exports/stars_by_value_evidence_audit.csv`
+  -- see "Structured provenance, not unconstrained free text" below for
+  why this replaced the originally-proposed `star_by_value_evidence_notes`
+  column, and the "REJECTED" note there for the preserved original
+  proposal).
 
 **Downstream modeling rules**: `WHERE star_by_value_label IS NOT NULL`
 is unchanged in its literal form, but its effect is now substantially
@@ -1300,10 +1304,34 @@ fields instead:
   -- it's a real, if rare, lower-volume-of-evidence path (section
   above), and an auditor or future re-reviewer should be able to find
   every row that took it without parsing free text.
-- `star_by_value_evidence_notes` (free text, human-audit only --
+- ~~`star_by_value_evidence_notes` (free text, human-audit only --
   documented explicitly as never to be parsed by pipeline logic): the
   specific round, specific MFL selection percentage, specific
-  classifier reasoning, etc.
+  classifier reasoning, etc.~~ **REJECTED 2026-07, never implemented.**
+  This free-text column on the MAIN SBV dataset was the original
+  proposal. It was never built -- `lib/stars_by_value/labeling.py`'s
+  `OUTPUT_COLUMNS` never included it. When the gap was found (during a
+  canonical-build schema/data-dictionary audit), the design was
+  reconsidered and formally rejected in favor of keeping the main SBV
+  Parquet/CSV strictly structured and machine-readable, with
+  case-specific evidence living in a **separate, strictly one-way
+  artifact** instead: `data/exports/stars_by_value_evidence_audit.csv`,
+  joined by `(season, player_id)`. Generated during the SAME
+  evaluation that determines the canonical row (Option 3A -- see
+  `lib/stars_by_value/evidence_audit.py` and `labeling.py`'s
+  `assign_sbv_status()`), not a second reconstruction pass, so the
+  audit explanation can never drift from the canonical result. An
+  audit row exists only for the six provenance types that reflect a
+  real evidentiary/classifier judgment call
+  (`adp_matched_needs_review`, `mmc_verified_corroborated`,
+  `mmc_verified_2010_manual_override`, `evidence_drafted_unresolved`,
+  `evidence_ambiguous_disagreement`,
+  `known_acquisition_cost_ep_out_of_fitted_range`) -- every other
+  provenance type is already fully explained by the canonical row's
+  own structured columns and must have zero audit rows. No scoring,
+  matching, labeling, or modeling code may ever read this artifact
+  (mechanically enforced -- see
+  `tests/test_evidence_audit.py::TestNeverConsumedDownstream`).
 
 `provenance_type` is mostly a 1:1 refinement of `status`, with one
 deliberate exception: `out_of_scope` gets three real subtypes here
@@ -1321,11 +1349,25 @@ canonical ADP source) without ever touching the `status` enum.
 |---|---|---|---|
 | `star_by_value_label` | Int8, nullable | `1`, `0`, `NULL` | Qualifies / scoreable-but-doesn't-qualify (incl. gate failure) / cannot be scored honestly |
 | `star_by_value_score` | Float64, nullable | real number, or `NULL` | `P - lambda x E_P`; `NULL` for all non-computed statuses (including `below_production_gate`, by documented choice) |
-| `star_by_value_status` | String (enum) | `adp_scored`, `unscoreable_adp_needs_review`, `minimal_market_cost_scored`, `unscoreable_drafted_adp_missing`, `unscoreable_ambiguous`, `below_production_gate`, `out_of_scope` | Always populated, never `NULL` |
+| `star_by_value_status` | String (enum) | `adp_scored`, `unscoreable_adp_needs_review`, `minimal_market_cost_scored`, `unscoreable_drafted_adp_missing`, `unscoreable_ambiguous`, `below_production_gate`, `out_of_scope`, `unscoreable_expected_production_out_of_range` | Always populated, never `NULL` |
 | `star_by_value_production_gate_threshold` | Float64, nullable | position's p82.5 constant, or `NULL` | The production bar this row faced (or would face); `NULL` usually only for `out_of_scope` |
 | `star_by_value_threshold` | Float64, nullable | position's final cutoff constant, or `NULL` | The final Star cutoff; populated only for rows that cleared, or would have cleared, the production gate. `NULL` for `below_production_gate` and `out_of_scope` |
-| `star_by_value_provenance_type` | String (enum) | `adp_matched_clean`, `adp_matched_needs_review`, `mmc_verified_corroborated`, `mmc_verified_2010_manual_override`, `evidence_drafted_unresolved`, `evidence_ambiguous_disagreement`, `below_production_gate`, `out_of_scope_non_skill_position`, `out_of_scope_temporal_window`, `out_of_scope_insufficient_participation` | Structured provenance; safe for downstream logic to branch on |
-| `star_by_value_evidence_notes` | String, nullable | free text | Human-audit detail only -- never parsed by pipeline logic |
+| `star_by_value_provenance_type` | String (enum) | `adp_matched_clean`, `adp_matched_needs_review`, `mmc_verified_corroborated`, `mmc_verified_2010_manual_override`, `evidence_drafted_unresolved`, `evidence_ambiguous_disagreement`, `below_production_gate`, `out_of_scope_non_skill_position`, `out_of_scope_temporal_window`, `out_of_scope_insufficient_participation`, `known_acquisition_cost_ep_out_of_fitted_range` | Structured provenance; safe for downstream logic to branch on |
+
+~~`star_by_value_evidence_notes` | String, nullable | free text | Human-audit detail only -- never parsed by pipeline logic`~~ **REJECTED 2026-07** -- see "Structured provenance, not unconstrained free text" above. Replaced by the separate `stars_by_value_evidence_audit.csv` artifact (schema below), not a column on this table.
+
+**Evidence-audit artifact schema** (`data/exports/stars_by_value_evidence_audit.csv`, separate file, join keys `season`+`player_id`):
+
+| Column | Type | Definition |
+|---|---|---|
+| `season` | Int64 | Join key |
+| `player_id` | String | Join key |
+| `player_name` | String | Denormalized, human-scanning only |
+| `star_by_value_status` | String (enum) | Denormalized copy of the canonical row's status -- validated to match, never independently derived |
+| `star_by_value_provenance_type` | String (enum) | Denormalized copy, same validation |
+| `evidence_type` | String (enum, 6 values) | Structured, NOT free text -- `adp_match_needs_review`, `mmc_corroborated_by_mfl`, `mmc_2010_manual_override`, `drafted_but_adp_unresolved`, `classifier_mfl_disagreement`, `round_beyond_fitted_ep_range` |
+| `evidence_summary` | String, free text | Human-audit only, never parsed by pipeline logic |
+| `source_reference` | String | Pointer to the specific grounding fact (classifier bucket/MFL result, an override table, a fitted-round comparison) |
 
 **Terminology note**: this supersedes the single catch-all term
 `unscoreable_no_adp` used as an interim policy label earlier in this

@@ -498,7 +498,7 @@ class TestNoSilentNullToZeroCoercion:
         # non-empty (if irrelevant to this out-of-scope row) table is used.
         lookup = _ep_lookup({"prediction_season": 2020, "position": "WR", "draft_round": 1, "expected_production": 50.0})
         rows = pd.DataFrame([_row(season=2005)])
-        out = labeling.label_rows(rows, lookup)
+        out, _audit_df = labeling.label_rows(rows, lookup)
         assert pd.isna(out.loc[0, "star_by_value_label"])
         assert out["star_by_value_label"].dtype == "Int8"
 
@@ -507,7 +507,7 @@ class TestNullableInt8Label:
     def test_label_column_dtype_is_int8(self):
         lookup = _ep_lookup({"prediction_season": 2020, "position": "WR", "draft_round": 1, "expected_production": 50.0})
         rows = pd.DataFrame([_row(season=2020, position="WR", data_quality_flag="matched_clean", adp_round=1, P=300.0)])
-        out = labeling.label_rows(rows, lookup)
+        out, _audit_df = labeling.label_rows(rows, lookup)
         assert out["star_by_value_label"].dtype == "Int8"
 
     def test_int8_column_holds_real_zero_and_one_and_na(self):
@@ -518,7 +518,7 @@ class TestNullableInt8Label:
             _row(season=2020, position="WR", P=floor - 1),  # 0 (below gate)
             _row(season=2020, position="WR", data_quality_flag="matched_clean", adp_round=1, P=10000.0),  # 1 (huge P)
         ])
-        out = labeling.label_rows(rows, lookup)
+        out, _audit_df = labeling.label_rows(rows, lookup)
         values = list(out["star_by_value_label"])
         assert pd.isna(values[0])
         assert values[1] == 0
@@ -645,6 +645,129 @@ class TestNamedCaseRegression:
         assert result["star_by_value_score"] is None
         assert result["star_by_value_label"] is None
         assert result["star_by_value_label"] != 0
+
+
+class TestAuditPayloadBuiltDuringSameEvaluation:
+    """Option 3A (2026-07): the audit payload for a row is built
+    inside assign_sbv_status() at the SAME point the canonical
+    status/provenance are decided -- never a second reconstruction
+    pass. These tests check result["_audit_payload"] directly (the
+    internal, pre-DataFrame-split key -- see _result()'s docstring),
+    proving each of the 6 required provenance types gets a real,
+    well-formed payload whose status/provenance match the canonical
+    result exactly, and that every other status gets None."""
+
+    def _empty_lookup(self):
+        return _ep_lookup()
+
+    def test_matched_needs_review_gets_an_audit_payload(self):
+        row = _row(season=2020, position="WR", data_quality_flag="matched_needs_review")
+        result = labeling.assign_sbv_status(row, self._empty_lookup())
+        payload = result["_audit_payload"]
+        assert payload is not None
+        assert payload["evidence_type"] == "adp_match_needs_review"
+        assert payload["star_by_value_status"] == result["star_by_value_status"]
+        assert payload["star_by_value_provenance_type"] == result["star_by_value_provenance_type"]
+        assert payload["season"] == row["season"]
+        assert payload["player_id"] == row["player_id"]
+
+    def test_round_beyond_fitted_range_gets_an_audit_payload(self):
+        lookup = _ep_lookup({"prediction_season": 2020, "position": "WR", "draft_round": 1, "expected_production": 50.0})
+        row = _row(season=2020, position="WR", data_quality_flag="matched_clean", adp_round=5, P=300.0)
+        result = labeling.assign_sbv_status(row, lookup)
+        assert result["star_by_value_status"] == labeling.STATUS_UNSCOREABLE_EP_OUT_OF_RANGE
+        payload = result["_audit_payload"]
+        assert payload is not None
+        assert payload["evidence_type"] == "round_beyond_fitted_ep_range"
+        assert "adp_round=5" in payload["source_reference"]
+        assert "max_fitted_round=1" in payload["source_reference"]
+
+    def test_mmc_corroborated_2011_plus_gets_an_audit_payload(self):
+        """Reuses the real Herbert 2020 named-case fixture."""
+        players = pd.DataFrame([{
+            "gsis_id": "00-herbert", "position": "QB", "draft_year": 2020, "draft_round": 6,
+            "draft_pick": 180, "rookie_season": 2020,
+        }], columns=["gsis_id", "position", "draft_year", "draft_round", "draft_pick", "rookie_season"])
+        history = pd.DataFrame(columns=["season", "player_id", "games_played", "fantasy_points_ppr"])
+        depth = pd.DataFrame([{"season": 2020, "week": 1, "game_type": "REG", "position": "QB", "gsis_id": "00-herbert", "depth_team": 2}])
+        mfl_players = {"players": {"player": [{"id": "h1", "name": "Herbert, Justin", "position": "QB", "team": "LAC"}]}}
+        mfl_adp = {"adp": {"totalDrafts": "5892", "player": [{"id": "h1", "draftSelPct": "17.9", "rank": "158", "averagePick": "120.0"}]}}
+        row = _row(season=2020, position="QB", player_id="00-herbert", player_name="Justin Herbert", data_quality_flag="no_adp_match", P=212.198334)
+
+        result = labeling.assign_sbv_status(
+            row, self._empty_lookup(), players_df=players, history_df=history,
+            depth_chart_df=depth, mfl_adp_response=mfl_adp, mfl_players_response=mfl_players,
+        )
+        assert result["star_by_value_status"] == labeling.STATUS_MMC_SCORED
+        payload = result["_audit_payload"]
+        assert payload is not None
+        assert payload["evidence_type"] == "mmc_corroborated_by_mfl"
+        assert "classifier_bucket=" in payload["source_reference"]
+        assert "mfl_result=" in payload["source_reference"]
+
+    def test_mmc_2010_override_gets_an_audit_payload(self):
+        players = pd.DataFrame(columns=["gsis_id", "position", "draft_year", "draft_round", "draft_pick", "rookie_season"])
+        history = pd.DataFrame(columns=["season", "player_id", "games_played", "fantasy_points_ppr"])
+        overrides = pd.DataFrame([{
+            "season": "2010", "player_id": "00-mmc2010", "override_type": "minimal_market_cost",
+            "adp_overall": None, "adp_round": None,
+        }])
+        row = _row(season=2010, position="RB", player_id="00-mmc2010", data_quality_flag="no_adp_match", P=300.0)
+
+        result = labeling.assign_sbv_status(
+            row, self._empty_lookup(), players_df=players, history_df=history, overrides_2010_df=overrides,
+        )
+        assert result["star_by_value_status"] == labeling.STATUS_MMC_SCORED
+        assert result["star_by_value_provenance_type"] == ac.PROVENANCE_MMC_2010_OVERRIDE
+        payload = result["_audit_payload"]
+        assert payload is not None
+        assert payload["evidence_type"] == "mmc_2010_manual_override"
+        assert "mmc_2010_manual_overrides.csv" in payload["source_reference"]
+
+    def test_vick_2010_exception_gets_an_audit_payload(self):
+        players = pd.DataFrame([{
+            "gsis_id": ac.VICK_2010_GSIS_ID, "position": "QB", "draft_year": 2001, "draft_round": 1,
+            "draft_pick": 1, "rookie_season": 2001,
+        }], columns=["gsis_id", "position", "draft_year", "draft_round", "draft_pick", "rookie_season"])
+        history = pd.DataFrame(columns=["season", "player_id", "games_played", "fantasy_points_ppr"])
+        overrides = pd.DataFrame(columns=["season", "player_id", "override_type", "adp_overall", "adp_round"])
+        row = _row(season=2010, position="QB", player_id=ac.VICK_2010_GSIS_ID, data_quality_flag="no_adp_match", P=400.0)
+
+        result = labeling.assign_sbv_status(
+            row, self._empty_lookup(), players_df=players, history_df=history, overrides_2010_df=overrides,
+        )
+        assert result["star_by_value_status"] == labeling.STATUS_DRAFTED_MISSING
+        payload = result["_audit_payload"]
+        assert payload is not None
+        assert payload["evidence_type"] == "drafted_but_adp_unresolved"
+        assert "Vick" in payload["evidence_summary"]
+
+    def test_ambiguous_2011_plus_gets_an_audit_payload(self):
+        players = pd.DataFrame(columns=["gsis_id", "position", "draft_year", "draft_round", "draft_pick", "rookie_season"])
+        history = pd.DataFrame(columns=["season", "player_id", "games_played", "fantasy_points_ppr"])
+        mfl_players = {"players": {"player": []}}
+        mfl_adp = {"adp": {"totalDrafts": "1000", "player": []}}
+        row = _row(season=2019, position="TE", data_quality_flag="no_adp_match", P=300.0)
+
+        result = labeling.assign_sbv_status(
+            row, self._empty_lookup(), players_df=players, history_df=history,
+            mfl_players_response=mfl_players, mfl_adp_response=mfl_adp,
+        )
+        assert result["star_by_value_status"] == labeling.STATUS_AMBIGUOUS
+        payload = result["_audit_payload"]
+        assert payload is not None
+        assert payload["evidence_type"] == "classifier_mfl_disagreement"
+
+    def test_non_required_statuses_have_no_audit_payload(self):
+        cases = [
+            _row(season=2005, position="WR"),  # out_of_scope
+            _row(season=2020, position="WR", P=0.0),  # below_production_gate
+            _row(season=2020, position="WR", data_quality_flag="matched_clean", adp_round=1, P=300.0),  # adp_scored
+        ]
+        lookup = _ep_lookup({"prediction_season": 2020, "position": "WR", "draft_round": 1, "expected_production": 50.0})
+        for row in cases:
+            result = labeling.assign_sbv_status(row, lookup)
+            assert result["_audit_payload"] is None, f"expected no audit payload for status {result['star_by_value_status']!r}"
 
 
 class TestNoResearchImports:

@@ -389,7 +389,22 @@ Column list (from the settled Section 11 schema):
 | `star_by_value_production_gate_threshold` | `float64` (NaN = NULL) | |
 | `star_by_value_threshold` | `float64` (NaN = NULL) | |
 | `star_by_value_provenance_type` | `category` / string, values restricted to `config.SBV_PROVENANCE_TYPES` | |
-| `star_by_value_evidence_notes` | `string`, nullable | never read by pipeline logic downstream, audit-only |
+
+~~`star_by_value_evidence_notes` | `string`, nullable | never read by pipeline logic downstream, audit-only`~~
+**REJECTED 2026-07, never implemented.** This free-text column on the
+main SBV output table was the original plan. Formally rejected in
+favor of a separate, strictly one-way artifact --
+`data/exports/stars_by_value_evidence_audit.csv`, joined by
+`(season, player_id)` -- so the main Parquet/CSV stays strictly
+structured and machine-readable. Generated during the SAME evaluation
+that produces the canonical row (`lib/stars_by_value/evidence_audit.py`
++ `labeling.py`'s `assign_sbv_status()`), not a second pass, so the
+audit explanation can never drift from the canonical result. See
+`research/dataset3/STARS_BY_VALUE_METHODOLOGY.md`'s "Structured
+provenance, not unconstrained free text" section for the full schema
+and the required-coverage rule (only the six provenance types
+reflecting a real evidentiary/classifier judgment call get an audit
+row).
 
 **Auxiliary columns recommended alongside the seven official ones**
 (matches this project's existing practice of keeping LWI's intermediate

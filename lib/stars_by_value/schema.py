@@ -37,6 +37,7 @@ from pathlib import Path
 
 import config
 from lib.stars_by_value import labeling
+from lib.stars_by_value import evidence_audit
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -294,17 +295,19 @@ def render_schema_markdown() -> str:
     lines += [
         "---",
         "",
-        "## Known gaps vs. the methodology spec",
+        evidence_audit.render_evidence_audit_markdown(),
+        "---",
+        "",
+        "## Resolved spec gap: `star_by_value_evidence_notes`",
         "",
         "`research/dataset3/STARS_BY_VALUE_METHODOLOGY.md` and "
-        "`STARS_BY_VALUE_IMPLEMENTATION_PLAN.md` both document a "
-        "`star_by_value_evidence_notes` column (free text, human-audit only, "
-        "explicitly documented as never parsed by pipeline logic) that was never "
-        "actually implemented in `lib/stars_by_value/labeling.py`'s `OUTPUT_COLUMNS`. "
-        "It does not exist in the real canonical output and is deliberately NOT "
-        "documented above as if it did -- this data dictionary describes the real, "
-        "current output only. Whether to implement the column or update the spec is a "
-        "separate, not-yet-made decision.",
+        "`STARS_BY_VALUE_IMPLEMENTATION_PLAN.md` originally documented a "
+        "`star_by_value_evidence_notes` free-text column on the main SBV dataset. "
+        "It was never implemented, and was formally REJECTED 2026-07 in favor of "
+        "the separate evidence-audit artifact above -- see both docs' preserved "
+        "decision history for the original proposal and the rejection reasoning. "
+        "The main SBV Parquet/CSV stays strictly structured; case-specific "
+        "explanation lives only in `stars_by_value_evidence_audit.csv`.",
         "",
     ]
     return "\n".join(lines)

@@ -97,6 +97,7 @@ from lib.stars_by_value import production as prod
 from lib.stars_by_value import expected_production as ep
 from lib.stars_by_value import labeling
 from lib.stars_by_value import schema as sbv_schema
+from lib.stars_by_value import evidence_audit
 import mfl_client
 import nflverse_source
 
@@ -229,7 +230,7 @@ def run_label_rows(processable: pd.DataFrame, ep_lookup: pd.DataFrame, full_pop:
     if schedules_path.exists():
         schedule_df = pd.read_csv(schedules_path, low_memory=False)
 
-    result = labeling.label_rows(
+    result, audit_df = labeling.label_rows(
         processable, ep_lookup,
         players_df=players_df, history_df=history_df,
         depth_charts_by_season=depth_charts_by_season,
@@ -237,9 +238,14 @@ def run_label_rows(processable: pd.DataFrame, ep_lookup: pd.DataFrame, full_pop:
         overrides_2010_df=overrides_2010_df,
         schedule_df=schedule_df,
     )
-    return processable[["season", "player_id", "player_name", "position"]].merge(
+    out = processable[["season", "player_id", "player_name", "position"]].merge(
         result, on=["season", "player_id"], how="inner",
     )
+    # audit_df is already fully self-contained (season, player_id,
+    # player_name, status, provenance + evidence fields) -- built
+    # directly from assign_sbv_status()'s own local variables, no
+    # merge needed.
+    return out, audit_df
 
 
 def write_diagnostic_output(out: pd.DataFrame, deferred: pd.DataFrame):
@@ -260,24 +266,31 @@ def write_diagnostic_output(out: pd.DataFrame, deferred: pd.DataFrame):
     print(f"Wrote {deferred_path} ({len(deferred)} rows deferred, not scored)")
 
 
-def write_canonical_output(out: pd.DataFrame):
+def write_canonical_output(out: pd.DataFrame, audit_df: pd.DataFrame):
     # Fail loudly BEFORE writing anything -- a canonical build must
     # never produce a Parquet/CSV pair alongside a stale or missing
-    # data dictionary. See lib/stars_by_value/schema.py.
+    # data dictionary, or an evidence audit that has drifted from the
+    # canonical rows it's supposed to explain. See
+    # lib/stars_by_value/schema.py and evidence_audit.py.
     sbv_schema.validate_schema_matches_columns(out.columns.tolist())
+    evidence_audit.validate_audit_coverage(out, audit_df)
 
     parquet_path = REPO_ROOT / config.SBV_OUTPUT_PARQUET_PATH
     csv_path = REPO_ROOT / config.SBV_OUTPUT_CSV_EXPORT_PATH
     schema_path = REPO_ROOT / config.SBV_OUTPUT_CSV_SCHEMA_PATH
+    audit_path = REPO_ROOT / config.SBV_EVIDENCE_AUDIT_PATH
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(parquet_path, index=False)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(csv_path, index=False)
     schema_path.parent.mkdir(parents=True, exist_ok=True)
     schema_path.write_text(sbv_schema.render_schema_markdown())
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_df.to_csv(audit_path, index=False)
     print(f"[CANONICAL] Wrote {parquet_path} ({len(out)} rows, zero deferred)")
     print(f"[CANONICAL] Wrote {csv_path}")
     print(f"[CANONICAL] Wrote {schema_path}")
+    print(f"[CANONICAL] Wrote {audit_path} ({len(audit_df)} rows)")
 
 
 def main():
@@ -308,16 +321,17 @@ def main():
         check_build_completeness(deferred)  # raises if len(deferred) > 0 -- never reaches Step 4 otherwise
 
     print("Step 4: Running labeling.label_rows() on the processable population...")
-    out = run_label_rows(processable, ep_lookup, full_pop=pop, mfl_cache_seasons=mfl_cache_seasons)
+    out, audit_df = run_label_rows(processable, ep_lookup, full_pop=pop, mfl_cache_seasons=mfl_cache_seasons)
 
     print("\nFinal status breakdown (processable population only):")
     print(out["star_by_value_status"].value_counts())
     print(f"\nStars (label=1): {(out['star_by_value_label']==1).sum()}")
+    print(f"Evidence audit rows (needs-explanation statuses only): {len(audit_df)}")
 
     if args.mode == "diagnostic":
         write_diagnostic_output(out, deferred)
     else:
-        write_canonical_output(out)
+        write_canonical_output(out, audit_df)
 
 
 if __name__ == "__main__":

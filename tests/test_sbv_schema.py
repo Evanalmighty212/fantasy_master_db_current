@@ -58,11 +58,14 @@ def _row(**overrides):
     return base
 
 
-def _real_canonical_shaped_output() -> pd.DataFrame:
+def _real_canonical_shaped_output():
     """Reproduces the EXACT column-shaping run_label_rows() performs
     in scripts/11_calculate_stars_by_value.py: label_rows()'s own
     output columns, left-merged onto the identity columns
-    (season, player_id, player_name, position) from the source rows."""
+    (season, player_id, player_name, position) from the source rows.
+    Returns (canonical_df, audit_df) -- label_rows() now returns both
+    (Option 3A, 2026-07). None of these 3 fixture rows have a
+    provenance requiring an audit row, so audit_df is empty here."""
     lookup = _ep_lookup(
         {"prediction_season": 2020, "position": "WR", "draft_round": 3, "expected_production": 100.0},
     )
@@ -71,10 +74,11 @@ def _real_canonical_shaped_output() -> pd.DataFrame:
         _row(season=2005, player_id="00-b", position="WR"),  # out_of_scope
         _row(season=2020, player_id="00-c", position="WR", P=0.0),  # below_production_gate
     ])
-    result = labeling.label_rows(rows, lookup)
-    return rows[["season", "player_id", "player_name", "position"]].merge(
+    result, audit_df = labeling.label_rows(rows, lookup)
+    canonical_df = rows[["season", "player_id", "player_name", "position"]].merge(
         result, on=["season", "player_id"], how="inner",
     )
+    return canonical_df, audit_df
 
 
 class TestSchemaColumnsWellFormed:
@@ -145,7 +149,7 @@ class TestSchemaMatchesRealLabelRowsOutput:
     time, but from independently exercising the real code path."""
 
     def test_every_real_output_column_is_documented_exactly_once(self):
-        real_df = _real_canonical_shaped_output()
+        real_df, _audit_df = _real_canonical_shaped_output()
         documented_names = [c["name"] for c in sbv_schema.COLUMN_DOCS]
 
         for col in real_df.columns:
@@ -154,13 +158,13 @@ class TestSchemaMatchesRealLabelRowsOutput:
             )
 
     def test_no_documented_column_is_absent_from_real_output(self):
-        real_df = _real_canonical_shaped_output()
+        real_df, _audit_df = _real_canonical_shaped_output()
         real_columns = set(real_df.columns)
         documented_names = {c["name"] for c in sbv_schema.COLUMN_DOCS}
         assert documented_names == real_columns
 
     def test_validate_schema_matches_columns_accepts_the_real_output(self):
-        real_df = _real_canonical_shaped_output()
+        real_df, _audit_df = _real_canonical_shaped_output()
         sbv_schema.validate_schema_matches_columns(real_df.columns.tolist())  # must not raise
 
 
@@ -235,19 +239,21 @@ class TestWriteCanonicalOutputWritesSchema:
         spec.loader.exec_module(mod)
         return mod
 
-    def test_writes_parquet_csv_and_schema_together(self, tmp_path, monkeypatch):
+    def test_writes_parquet_csv_schema_and_audit_together(self, tmp_path, monkeypatch):
         mod = self._load_module()
         monkeypatch.setattr(mod.config, "SBV_OUTPUT_PARQUET_PATH", "out.parquet")
         monkeypatch.setattr(mod.config, "SBV_OUTPUT_CSV_EXPORT_PATH", "out.csv")
         monkeypatch.setattr(mod.config, "SBV_OUTPUT_CSV_SCHEMA_PATH", "out_SCHEMA.md")
+        monkeypatch.setattr(mod.config, "SBV_EVIDENCE_AUDIT_PATH", "out_evidence_audit.csv")
         monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
 
-        real_df = _real_canonical_shaped_output()
-        mod.write_canonical_output(real_df)
+        real_df, audit_df = _real_canonical_shaped_output()
+        mod.write_canonical_output(real_df, audit_df)
 
         assert (tmp_path / "out.parquet").exists()
         assert (tmp_path / "out.csv").exists()
         assert (tmp_path / "out_SCHEMA.md").exists()
+        assert (tmp_path / "out_evidence_audit.csv").exists()
         assert "star_by_value_status" in (tmp_path / "out_SCHEMA.md").read_text()
 
     def test_schema_drift_blocks_writing_any_file(self, tmp_path, monkeypatch):
@@ -255,13 +261,20 @@ class TestWriteCanonicalOutputWritesSchema:
         monkeypatch.setattr(mod.config, "SBV_OUTPUT_PARQUET_PATH", "out.parquet")
         monkeypatch.setattr(mod.config, "SBV_OUTPUT_CSV_EXPORT_PATH", "out.csv")
         monkeypatch.setattr(mod.config, "SBV_OUTPUT_CSV_SCHEMA_PATH", "out_SCHEMA.md")
+        monkeypatch.setattr(mod.config, "SBV_EVIDENCE_AUDIT_PATH", "out_evidence_audit.csv")
         monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
 
-        bad_df = _real_canonical_shaped_output().copy()
+        real_df, audit_df = _real_canonical_shaped_output()
+        bad_df = real_df.copy()
         bad_df["a_totally_new_undocumented_column"] = 1
 
         with pytest.raises(RuntimeError, match="UNDOCUMENTED in schema.py"):
-            mod.write_canonical_output(bad_df)
+            mod.write_canonical_output(bad_df, audit_df)
+
+        assert not (tmp_path / "out.parquet").exists()
+        assert not (tmp_path / "out.csv").exists()
+        assert not (tmp_path / "out_SCHEMA.md").exists()
+        assert not (tmp_path / "out_evidence_audit.csv").exists()
 
         assert not (tmp_path / "out.parquet").exists()
         assert not (tmp_path / "out.csv").exists()

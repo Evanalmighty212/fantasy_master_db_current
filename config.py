@@ -491,6 +491,9 @@ SBV_PROVENANCE_TYPES = (
 SBV_OUTPUT_PARQUET_PATH = "data/processed/stars_by_value_player_seasons.parquet"
 SBV_OUTPUT_CSV_EXPORT_PATH = "data/exports/stars_by_value_player_seasons.csv"
 SBV_OUTPUT_CSV_SCHEMA_PATH = "data/exports/stars_by_value_player_seasons_SCHEMA.md"
+# Strictly one-way -- see lib/stars_by_value/evidence_audit.py's module
+# docstring. Never read by scoring/matching/labeling/modeling code.
+SBV_EVIDENCE_AUDIT_PATH = "data/exports/stars_by_value_evidence_audit.csv"
 # [BUILD-COMPLETENESS CONTRACT] Distinct paths for a partial/diagnostic
 # run (scripts/11_calculate_stars_by_value.py --mode diagnostic) --
 # never the same file as the canonical artifact above. A diagnostic
@@ -734,6 +737,7 @@ def validate_sbv_config():
         ("SBV_OUTPUT_PARQUET_PATH", SBV_OUTPUT_PARQUET_PATH, ".parquet"),
         ("SBV_OUTPUT_CSV_EXPORT_PATH", SBV_OUTPUT_CSV_EXPORT_PATH, ".csv"),
         ("SBV_OUTPUT_CSV_SCHEMA_PATH", SBV_OUTPUT_CSV_SCHEMA_PATH, ".md"),
+        ("SBV_EVIDENCE_AUDIT_PATH", SBV_EVIDENCE_AUDIT_PATH, ".csv"),
         ("SBV_EXPECTED_PRODUCTION_LOOKUP_PATH", SBV_EXPECTED_PRODUCTION_LOOKUP_PATH, ".parquet"),
         ("SBV_MMC_2010_OVERRIDE_PATH", SBV_MMC_2010_OVERRIDE_PATH, ".csv"),
         ("SBV_DIAGNOSTIC_OUTPUT_PARQUET_PATH", SBV_DIAGNOSTIC_OUTPUT_PARQUET_PATH, ".parquet"),
@@ -753,6 +757,11 @@ def validate_sbv_config():
         errors.append(
             "SBV_DIAGNOSTIC_OUTPUT_CSV_PATH must not equal SBV_OUTPUT_CSV_EXPORT_PATH -- "
             "a diagnostic run must never write to the canonical artifact path"
+        )
+    if SBV_EVIDENCE_AUDIT_PATH in (SBV_OUTPUT_CSV_EXPORT_PATH, SBV_OUTPUT_PARQUET_PATH, SBV_OUTPUT_CSV_SCHEMA_PATH):
+        errors.append(
+            "SBV_EVIDENCE_AUDIT_PATH must not equal any other canonical artifact path -- "
+            "the evidence audit is a separate, one-way artifact"
         )
 
     # --- manual-override eligible seasons: non-empty, all ints, no duplicates ---

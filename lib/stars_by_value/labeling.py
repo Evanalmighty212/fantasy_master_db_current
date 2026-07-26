@@ -75,6 +75,7 @@ from config import (
 )
 from lib.stars_by_value import acquisition_cost as ac
 from lib.stars_by_value import expected_production as ep
+from lib.stars_by_value import evidence_audit as audit
 from lib.stars_by_value import minimal_market_cost as mmc
 
 # --- Statuses: reuse acquisition_cost.py's constants where they overlap,
@@ -157,7 +158,12 @@ def _round_beyond_fitted_range(lookup_df: pd.DataFrame, season: int, position: s
     return draft_round > season_position_rows["draft_round"].max()
 
 
-def _result(season, player_id, status, provenance, score, label, gate_threshold, star_threshold) -> dict:
+def _result(season, player_id, status, provenance, score, label, gate_threshold, star_threshold, audit_payload=None) -> dict:
+    """audit_payload (if not None) is carried under a key deliberately
+    OUTSIDE OUTPUT_COLUMNS -- label_rows() builds the canonical
+    DataFrame with `columns=list(OUTPUT_COLUMNS)`, which silently
+    excludes it, and separately collects it into the audit DataFrame.
+    See lib/stars_by_value/evidence_audit.py."""
     return {
         "season": season,
         "player_id": player_id,
@@ -167,6 +173,7 @@ def _result(season, player_id, status, provenance, score, label, gate_threshold,
         "star_by_value_label": label,
         "star_by_value_production_gate_threshold": gate_threshold,
         "star_by_value_threshold": star_threshold,
+        "_audit_payload": audit_payload,
     }
 
 
@@ -214,6 +221,8 @@ def assign_sbv_status(
     # --- Step 3: acquisition-cost resolution -- only gate-clearing rows reach here ---
     data_quality_flag = row["data_quality_flag"]
     e_p = None
+    player_name = row["player_name"]
+    audit_payload = None  # only the 6 provenance types in evidence_audit.REQUIRED_AUDIT_PROVENANCE_TYPES get one
 
     if data_quality_flag == "matched_clean":
         adp_round = int(row["adp_round"])
@@ -223,17 +232,42 @@ def assign_sbv_status(
             # itself. See STATUS_UNSCOREABLE_EP_OUT_OF_RANGE's own
             # docstring note above -- never capped, never MMC-substituted.
             status, provenance = STATUS_UNSCOREABLE_EP_OUT_OF_RANGE, PROVENANCE_KNOWN_COST_EP_OUT_OF_RANGE
+            max_fitted_round = expected_production_lookup[
+                (expected_production_lookup["prediction_season"] == season)
+                & (expected_production_lookup["position"] == position)
+            ]["draft_round"].max()
+            audit_payload = audit.build_payload(
+                season, player_id, player_name, status, provenance,
+                evidence_summary=(
+                    f"Real ADP match, round {adp_round} -- exceeds the E_P lookup's "
+                    f"fitted depth (max fitted round {int(max_fitted_round)} for "
+                    f"{season} {position}). Acquisition cost is known and trustworthy; "
+                    f"no fitted expected production exists for this round."
+                ),
+                source_reference=f"adp_round={adp_round} > max_fitted_round={int(max_fitted_round)}",
+            )
         else:
             status, provenance = STATUS_ADP_SCORED, PROVENANCE_ADP_MATCHED_CLEAN
             e_p = _lookup_expected_production(expected_production_lookup, season, position, adp_round)
 
     elif data_quality_flag == "matched_needs_review":
         status, provenance = STATUS_UNSCOREABLE_ADP_NEEDS_REVIEW, PROVENANCE_ADP_MATCHED_NEEDS_REVIEW
+        audit_payload = audit.build_payload(
+            season, player_id, player_name, status, provenance,
+            evidence_summary=(
+                "Real ADP match, but player_matching.py flagged it matched_needs_review "
+                "(a fuzzy or otherwise lower-confidence match) rather than matched_clean."
+            ),
+            source_reference=(
+                f"data/exports/validation/low_confidence_player_matches.csv "
+                f"(season={season}, player_name={player_name!r})"
+            ),
+        )
 
     else:  # no_adp_match -- delegate entirely to acquisition_cost.py
         if season == 2010:
             ac_result = ac.classify_row(
-                season, player_id, row["player_name"], position, players_df, history_df,
+                season, player_id, player_name, position, players_df, history_df,
                 overrides_2010_df=overrides_2010_df,
             )
         else:
@@ -241,11 +275,13 @@ def assign_sbv_status(
             # Series (label_rows() passes rows via .iterrows()) --
             # returns None if absent, harmless for every non-2025 row.
             ac_result = ac.classify_row(
-                season, player_id, row["player_name"], position, players_df, history_df,
+                season, player_id, player_name, position, players_df, history_df,
                 depth_chart_df=depth_chart_df, mfl_adp_response=mfl_adp_response,
                 mfl_players_response=mfl_players_response,
                 team=row.get("team"), schedule_df=schedule_df,
             )
+        classifier_bucket = ac_result.get("classifier_bucket")
+        mfl_result = ac_result.get("mfl_result")
 
         if ac_result["status"] is None:
             # 2010 usable_adp override -- exits to the normal adp_scored
@@ -264,14 +300,75 @@ def assign_sbv_status(
             override_round = int(ac_result["adp_round"])
             if _round_beyond_fitted_range(expected_production_lookup, season, position, override_round):
                 status, provenance = STATUS_UNSCOREABLE_EP_OUT_OF_RANGE, PROVENANCE_KNOWN_COST_EP_OUT_OF_RANGE
+                max_fitted_round = expected_production_lookup[
+                    (expected_production_lookup["prediction_season"] == season)
+                    & (expected_production_lookup["position"] == position)
+                ]["draft_round"].max()
+                audit_payload = audit.build_payload(
+                    season, player_id, player_name, status, provenance,
+                    evidence_summary=(
+                        f"2010 usable_adp manual override, round {override_round} -- "
+                        f"exceeds the E_P lookup's fitted depth (max fitted round "
+                        f"{int(max_fitted_round)} for {season} {position})."
+                    ),
+                    source_reference=f"data/manual/mmc_2010_manual_overrides.csv (adp_round={override_round})",
+                )
             else:
                 status, provenance = STATUS_ADP_SCORED, PROVENANCE_ADP_MATCHED_CLEAN
                 e_p = _lookup_expected_production(expected_production_lookup, season, position, override_round)
         elif ac_result["status"] == STATUS_MMC_SCORED:
             status, provenance = ac_result["status"], ac_result["provenance"]
             e_p = mmc.minimal_market_cost_expected_production(position, season)
+            if provenance == ac.PROVENANCE_MMC_2010_OVERRIDE:
+                audit_payload = audit.build_payload(
+                    season, player_id, player_name, status, provenance,
+                    evidence_summary=(
+                        "2010 season: no real MFL corroboration signal available (MFL "
+                        "coverage begins 2011) -- covered under the settled 2010 "
+                        "manual-override table as a minimal-market-cost case."
+                    ),
+                    source_reference="data/manual/mmc_2010_manual_overrides.csv",
+                )
+            else:
+                audit_payload = audit.build_payload(
+                    season, player_id, player_name, status, provenance,
+                    evidence_summary=(
+                        f"No real ADP match; classifier bucket={classifier_bucket!r}, "
+                        f"MFL corroboration result={mfl_result!r} -- routed to "
+                        f"minimal-market-cost per the settled 3-way corroboration table."
+                    ),
+                    source_reference=f"classifier_bucket={classifier_bucket}, mfl_result={mfl_result}",
+                )
+        elif ac_result["status"] == STATUS_DRAFTED_MISSING:
+            status, provenance = ac_result["status"], ac_result["provenance"]
+            if player_id == ac.VICK_2010_GSIS_ID:
+                evidence_summary = (
+                    "The settled 2010 Michael Vick exception: known-drafted, no usable "
+                    "ADP source exists for this player-season."
+                )
+                source_reference = "docs/ADP_SOURCE_MATRIX.md (2010 cohort, Michael Vick exception)"
+            else:
+                evidence_summary = (
+                    f"Classifier bucket={classifier_bucket!r}, MFL corroboration "
+                    f"result={mfl_result!r} -- evidence indicates this player was "
+                    f"genuinely drafted, but no usable acquisition cost could be resolved."
+                )
+                source_reference = f"classifier_bucket={classifier_bucket}, mfl_result={mfl_result}"
+            audit_payload = audit.build_payload(
+                season, player_id, player_name, status, provenance,
+                evidence_summary=evidence_summary, source_reference=source_reference,
+            )
         else:
             status, provenance = ac_result["status"], ac_result["provenance"]
+            audit_payload = audit.build_payload(
+                season, player_id, player_name, status, provenance,
+                evidence_summary=(
+                    f"Classifier bucket={classifier_bucket!r} and MFL corroboration "
+                    f"result={mfl_result!r} disagree -- routed to unscoreable_ambiguous "
+                    f"per the settled 3-way corroboration table rather than guessed at."
+                ),
+                source_reference=f"classifier_bucket={classifier_bucket}, mfl_result={mfl_result}",
+            )
 
     # --- Step 4: score and label -- only for the two scoreable statuses ---
     star_threshold = SBV_STAR_THRESHOLD[position]
@@ -281,7 +378,7 @@ def assign_sbv_status(
     else:
         score, label = None, None
 
-    return _result(season, player_id, status, provenance, score, label, gate_floor, star_threshold)
+    return _result(season, player_id, status, provenance, score, label, gate_floor, star_threshold, audit_payload)
 
 
 def label_rows(
@@ -294,8 +391,16 @@ def label_rows(
     mfl_players_by_season: dict = None,
     overrides_2010_df: pd.DataFrame = None,
     schedule_df: pd.DataFrame = None,
-) -> pd.DataFrame:
-    """Validates expected_production_lookup EXACTLY ONCE, then runs
+) -> tuple:
+    """Returns (canonical_df, audit_df) -- CHANGED 2026-07 from a
+    single DataFrame, to carry the evidence-audit artifact out of the
+    same evaluation pass that produces the canonical result (Option
+    3A; see lib/stars_by_value/evidence_audit.py). canonical_df's
+    shape/columns are completely unchanged (still exactly
+    OUTPUT_COLUMNS); audit_df has zero or one row per player-season
+    that needed one, per evidence_audit.REQUIRED_AUDIT_PROVENANCE_TYPES.
+
+    Validates expected_production_lookup EXACTLY ONCE, then runs
     assign_sbv_status() per row. depth_charts_by_season /
     mfl_adp_by_season / mfl_players_by_season are dicts keyed by
     season, since acquisition_cost.py's inputs are fetched per season,
@@ -332,4 +437,13 @@ def label_rows(
     out["star_by_value_label"] = out["star_by_value_label"].astype("Int8")
     out["star_by_value_status"] = out["star_by_value_status"].astype("category")
     out["star_by_value_provenance_type"] = out["star_by_value_provenance_type"].astype("category")
-    return out
+
+    # Evidence audit -- built during this SAME pass, from each row's
+    # already-decided status/provenance (see assign_sbv_status()), not
+    # a second reconstruction. `columns=list(OUTPUT_COLUMNS)` above
+    # already silently excludes "_audit_payload" from `out`.
+    audit_payloads = [r["_audit_payload"] for r in results if r["_audit_payload"] is not None]
+    audit_df = pd.DataFrame(audit_payloads, columns=list(audit.EVIDENCE_AUDIT_COLUMNS)) if audit_payloads \
+        else audit.empty_audit_df()
+
+    return out, audit_df
