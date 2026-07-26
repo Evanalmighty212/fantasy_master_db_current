@@ -142,6 +142,114 @@ one blocks the other; stage 11 is the only stage that needs both.
 
 ---
 
+## 2a. 2025 integration is a blocking prerequisite, not future work
+
+**Revision (2026-07, supersedes this section's original framing):** an
+earlier draft of this plan proposed capping the first canonical build
+at 2010-2024 and treating 2025 as optional, deferred future work. That
+framing is rejected. **2025 is the most important completed season in
+the dataset and its exclusion is not acceptable as a final production
+boundary.** The final orchestration/output commit (formerly "Commit
+10") does not land until 2025 is genuinely integrated -- real ADP
+match, real acquisition-cost resolution, real score/label, not a
+placeholder.
+
+Two real blockers remain open, confirmed directly against the repo
+(2026-07):
+
+- **Zero canonical ADP coverage.** All 608 real 2025 player-season
+  rows in the master DB carry `data_quality_flag = no_adp_match` and
+  `adp_source = NaN`. `docs/ADP_SEASON_SOURCE_PLAN.csv` confirms the
+  normal canonical pipeline (FantasyPros primary, FFC secondary)
+  genuinely attempted 2025 and returned empty. `docs/ADP_SOURCE_MATRIX.md`'s
+  2026-07 entry confirms two real candidates (MFL AUG15, FFToday's
+  modern consensus page) were investigated and neither was promoted --
+  see Phase 1 below for exactly why, and what's left to try.
+- **Unsupported depth-chart schema.** `depth_charts_2025.csv` uses a
+  different, undocumented-until-now schema (`dt`/`team`/`player_name`/
+  `espn_id`/`gsis_id`/`pos_grp`/`pos_abb`/`pos_slot`/`pos_rank`) from
+  the consistent 2006-2024 schema (`season`/`club_code`/`week`/
+  `position`/`depth_team`/`gsis_id`); `acquisition_cost.py::apply_rookie_qb_depth_chart_correction()`
+  raises `RuntimeError` for season 2025 by design (Commit 7) until this
+  is mapped -- see Phase 2 below.
+
+Both are open sourcing/schema problems, not gaps in already-built SBV
+logic -- every formula and rule 2025 needs already exists as tested
+code (Commits 5-9). Resolving them is real work (source selection has
+a genuine, not-yet-obvious answer; the schema mapping is new code), but
+neither reopens the *settled* production/E_P/MMC/labeling formulas
+themselves -- see "Does any methodology decision need to reopen?"
+below for the one narrow exception.
+
+**Three-phase plan** (replaces the single "Commit 10" wiring step):
+
+- **Phase 1** -- resolve canonical 2025 ADP: compare already-documented
+  candidates, decide (or run a new experiment), then build and audit
+  the real 2025 ADP match.
+- **Phase 2** -- support the 2025 depth-chart schema: map the new
+  columns to what `apply_rookie_qb_depth_chart_correction()` needs,
+  narrowly (rookie-QB Week-1-starter check only, matching the existing
+  2006-2024 scope -- not a general depth-chart schema migration).
+- **Phase 3** -- rebuild: regenerate the ADP-matched population, the
+  `E_P` lookup, and run the full labeling pipeline through 2025, once
+  Phases 1-2 both land.
+
+**Interim scaffolding, explicitly temporary.** While Phases 1-2 are in
+progress, a season filter may still be used to keep 2025 out of any
+build run early -- e.g. an interim `SBV_CANONICAL_BUILD_LAST_SEASON = 2024`
+config constant, with a build-time exclusion report (row count, season,
+reason) rather than a silent drop, exactly as previously specified.
+**This is scaffolding for the transition, not a design decision to
+preserve** -- the constant (or whatever mechanism replaces it) is
+removed, not merely bumped, once Phase 3 lands; 2010-2025 becomes the
+canonical range with no season-exclusion logic left over to maintain.
+Kept as a single config constant + filter (not a general per-season
+exclusion registry) for the same reason as before: exactly one season
+is affected, for two known, already-being-resolved reasons -- a general
+mechanism would be speculative generality for a problem that's actively
+being closed out, not maintained indefinitely.
+
+### Does any methodology decision need to reopen?
+
+**No change to any settled formula** (production composite, `E_P`
+fitting mechanics, MMC formula, the four-step routing order, the seven
+statuses) is required by 2025 integration -- Commits 5-9 apply to 2025
+rows exactly as written, once real inputs exist. **One narrow exception,
+contingent entirely on which ADP source Phase 1 selects:**
+
+- If the selected source produces ADP in the same units as every other
+  season (a real mean-pick number, like FFC's historical `adp` field or
+  MFL's raw mean pick), `adp_round()` (section 7's existing round
+  derivation) applies unchanged -- no methodology reopening.
+- If the selected source instead produces derived integer ranks (like
+  FFToday's modern consensus page -- see Phase 1), using it as if it
+  were mean-pick ADP would silently redefine what "round" means for
+  2025 relative to every other season. That *would* require a real,
+  reviewed methodology addition (a documented rank-to-round mapping, or
+  an explicit decision that this source's shape disqualifies it) before
+  any code consumes it -- not a decision to make inside implementation
+  code.
+- Separately, if the selected source needs a bias correction (see
+  MFL's real, corroborated QB/TE early bias in Phase 1) rather than
+  being used raw, the correction itself is new, undocumented
+  methodology -- it does not exist today in any settled section -- and
+  needs the same explicit review any other formula in this project
+  gets, not a quiet implementation-time judgment call.
+
+**A separate, real architectural question this plan cannot resolve
+unilaterally:** `data_quality_flag`/`adp_source` are computed once, in
+`scripts/04_build_master_dataset.py`, and consumed by *both*
+`05_calculate_metrics.py` (LWI / Dataset 1's own eligibility gate) and
+SBV's stage 09. If a 2025 ADP source is written into those same master-DB
+columns, it becomes eligible for LWI/Dataset 1 too, not just SBV --
+today, LWI already excludes essentially all of 2025 via the same gate
+(608/608 `no_adp_match`), so promoting a 2025 source changes that
+exclusion for both datasets at once, not SBV alone. This plan does not
+assume either scope is correct -- see the standalone question raised
+alongside this plan.
+
+---
+
 ## 3. Existing code to reuse or modify
 
 | Existing artifact | Disposition |
@@ -258,6 +366,18 @@ convenience export only.**
 | Canonical, typed | `data/processed/stars_by_value_player_seasons.parquet` | Source of truth. `star_by_value_label` stored as `Int8` (pandas/pyarrow nullable integer) -- Parquet preserves this exactly, unlike CSV. |
 | Convenience export | `data/exports/stars_by_value_player_seasons.csv` | Generated *from* the Parquet file, never authored independently. `star_by_value_label` renders as `1`, `0`, or blank. Not authoritative for dtype -- a round-trip test (`pd.read_csv(..., dtype={"star_by_value_label": "Int8", ...})`) must reproduce the Parquet values exactly, or the export step fails. |
 | Schema reference | `data/exports/stars_by_value_player_seasons_SCHEMA.md` | Data dictionary accompanying the CSV export -- column names, dtypes, allowed enum values, and a pointer back to `STARS_BY_VALUE_METHODOLOGY.md` section 11 for full semantics. |
+
+**Season-coverage metadata, interim only (see section 2a).** While
+Phases 1-2 are in progress, any build produced still records the
+season range it actually covers -- a build-level metadata field
+stamped alongside `sbv_version` (preferred) or, at minimum, an explicit
+note in `stars_by_value_player_seasons_SCHEMA.md`: "prediction seasons
+2010-2024; 2025 temporarily excluded pending 2025 ADP/depth-chart
+integration, see `STARS_BY_VALUE_IMPLEMENTATION_PLAN.md` section 2a/13."
+Prevents a future reader from mistaking an interim artifact's lack of
+2025 rows for "2025 doesn't exist in the master DB yet." **The final
+canonical artifact this project ships covers 2010-2025** -- this
+metadata note describes an interim state, not the target.
 
 Column list (from the settled Section 11 schema):
 
@@ -451,6 +571,17 @@ never any season `>= Y`. This is checked mechanically by
 - Regeneration is part of stage 09's own explicit invocation (same
   "deliberate, not automatic" posture as stage 08's fetch, decision
   #4) -- a normal stage 11 scoring run never triggers a refit itself.
+
+**2025-specific reporting requirement, interim only (see section 2a).**
+Until Phase 1 lands, if the upstream population passed to stage 09
+contains any season-2025 rows, stage 09 must explicitly log/report
+that 2025 contributed zero rows to any `prediction_season` fit, rather
+than 2025 simply never appearing in the output lookup table with no
+comment -- distinguishes "2025 was present in the input and
+contributed nothing" from "2025 wasn't in the input at all." This
+requirement, and the condition that triggers it, goes away once Phase
+1 lands and 2025 has real `adp_matched` rows to fit from -- it is not
+a permanent feature of stage 09.
 
 ---
 
@@ -719,11 +850,21 @@ each leaves the repo in a working state):
    `P` values were solved backward from each real score, not invented.
    Does not write any output file (Parquet/CSV export is Commit 10's
    job, not this one).
-10. Wire `scripts/08`/`09`/`10`/`11` together, end-to-end integration
+10. **Revised (2026-07): no longer a single wiring commit.** 2025
+    integration (section 13) is a blocking prerequisite, not deferred
+    work -- replaced by Phase 1 (resolve + build + audit canonical 2025
+    ADP), Phase 2 (2025 depth-chart schema mapping), and Phase 3
+    (regenerate the ADP-matched population, the `E_P` lookup, and run
+    the full pipeline through 2025) below. Each phase likely spans more
+    than one commit on its own; exact boundaries proposed at the start
+    of Phase 1, once the ADP-source decision is made -- see section 13
+    for the full breakdown.
+11. Wire `scripts/08`/`09`/`10`/`11` together, end-to-end integration
     test producing `stars_by_value_player_seasons.parquet` and the CSV
-    convenience export + round-trip test.
-11. Documentation: spec promotion, `ADP_SOURCE_MATRIX.md` closing
-    entry.
+    convenience export + round-trip test, covering **2010-2025** -- no
+    interim season-exclusion scaffolding left in the shipped pipeline.
+12. Documentation: spec promotion, `ADP_SOURCE_MATRIX.md` closing
+    entry (now also covering the 2025 ADP-source decision from Phase 1).
 
 ---
 
@@ -747,7 +888,15 @@ each leaves the repo in a working state):
   from Commit 9 by explicit instruction; `labeling.py` itself computes
   labels but writes no file. This is now purely orchestration, not new
   methodology or classification logic -- every formula and rule it
-  will call already exists as tested code.
+  will call already exists as tested code. **Revised (2026-07): this
+  orchestration does not land until 2025 is genuinely integrated** --
+  section 2a/13's three-phase plan (resolve canonical 2025 ADP, support
+  the 2025 depth-chart schema, rebuild through 2025) is a blocking
+  prerequisite, not deferred future work; a real, present-today
+  condition (608/608 real 2025 rows are `no_adp_match`) makes this a
+  live problem, not a hypothetical one. An interim season filter may be
+  used only as temporary scaffolding while that work is underway, never
+  as the shipped final boundary.
 
 ## Research-only assumptions that must not silently enter production
 
@@ -786,3 +935,222 @@ each leaves the repo in a working state):
 list has a concrete artifact path, schema, and regeneration rule
 attached, not just a stated preference -- and none of the five
 resolutions required reopening any settled methodology section.
+
+---
+
+## 13. 2025 integration work plan (blocking prerequisite -- replaces the former "Commit 10")
+
+Each phase below is marked at the item level: **[SOURCE-SELECTION
+DECISION]** items are Evan's call, not something to resolve inside
+implementation code; **[IMPLEMENTATION WORK]** items are mechanical
+once a decision is made, in the same sense every other SBV module has
+been ("every formula and rule already exists as tested code" applies
+equally here once the two open questions below are answered).
+
+### Phase 1 -- Resolve canonical 2025 ADP
+
+**What's already documented** (2026-07 investigation,
+`docs/ADP_SOURCE_MATRIX.md`, re-verified directly against the repo for
+this revision, not assumed from memory):
+
+| Candidate | Format | Scale-compatible with historical FFC `adp` field? | Position bias | Coverage | Existing tooling |
+|---|---|---|---|---|---|
+| **MFL AUG15** (per-league reconstruction, `research/diagnostics/mfl_pipeline/`) | Real mean-pick ADP (average pick across real drafts) | **Yes** -- same unit as every other season | **QB and TE priced ~20-28 ranks earlier than a 3-source consensus** (Sleeper/RTSports/ESPN), corroborated across 4 independent comparisons; RB/WR agree closely (~7 rank median diff, normal cross-source noise). Josh Allen: MFL puts him at ADP 6.3; every other source checked says 19-25. | 228 skill-position players overlapping FFToday's consensus (35 QB/72 RB/85 WR/36 TE) | `scripts/mfl_client.py` (production, Commit 3) fetches raw `TYPE=adp`; the *per-league reconstruction* needed to avoid superflex contamination lives only in `research/diagnostics/mfl_pipeline/` (research-only, 254 valid leagues already classified) |
+| **FFToday modern page** (`25_adp_ppr.html`, Sleeper/RTSports/ESPN blend) | **Derived integer ranks (1-283)**, not fractional mean-pick ADP -- FFToday computes an `Avg` column from three platforms' own ranks | **No** -- treating a rank as mean-pick ADP would silently redefine what "round" means for 2025 only (see "Does any methodology decision need to reopen?" above) | Own embedded ESPN column cross-validates well against this project's independent ESPN benchmark (r=0.973, n=37) -- the blend itself looks internally credible, just not scale-compatible | Best in the entire project: 238 skill-position players (best of any source, any year -- FFC's own best year, 2010, was 187) | `research/diagnostics/adp_2025_investigation/compare_mfl_fftoday.py` already parses and compares it; no production parser exists (`scripts/parse_fftoday_adp.py` only handles the old 2007-2009 single-source archive template, a structurally different page) |
+| **Direct Sleeper / RTSports acquisition** (bypassing FFToday's blend) | Unknown until fetched -- each platform's own native export, not a derived rank | Unknown -- would need to be checked, but at least removes one layer of undisclosed blending | Unknown -- not yet isolated from the blend | Unknown | **Not attempted.** Flagged in `docs/ADP_SOURCE_MATRIX.md`'s own "Next experiment" note as the most promising unexplored option -- never built |
+
+**[SOURCE-SELECTION DECISION] Which source or blend is defensible as
+canonical for 2025?** Neither already-investigated candidate clears
+this project's own existing bar on its own:
+
+- FFToday's blend has the exact opacity problem this project already
+  used to *reject* FantasyPros as a source elsewhere in
+  `ADP_SOURCE_MATRIX.md` (an undisclosed multi-platform blend, not an
+  independent primary source) -- promoting it for 2025 while holding
+  FantasyPros to that same standard would be an unexplained double
+  standard, not a new precedent. Its rank-vs-mean-pick incompatibility
+  is a second, independent disqualifier.
+- MFL is scale-compatible and has real per-league provenance, but its
+  QB/TE bias is now corroborated by four independent comparisons, not
+  a fluke of one benchmark -- using it raw for those two positions
+  would bias `E_P` fitting and, more specifically, misclassify exactly
+  the rookie-QB cases the depth-chart correction exists to protect.
+
+**Recommendation** (Evan's call to confirm, not decided here): attempt
+direct Sleeper/RTSports acquisition first -- it is the one candidate
+that hasn't already been evaluated against this project's standards
+and found short, and `docs/ADP_SOURCE_MATRIX.md` already names it as
+the concrete next step. If that proves infeasible (a real network
+fetch, so subject to this project's existing GitHub Actions constraint
+for external ADP/stats sources -- see the repo-conventions note in
+`CLAUDE.md`) or also fails on inspection, the fallback is MFL AUG15
+**with an explicit, reviewed QB/TE bias-correction methodology** -- not
+MFL used raw, and not FFToday's blend, given the reasoning above.
+
+**[SOURCE-SELECTION DECISION] Compatibility with the historical
+FFC-based ADP scale.** Already answered per-candidate in the table
+above; whichever source is chosen, the round-derivation question in
+"Does any methodology decision need to reopen?" (section 2a) is decided
+by this same choice, not separately.
+
+**[SOURCE-SELECTION DECISION] Position-specific biases, especially
+MFL's QB behavior.** Documented above (QB -28.2 / TE -23.0 median rank
+vs. consensus, RB/WR ~-7 both). If MFL is the fallback choice, the
+correction mechanism itself (how exactly QB/TE get adjusted) is a new
+methodology decision, not an engineering detail -- flagged already in
+section 2a.
+
+**[SOURCE-SELECTION DECISION] Source provenance and confidence rules;
+whether 2025 needs a distinct source label.** Yes -- confirmed by
+directly checking `scripts/04_build_master_dataset.py`: `adp_source`
+is a real, already-populated column (FFC/FFToday-2007-09/FantasyPros
+per season today), so 2025 gets its own new value in that same column
+(e.g. `mfl_aug15_qb_te_corrected` or `sleeper_rtsports_direct`,
+depending on the choice above) rather than being folded into an
+existing FFC-labeled row -- consistent with how every other
+non-FFC-sourced season in this project is already labeled, not a new
+precedent.
+
+**[IMPLEMENTATION WORK] Build and audit the 2025 ADP matching result**,
+once the source decision above is made:
+
+1. Fetch/parse the chosen source into the same shape
+   `player_matching.py` already expects (mirrors how FFToday's
+   2007-2009 promotion worked -- `scripts/parse_fftoday_adp.py` is the
+   existing precedent for "new source, same downstream contract").
+2. Run the existing `player_matching.py` pipeline unchanged -- reuse,
+   not modify, exactly as every other season does.
+3. Report the resulting `matched_clean` / `matched_needs_review` /
+   `no_adp_match` counts for 2025, same as any season's remediation
+   report (`docs/ADP_SOURCE_MATRIX.md`'s "No-ADP remediation" sections
+   are the precedent for this reporting format).
+4. Name and resolve (or explicitly leave unresolved with a documented
+   reason) any high-impact unmatched 2025 cases, same process as the
+   2010-2024 remediation work already completed (Commits leading up to
+   this one).
+5. Sanity-check the resulting round distribution against adjacent
+   seasons (2023, 2024) -- confirms the new source doesn't silently
+   shift what "round 1" or "round 15" means for 2025 relative to the
+   rest of the fitted history.
+
+### Phase 2 -- Support the 2025 depth-chart schema
+
+**[IMPLEMENTATION WORK] Column mapping**, verified directly against
+the real 2025 file (not assumed):
+
+| 2006-2024 concept | 2006-2024 column | 2025 equivalent | Notes |
+|---|---|---|---|
+| Player identifier | `gsis_id` | `gsis_id` | Same column name, same join key -- no remapping needed |
+| Position | `position` | `pos_abb` (filter to `pos_abb == "QB"` for this narrow correction) | 2025's schema groups offense under `pos_grp == "3WR 1TE"` with `pos_abb` giving the specific position (`QB`/`RB`/`WR`/`TE`/etc., confirmed by direct inspection) |
+| Starter/rank status | `depth_team` (`== 1` means starter) | `pos_rank` (`== 1` means starter, confirmed: e.g. Mahomes `pos_rank=1`, Oladokun `pos_rank=2`, Haener `pos_rank=3` for KC) | Same ordinal semantics, different column name. `pos_slot` is a template slot index, not a depth ordinal -- do not use it for starter determination |
+| Week 1 snapshot | `week == 1`, `game_type == "REG"` (an explicit week label) | **No week label exists** -- 2025's file is a rolling daily snapshot feed (`dt`, 221 distinct dates, confirmed range 2025-08-03 through 2026-03-14, i.e. it keeps updating past the season itself) | The nearest working equivalent is picking the `dt` closest to (but not after) the real 2025 Week 1 kickoff date, mirroring the "AUG15"-style pre-kickoff convention this pipeline already uses for MFL (`SBV_MFL_PERIOD`) -- **this exact date choice is itself a small, explicit decision to confirm**, not assumed here: closest snapshot to kickoff vs. closest snapshot to the actual first regular-season Sunday are not necessarily the same `dt` |
+
+**[IMPLEMENTATION WORK] Scope, unchanged from the existing
+2006-2024 correction:** rookie QBs only, Week-1-starter check only --
+per the methodology's own existing narrowness requirement (already
+stated in "Research-only assumptions that must not silently enter
+production," above) this is not an opportunity to generalize the
+correction to other positions or other weeks; only the input-schema
+translation changes.
+
+**[IMPLEMENTATION WORK] Testing.** Every real 2025 rookie QB (drawn
+from the `players` reference data already fetched in Commit 2, filtered
+to `rookie_season == 2025` and `position == "QB"`) must be checked
+against the mapped 2025 depth-chart logic and produce a result directly
+comparable in shape (not necessarily identical value, since the
+underlying data source differs) to how a 2024 rookie QB is resolved
+today -- reusing `TestNamedCaseRegression`'s existing pattern (Commit 9)
+as the template for a new, 2025-specific regression class.
+
+### Phase 3 -- Rebuild with 2025 included
+
+**[IMPLEMENTATION WORK]**, strictly after both phases above land:
+
+1. Regenerate the master ADP-matched population (`scripts/04`) with
+   2025's new source wired in.
+2. Regenerate `data/processed/sbv_expected_production_lookup.parquet`
+   (stage 09) -- 2025 becomes a real `prediction_season` for the first
+   time, fit under the same expanding-window/QB_RB-offset/recency rules
+   as every other season, no special-casing.
+3. Run the full four-step labeling pipeline (stages 10-11) through
+   2025 -- acquisition-cost resolution and MFL/FFToday corroboration
+   now apply to genuine 2025 `no_adp_match` rows, not a structurally
+   empty set.
+4. Produce the canonical Parquet/CSV outputs covering **2010-2025**,
+   with the interim exclusion scaffolding (section 2a) fully removed,
+   not merely widened.
+5. `TestNamedCaseRegression`-style spot checks against a small number
+   of real, well-known 2025 players (mirroring how Herbert 2020 / Cruz
+   2011 / Nacua 2023 anchor the 2010-2024 named-case tests) before this
+   is considered done.
+
+Each phase is independently reviewable and, per the existing
+one-logical-change-per-commit convention, will likely span more than
+one commit -- exact commit boundaries proposed at the start of Phase 1
+once the source decision is made, not fixed in advance here.
+
+---
+
+## Phase 3 status (2026-07): scaffold built, canonical output NOT yet produced
+
+Phase 3's numbered steps above are landed as a **runnable
+orchestration scaffold**, not a completed canonical build. Real, real-
+data-driven work done so far:
+
+- `scripts/2025_adp_integration.py` -- wires the approved raw MFL
+  AUG15 source into `adp_clean_2006_2025.csv` (step 1). Includes one
+  narrow, individually-documented exclusion (Amari Cooper -> spurious
+  "Darius Cooper" fuzzy match, see `docs/ADP_SOURCE_MATRIX.md`'s
+  Commit D audit entry) -- same precedent as the Vick 2010 exception,
+  not a generalized rejection mechanism.
+- `scripts/04_build_master_dataset.py`, `scripts/09_fit_sbv_expected_production.py`,
+  `scripts/05_calculate_metrics.py` -- run unmodified, real data,
+  confirmed 2025 now flows through correctly (346 `matched_clean`, 0
+  `matched_needs_review`, real E_P fitted for `prediction_season=2025`,
+  real LWI eligibility computed). Historical (2006-2024) rows
+  unaffected -- confirmed both by regression tests and a direct row-
+  count match before/after.
+- `scripts/11_calculate_stars_by_value.py` -- the orchestration piece
+  flagged "must still be built" since Commit 9, now real and running,
+  with an explicit **build-completeness contract**:
+  - `--mode diagnostic` (default): may complete with rows deferred,
+    writes to `SBV_DIAGNOSTIC_OUTPUT_PARQUET_PATH`/`_CSV_PATH` (never
+    the canonical paths) plus a deferred-rows report.
+  - `--mode canonical`: `check_build_completeness()` refuses to run at
+    all -- raises, naming every reason and count -- if ANY row would
+    be deferred. Confirmed against real data: canonical mode currently
+    refuses (5,011 rows deferred), exactly as designed.
+- Fixed two real bugs found while building this, both before treating
+  any result as trustworthy: (1) `acquisition_cost.classify_row()`
+  never threaded `team`/`schedule_df` through to the 2025 depth-chart
+  correction -- fixed, regression-tested
+  (`TestTeamScheduleDfPassthrough`). (2) The orchestration script's
+  first draft built `history_df` from the current run's `processable`
+  subset instead of the full population, silently narrowing
+  `classify_draft_status()`'s prior-season lookback whenever a prior
+  season's row happened to be deferred -- caught by an unexplained
+  status-count shift between two runs, fixed, regression-tested
+  (`TestHistoryDfUsesFullPopulation`).
+
+**The 74-Star diagnostic result is a real, useful research artifact --
+not the canonical output.** 5,011 of 10,659 real rows are currently
+deferred, for two disclosed reasons, each its own follow-up:
+
+- **Blocker A -- historical MFL backfill** (4,893 rows, 13 seasons
+  2011-2024 excluding the 2 already cached, 2015/2023): needs the
+  sanctioned explicit-refresh process (`scripts/mfl_client.py`, real
+  MFL AUG15 fetches via GitHub Actions) to fetch and cache the missing
+  seasons' ADP + player-directory snapshots. Not attempted locally --
+  this project's own convention reserves real external fetches for
+  that path.
+- **Blocker B -- ADP rounds beyond the fitted E_P range** (118 rows,
+  2025 only): MFL's real 2025 market reaches deeper (raw ADP up to
+  ~357, round 30) than the E_P lookup's fitted depth (rounds 1-15,
+  matching FFC's historical ~150-180-player coverage). Not
+  extrapolated, capped, or substituted without an explicit methodology
+  decision -- a real, open question, not an implementation detail.
+
+Canonical output generation is blocked on resolving both, or on an
+explicit decision to accept a scoped-down canonical population (e.g.
+excluding certain seasons/rounds deliberately, which is a different,
+explicit decision from silently deferring them). Not decided here.

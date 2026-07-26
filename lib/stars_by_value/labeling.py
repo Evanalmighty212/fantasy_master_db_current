@@ -150,14 +150,19 @@ def assign_sbv_status(
     mfl_adp_response=None,
     mfl_players_response=None,
     overrides_2010_df: pd.DataFrame = None,
+    schedule_df=None,
 ) -> dict:
     """Runs the four-step process for one row. `row` must have: season,
     player_id, player_name, position, games_played, P (production
     composite, already computed upstream), data_quality_flag
     ("matched_clean" | "matched_needs_review" | "no_adp_match"),
-    adp_round (required only for matched_clean rows). Does NOT
-    validate expected_production_lookup itself -- see label_rows(),
-    which validates it exactly once before calling this per row."""
+    adp_round (required only for matched_clean rows). `row["team"]` is
+    read and passed through ONLY for season==2025 rows reaching
+    acquisition_cost.classify_row() (see that function's own
+    docstring) -- absent/None for every other row, harmlessly ignored.
+    Does NOT validate expected_production_lookup itself -- see
+    label_rows(), which validates it exactly once before calling this
+    per row."""
     season = row["season"]
     player_id = row["player_id"]
     position = row["position"]
@@ -195,10 +200,14 @@ def assign_sbv_status(
                 overrides_2010_df=overrides_2010_df,
             )
         else:
+            # row.get("team") works identically for a dict or a pandas
+            # Series (label_rows() passes rows via .iterrows()) --
+            # returns None if absent, harmless for every non-2025 row.
             ac_result = ac.classify_row(
                 season, player_id, row["player_name"], position, players_df, history_df,
                 depth_chart_df=depth_chart_df, mfl_adp_response=mfl_adp_response,
                 mfl_players_response=mfl_players_response,
+                team=row.get("team"), schedule_df=schedule_df,
             )
 
         if ac_result["status"] is None:
@@ -243,13 +252,18 @@ def label_rows(
     mfl_adp_by_season: dict = None,
     mfl_players_by_season: dict = None,
     overrides_2010_df: pd.DataFrame = None,
+    schedule_df: pd.DataFrame = None,
 ) -> pd.DataFrame:
     """Validates expected_production_lookup EXACTLY ONCE, then runs
     assign_sbv_status() per row. depth_charts_by_season /
     mfl_adp_by_season / mfl_players_by_season are dicts keyed by
     season, since acquisition_cost.py's inputs are fetched per season,
     not per row -- avoids re-fetching or re-passing the same season's
-    data for every row that season."""
+    data for every row that season. schedule_df is a SINGLE, all-seasons
+    frame (nflverse_source.fetch_schedules()'s shape), not season-keyed
+    -- only consulted for season==2025 rows whose classifier_bucket
+    reaches the rookie-QB depth-chart correction; harmlessly unused
+    otherwise."""
     ep.validate_lookup(expected_production_lookup)
 
     depth_charts_by_season = depth_charts_by_season or {}
@@ -269,6 +283,7 @@ def label_rows(
                 mfl_adp_response=mfl_adp_by_season.get(season),
                 mfl_players_response=mfl_players_by_season.get(season),
                 overrides_2010_df=overrides_2010_df,
+                schedule_df=schedule_df,
             )
         )
 

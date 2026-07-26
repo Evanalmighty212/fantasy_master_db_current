@@ -474,6 +474,17 @@ SBV_PROVENANCE_TYPES = (
 SBV_OUTPUT_PARQUET_PATH = "data/processed/stars_by_value_player_seasons.parquet"
 SBV_OUTPUT_CSV_EXPORT_PATH = "data/exports/stars_by_value_player_seasons.csv"
 SBV_OUTPUT_CSV_SCHEMA_PATH = "data/exports/stars_by_value_player_seasons_SCHEMA.md"
+# [BUILD-COMPLETENESS CONTRACT] Distinct paths for a partial/diagnostic
+# run (scripts/11_calculate_stars_by_value.py --mode diagnostic) --
+# never the same file as the canonical artifact above. A diagnostic
+# run may complete with rows deferred (missing MFL corroboration data,
+# ADP rounds beyond the fitted E_P depth, etc.) and reports them
+# explicitly; canonical output generation refuses to run at all if any
+# row would need to be deferred -- see
+# scripts/11_calculate_stars_by_value.py's check_build_completeness().
+SBV_DIAGNOSTIC_OUTPUT_PARQUET_PATH = "data/processed/stars_by_value_player_seasons_DIAGNOSTIC.parquet"
+SBV_DIAGNOSTIC_OUTPUT_CSV_PATH = "data/exports/stars_by_value_player_seasons_DIAGNOSTIC.csv"
+SBV_DEFERRED_ROWS_REPORT_PATH = "data/exports/sbv_deferred_rows_report.csv"
 SBV_EXPECTED_PRODUCTION_LOOKUP_PATH = "data/processed/sbv_expected_production_lookup.parquet"
 SBV_MMC_2010_OVERRIDE_PATH = "data/manual/mmc_2010_manual_overrides.csv"
 
@@ -704,11 +715,24 @@ def validate_sbv_config():
         ("SBV_OUTPUT_CSV_SCHEMA_PATH", SBV_OUTPUT_CSV_SCHEMA_PATH, ".md"),
         ("SBV_EXPECTED_PRODUCTION_LOOKUP_PATH", SBV_EXPECTED_PRODUCTION_LOOKUP_PATH, ".parquet"),
         ("SBV_MMC_2010_OVERRIDE_PATH", SBV_MMC_2010_OVERRIDE_PATH, ".csv"),
+        ("SBV_DIAGNOSTIC_OUTPUT_PARQUET_PATH", SBV_DIAGNOSTIC_OUTPUT_PARQUET_PATH, ".parquet"),
+        ("SBV_DIAGNOSTIC_OUTPUT_CSV_PATH", SBV_DIAGNOSTIC_OUTPUT_CSV_PATH, ".csv"),
+        ("SBV_DEFERRED_ROWS_REPORT_PATH", SBV_DEFERRED_ROWS_REPORT_PATH, ".csv"),
     ]:
         if not isinstance(path, str) or not path.strip():
             errors.append(f"{name} must be a non-empty string, got {path!r}")
         elif not path.endswith(expected_ext):
             errors.append(f"{name} must end with '{expected_ext}', got {path!r}")
+    if SBV_DIAGNOSTIC_OUTPUT_PARQUET_PATH == SBV_OUTPUT_PARQUET_PATH:
+        errors.append(
+            "SBV_DIAGNOSTIC_OUTPUT_PARQUET_PATH must not equal SBV_OUTPUT_PARQUET_PATH -- "
+            "a diagnostic run must never write to the canonical artifact path"
+        )
+    if SBV_DIAGNOSTIC_OUTPUT_CSV_PATH == SBV_OUTPUT_CSV_EXPORT_PATH:
+        errors.append(
+            "SBV_DIAGNOSTIC_OUTPUT_CSV_PATH must not equal SBV_OUTPUT_CSV_EXPORT_PATH -- "
+            "a diagnostic run must never write to the canonical artifact path"
+        )
 
     # --- manual-override eligible seasons: non-empty, all ints, no duplicates ---
     if not SBV_MMC_MANUAL_OVERRIDE_SEASONS:

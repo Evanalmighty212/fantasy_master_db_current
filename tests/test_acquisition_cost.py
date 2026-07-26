@@ -572,6 +572,95 @@ class TestClassifyRowValidation:
             ac.classify_row(2020, "00-1", "Someone", "QB", players, _history_df())
 
 
+class TestTeamScheduleDfPassthrough:
+    """Fixed 2026-07: classify_row() previously never passed team/
+    schedule_df through to apply_rookie_qb_depth_chart_correction(),
+    so that function's real season==2025 path could never actually be
+    reached correctly via the normal orchestration entry point (only
+    directly, in isolation, as tested in TestRookieQbDepthChartCorrection2025Schema
+    above). These tests prove the full round-trip through classify_row()
+    itself, not just the lower-level function."""
+
+    SCHEDULE = _schedule_df(
+        {"season": 2025, "game_type": "REG", "week": 1, "gameday": "2025-09-07", "home_team": "DEN", "away_team": "TEN"},
+    )
+
+    def test_confirmed_2025_starter_reaches_ambiguous_via_classify_row(self):
+        players = _players_df({
+            "gsis_id": "00-ward", "position": "QB", "draft_year": 2025,
+            "draft_round": 1, "draft_pick": 1, "rookie_season": 2025,
+        })
+        depth = _depth_chart_2025_df(
+            {"dt": "2025-09-07T00:00:00Z", "team": "TEN", "gsis_id": "00-ward", "pos_abb": "QB", "pos_rank": 1},
+        )
+        mfl_players = _mfl_players({"id": "1", "name": "Ward, Cam", "position": "QB", "team": "TEN"})
+        mfl_adp = _mfl_adp(200, {"id": "1", "draftSelPct": "45.0"})
+
+        result = ac.classify_row(
+            2025, "00-ward", "Cam Ward", "QB", players, _history_df(),
+            depth_chart_df=depth, mfl_adp_response=mfl_adp, mfl_players_response=mfl_players,
+            team="TEN", schedule_df=self.SCHEDULE,
+        )
+        assert result["classifier_bucket"] == ac.BUCKET_AMBIGUOUS, (
+            "Real Week-1 starter status did not reach the classifier via "
+            "classify_row()'s team/schedule_df passthrough."
+        )
+
+    def test_confirmed_2025_backup_stays_likely_undrafted_via_classify_row(self):
+        players = _players_df({
+            "gsis_id": "00-dart", "position": "QB", "draft_year": 2025,
+            "draft_round": 1, "draft_pick": 25, "rookie_season": 2025,
+        })
+        depth = _depth_chart_2025_df(
+            {"dt": "2025-09-07T00:00:00Z", "team": "TEN", "gsis_id": "00-wilson", "pos_abb": "QB", "pos_rank": 1},
+            {"dt": "2025-09-07T00:00:00Z", "team": "TEN", "gsis_id": "00-dart", "pos_abb": "QB", "pos_rank": 2},
+        )
+        mfl_players = _mfl_players({"id": "2", "name": "Dart, Jaxson", "position": "QB", "team": "TEN"})
+        mfl_adp = _mfl_adp(200, {"id": "2", "draftSelPct": "5.0"})
+
+        result = ac.classify_row(
+            2025, "00-dart", "Jaxson Dart", "QB", players, _history_df(),
+            depth_chart_df=depth, mfl_adp_response=mfl_adp, mfl_players_response=mfl_players,
+            team="TEN", schedule_df=self.SCHEDULE,
+        )
+        assert result["classifier_bucket"] == ac.BUCKET_LIKELY_UNDRAFTED
+
+    def test_2025_rookie_qb_without_team_or_schedule_raises_via_classify_row(self):
+        players = _players_df({
+            "gsis_id": "00-ward", "position": "QB", "draft_year": 2025,
+            "draft_round": 1, "draft_pick": 1, "rookie_season": 2025,
+        })
+        depth = _depth_chart_2025_df(
+            {"dt": "2025-09-07T00:00:00Z", "team": "TEN", "gsis_id": "00-ward", "pos_abb": "QB", "pos_rank": 1},
+        )
+        mfl_players = _mfl_players({"id": "1", "name": "Ward, Cam", "position": "QB", "team": "TEN"})
+        mfl_adp = _mfl_adp(200, {"id": "1", "draftSelPct": "45.0"})
+
+        with pytest.raises(RuntimeError, match="requires both 'team' and 'schedule_df'"):
+            ac.classify_row(
+                2025, "00-ward", "Cam Ward", "QB", players, _history_df(),
+                depth_chart_df=depth, mfl_adp_response=mfl_adp, mfl_players_response=mfl_players,
+            )
+
+    def test_non_qb_rookie_2025_row_unaffected_by_missing_team_or_schedule(self):
+        """The passthrough must not become a NEW blocking requirement
+        for rows that never reach the depth-chart correction at all --
+        a non-rookie or non-QB row must classify normally without
+        team/schedule_df."""
+        players = _players_df({
+            "gsis_id": "00-vet", "position": "WR", "draft_year": 2018,
+            "draft_round": 3, "draft_pick": 75, "rookie_season": 2018,
+        })
+        mfl_players = _mfl_players({"id": "3", "name": "Someone, Vet", "position": "WR", "team": "TEN"})
+        mfl_adp = _mfl_adp(200, {"id": "3", "draftSelPct": "45.0"})
+
+        result = ac.classify_row(
+            2025, "00-vet", "Vet Someone", "WR", players, _history_df(),
+            mfl_adp_response=mfl_adp, mfl_players_response=mfl_players,
+        )
+        assert result["classifier_bucket"] in (ac.BUCKET_AMBIGUOUS, ac.BUCKET_LIKELY_DRAFTED_MISSING_EVIDENCE)
+
+
 class TestNoResearchImports:
     def test_module_does_not_import_research(self):
         import ast

@@ -432,13 +432,25 @@ def classify_row(
     mfl_adp_response=None,
     mfl_players_response=None,
     overrides_2010_df=None,
+    team: str = None,
+    schedule_df=None,
 ) -> dict:
     """Orchestrates the full classification for one no-ADP-match,
     gate-clearing row. Returns a dict: season, player_id,
     classifier_bucket, mfl_result, status, provenance, adp_overall,
     adp_round. For 2010 rows, classifier_bucket is still computed and
     returned (audit trail) but does not drive status/provenance except
-    via the Vick exception -- see route_2010()."""
+    via the Vick exception -- see route_2010().
+
+    team/schedule_df: required ONLY for season==2025 rows whose
+    classifier_bucket reaches the rookie-QB depth-chart correction
+    (see apply_rookie_qb_depth_chart_correction()'s own docstring) --
+    the 2025 depth-chart schema has no week label, so the real
+    per-team kickoff date is needed to pick the right snapshot. Fixed
+    2026-07: this passthrough was previously missing entirely, meaning
+    apply_rookie_qb_depth_chart_correction()'s season==2025 path could
+    never actually be reached correctly from classify_row() -- see
+    TestTeamScheduleDfPassthrough in tests/test_acquisition_cost.py."""
     bucket = classify_draft_status(season, gsis_id, players_df, history_df)
 
     if season == 2010:
@@ -462,7 +474,9 @@ def classify_row(
         raise ValueError(f"mfl_adp_response and mfl_players_response are required for season={season} rows")
 
     qb_rookie = is_qb_rookie_this_season(season, gsis_id, players_df)
-    bucket = apply_rookie_qb_depth_chart_correction(bucket, season, gsis_id, qb_rookie, depth_chart_df)
+    bucket = apply_rookie_qb_depth_chart_correction(
+        bucket, season, gsis_id, qb_rookie, depth_chart_df, team=team, schedule_df=schedule_df,
+    )
 
     mfl_id, match_status = match_mfl_player(player_name, position, mfl_players_response)
     mfl_result = resolve_mfl_result(mfl_id, match_status, mfl_adp_response)
