@@ -84,12 +84,17 @@ class TestSplitProcessable:
         assert len(deferred) == 1
         assert deferred.iloc[0]["deferred_reason"] == MOD.DEFERRED_REASON_NO_MFL_DATA
 
-    def test_round_too_deep_row_is_deferred_with_reason(self):
+    def test_round_too_deep_row_is_now_processable_not_deferred(self):
+        """2026-07 change: rows with adp_round beyond the E_P lookup's
+        fitted depth are NO LONGER deferred here -- labeling.py now
+        resolves them natively to
+        unscoreable_expected_production_out_of_range (see
+        tests/test_labeling.py's TestExpectedProductionOutOfRange for
+        that resolution itself)."""
         pop = pd.DataFrame([_pop_row(2025, "QB", "matched_clean", 190.0)])  # round 16, lookup only has 1-15
         processable, deferred = MOD.split_processable(pop, _ep_lookup_fixture(), mfl_cache_seasons=())
-        assert len(processable) == 0
-        assert len(deferred) == 1
-        assert deferred.iloc[0]["deferred_reason"] == MOD.DEFERRED_REASON_ROUND_TOO_DEEP
+        assert len(processable) == 1
+        assert len(deferred) == 0
 
     def test_round_within_depth_is_processable(self):
         pop = pd.DataFrame([_pop_row(2025, "QB", "matched_clean", 170.0)])  # round 15, exactly at the edge
@@ -97,25 +102,16 @@ class TestSplitProcessable:
         assert len(processable) == 1
         assert len(deferred) == 0
 
-    def test_row_matching_both_deferral_conditions_appears_exactly_once(self):
-        """A no_adp_match/uncached-season row also has no adp_round
-        (overall_adp is null for no_adp_match rows) -- the two
-        deferral reasons are mutually exclusive by construction, but
-        this test proves it mechanically, not just by assumption."""
-        pop = pd.DataFrame([_pop_row(2013, "QB", "no_adp_match", None)])
-        processable, deferred = MOD.split_processable(pop, _ep_lookup_fixture(), mfl_cache_seasons=())
-        assert len(deferred) == 1  # not 2 -- never double-counted
-
     def test_mixed_population_partitions_correctly(self):
         pop = pd.DataFrame([
             _pop_row(2013, "WR", "matched_clean", 24.0, player_id="00-a"),
             _pop_row(2013, "TE", "no_adp_match", None, player_id="00-b"),
-            _pop_row(2025, "QB", "matched_clean", 190.0, player_id="00-c"),
+            _pop_row(2025, "QB", "matched_clean", 190.0, player_id="00-c"),  # round 16 -- processable now, see above
             _pop_row(2015, "RB", "no_adp_match", None, player_id="00-d"),
         ])
         processable, deferred = MOD.split_processable(pop, _ep_lookup_fixture(), mfl_cache_seasons=(2015,))
-        assert set(processable["player_id"]) == {"00-a", "00-d"}
-        assert set(deferred["player_id"]) == {"00-b", "00-c"}
+        assert set(processable["player_id"]) == {"00-a", "00-c", "00-d"}
+        assert set(deferred["player_id"]) == {"00-b"}
 
 
 class TestCheckBuildCompleteness:
@@ -131,16 +127,20 @@ class TestCheckBuildCompleteness:
             MOD.check_build_completeness(deferred)
 
     def test_error_names_every_distinct_reason_and_count(self):
+        """Uses a second, synthetic reason alongside the real
+        DEFERRED_REASON_NO_MFL_DATA -- check_build_completeness() must
+        generalize to any future deferral reason, not just the one
+        that happens to exist today."""
         deferred = pd.DataFrame([
             {"deferred_reason": MOD.DEFERRED_REASON_NO_MFL_DATA},
             {"deferred_reason": MOD.DEFERRED_REASON_NO_MFL_DATA},
-            {"deferred_reason": MOD.DEFERRED_REASON_ROUND_TOO_DEEP},
+            {"deferred_reason": "some future deferral reason"},
         ])
         with pytest.raises(RuntimeError) as exc_info:
             MOD.check_build_completeness(deferred)
         message = str(exc_info.value)
         assert MOD.DEFERRED_REASON_NO_MFL_DATA in message
-        assert MOD.DEFERRED_REASON_ROUND_TOO_DEEP in message
+        assert "some future deferral reason" in message
         assert "2 row(s)" in message
         assert "1 row(s)" in message
 

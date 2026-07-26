@@ -13,8 +13,7 @@ run found real, structural gaps -- see below):
 
   - `--mode diagnostic` (the default): may complete with rows
     DEFERRED (not scored) -- missing MFL AUG15 corroboration data for
-    a historical season, or a real 2025 ADP round beyond the E_P
-    lookup's fitted depth. Writes to
+    a historical season. Writes to
     SBV_DIAGNOSTIC_OUTPUT_PARQUET_PATH / SBV_DIAGNOSTIC_OUTPUT_CSV_PATH
     and a deferred-rows report -- NEVER the canonical artifact paths.
     A diagnostic run's result is a research artifact, not a claim that
@@ -37,12 +36,21 @@ Locally cached MFL responses exist for only 2 historical seasons
 (2015, 2023). Fetching the other 13 historical seasons live would mean
 many new external API calls -- reserved for the sanctioned GitHub
 Actions path per this project's own convention, not attempted here
-(see "Historical MFL backfill" as its own follow-up). Separately, 118
-real 2025 rows have `adp_round > 15`, beyond the E_P lookup's fitted
-depth (matching FFC's historical ~150-180-player coverage; MFL's real
-2025 market reaches much deeper) -- not extrapolated, capped, or
-substituted without an explicit methodology decision (see "ADP rounds
-beyond the fitted E_P range" as its own follow-up).
+(see "Historical MFL backfill" as its own follow-up).
+
+RESOLVED (2026-07, second pass): 118 real 2025 rows had `adp_round > 15`,
+beyond the E_P lookup's fitted depth (matching FFC's historical
+~150-180-player coverage; MFL's real 2025 market reaches much deeper).
+These are NO LONGER deferred by this script -- labeling.py now
+resolves them natively to the settled
+`unscoreable_expected_production_out_of_range` status (score=NULL,
+label=NULL, both thresholds populated -- a real, trustworthy
+acquisition cost with no E_P available for that round, not silently
+capped or MMC-substituted). See docs/ADP_SOURCE_MATRIX.md's Blocker B
+entry for the full methodology record -- of those 118, only 8 clear
+the production gate at all, and none of the 8 can reach the Star
+threshold even under the most generous conceivable E_P (E_P=0), so
+this resolution changes zero Star labels.
 """
 
 import argparse
@@ -66,7 +74,10 @@ EP_LOOKUP_PATH = REPO_ROOT / config.SBV_EXPECTED_PRODUCTION_LOOKUP_PATH
 MFL_CACHE_SEASONS = (2015, 2023)  # real cached MFL AUG15 responses -- see module docstring
 
 DEFERRED_REASON_NO_MFL_DATA = "no cached MFL AUG15 data for this season"
-DEFERRED_REASON_ROUND_TOO_DEEP = "adp_round exceeds E_P lookup's fitted depth"
+# NOTE: the former DEFERRED_REASON_ROUND_TOO_DEEP category no longer
+# exists -- labeling.py now resolves those rows natively to the
+# settled unscoreable_expected_production_out_of_range status instead
+# of deferring them (see split_processable()'s docstring below).
 
 
 # --- Pure population-shaping logic (no file I/O) -- directly unit-testable ---
@@ -77,34 +88,25 @@ def split_processable(pop: pd.DataFrame, ep_lookup: pd.DataFrame, mfl_cache_seas
     'deferred_reason' column -- never silently dropped, never guessed
     at. A row can only be deferred for a reason listed at module scope
     above (DEFERRED_REASON_*), so check_build_completeness() can name
-    exactly what's missing."""
+    exactly what's missing.
+
+    NOTE (2026-07): rows whose adp_round exceeds the E_P lookup's
+    fitted depth are NO LONGER deferred here -- labeling.py now
+    resolves them natively to the settled
+    unscoreable_expected_production_out_of_range status (score=NULL,
+    label=NULL, both thresholds populated, real trustworthy
+    acquisition cost but no E_P available for that round). They flow
+    through as processable, not deferred -- ep_lookup is still an
+    argument only for backward compatibility with existing call sites."""
     needs_mfl = (
         (pop["data_quality_flag"] == "no_adp_match")
         & (pop["season"] >= config.SBV_MFL_AVAILABLE_FROM_SEASON)
         & (pop["season"] != 2010)
     )
     mfl_cached_mask = pop["season"].isin(mfl_cache_seasons)
-    deferred_mfl = pop[needs_mfl & ~mfl_cached_mask].copy()
-    deferred_mfl["deferred_reason"] = DEFERRED_REASON_NO_MFL_DATA
-
-    # Real, 2025-exclusive finding: MFL's real market reaches much
-    # deeper (raw ADP up to ~357, round 30) than the E_P lookup's fitted
-    # depth (rounds 1-15). Confirmed: zero rows in ANY season 2006-2024
-    # ever exceed round 15; all exceeding rows are 2025. Extending the
-    # fitted lookup's depth or extrapolating a value for rounds 16-30
-    # is a real methodology decision -- deferred, not guessed at here.
-    max_round_by_pos = ep_lookup.groupby("position")["draft_round"].max().to_dict()
-    round_too_deep = pop.apply(
-        lambda r: pd.notna(r["adp_round"]) and r["position"] in max_round_by_pos
-        and r["adp_round"] > max_round_by_pos[r["position"]],
-        axis=1,
-    )
-    deferred_depth = pop[round_too_deep & ~needs_mfl].copy()  # needs_mfl rows already deferred above regardless
-    deferred_depth["deferred_reason"] = DEFERRED_REASON_ROUND_TOO_DEEP
-
-    exclude_mask = (needs_mfl & ~mfl_cached_mask) | round_too_deep
-    processable = pop[~exclude_mask].copy()
-    deferred = pd.concat([deferred_mfl, deferred_depth], ignore_index=True)
+    deferred = pop[needs_mfl & ~mfl_cached_mask].copy()
+    deferred["deferred_reason"] = DEFERRED_REASON_NO_MFL_DATA
+    processable = pop[~(needs_mfl & ~mfl_cached_mask)].copy()
     return processable, deferred
 
 

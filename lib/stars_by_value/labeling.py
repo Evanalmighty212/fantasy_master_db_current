@@ -88,6 +88,15 @@ STATUS_DRAFTED_MISSING = ac.STATUS_DRAFTED_MISSING
 STATUS_AMBIGUOUS = ac.STATUS_AMBIGUOUS
 STATUS_BELOW_PRODUCTION_GATE = "below_production_gate"
 STATUS_OUT_OF_SCOPE = "out_of_scope"
+# 8th status, added 2026-07 -- see module docstring's step 3 update and
+# docs/ADP_SOURCE_MATRIX.md's Blocker B entry for the full record. A
+# real ADP-matched (trustworthy acquisition cost known), gate-clearing
+# row whose draft_round falls outside the E_P lookup's fitted range.
+# NOT capped at the deepest fitted round, NOT substituted with the MMC
+# baseline -- no real historical population exists past the fitted
+# range to justify either without inventing precision. score=NULL,
+# label=NULL -- genuinely unresolved, not a disguised label=0.
+STATUS_UNSCOREABLE_EP_OUT_OF_RANGE = "unscoreable_expected_production_out_of_range"
 
 PROVENANCE_ADP_MATCHED_CLEAN = "adp_matched_clean"
 PROVENANCE_ADP_MATCHED_NEEDS_REVIEW = "adp_matched_needs_review"
@@ -99,6 +108,10 @@ PROVENANCE_BELOW_PRODUCTION_GATE = "below_production_gate"
 PROVENANCE_OUT_OF_SCOPE_NON_SKILL_POSITION = "out_of_scope_non_skill_position"
 PROVENANCE_OUT_OF_SCOPE_TEMPORAL_WINDOW = "out_of_scope_temporal_window"
 PROVENANCE_OUT_OF_SCOPE_INSUFFICIENT_PARTICIPATION = "out_of_scope_insufficient_participation"
+# Paired with STATUS_UNSCOREABLE_EP_OUT_OF_RANGE -- explicitly states
+# acquisition cost (the ADP round) IS known and trustworthy; what's
+# unavailable is an E_P value for that round, not the cost itself.
+PROVENANCE_KNOWN_COST_EP_OUT_OF_RANGE = "known_acquisition_cost_ep_out_of_fitted_range"
 
 _SCOREABLE_STATUSES = (STATUS_ADP_SCORED, STATUS_MMC_SCORED)
 
@@ -126,6 +139,22 @@ def _lookup_expected_production(lookup_df: pd.DataFrame, season: int, position: 
             f"draft_round={draft_round}) -- expected_production_lookup is missing this cell."
         )
     return float(match.iloc[0]["expected_production"])
+
+
+def _round_beyond_fitted_range(lookup_df: pd.DataFrame, season: int, position: str, draft_round: int) -> bool:
+    """True only if draft_round exceeds the MAXIMUM fitted round
+    actually available for (season, position) -- distinguishes a real,
+    known boundary (MFL's real 2025 market reaches deeper than the
+    historically-fitted round range) from a genuine missing-data bug
+    elsewhere in the lookup (season/position entirely absent), which
+    still raises loudly via _lookup_expected_production() rather than
+    being silently treated as 'out of range'."""
+    season_position_rows = lookup_df[
+        (lookup_df["prediction_season"] == season) & (lookup_df["position"] == position)
+    ]
+    if season_position_rows.empty:
+        return False
+    return draft_round > season_position_rows["draft_round"].max()
 
 
 def _result(season, player_id, status, provenance, score, label, gate_threshold, star_threshold) -> dict:
@@ -187,8 +216,16 @@ def assign_sbv_status(
     e_p = None
 
     if data_quality_flag == "matched_clean":
-        status, provenance = STATUS_ADP_SCORED, PROVENANCE_ADP_MATCHED_CLEAN
-        e_p = _lookup_expected_production(expected_production_lookup, season, position, int(row["adp_round"]))
+        adp_round = int(row["adp_round"])
+        if _round_beyond_fitted_range(expected_production_lookup, season, position, adp_round):
+            # Real, trustworthy acquisition cost (a genuine ADP match) --
+            # what's missing is E_P for a round this deep, not the cost
+            # itself. See STATUS_UNSCOREABLE_EP_OUT_OF_RANGE's own
+            # docstring note above -- never capped, never MMC-substituted.
+            status, provenance = STATUS_UNSCOREABLE_EP_OUT_OF_RANGE, PROVENANCE_KNOWN_COST_EP_OUT_OF_RANGE
+        else:
+            status, provenance = STATUS_ADP_SCORED, PROVENANCE_ADP_MATCHED_CLEAN
+            e_p = _lookup_expected_production(expected_production_lookup, season, position, adp_round)
 
     elif data_quality_flag == "matched_needs_review":
         status, provenance = STATUS_UNSCOREABLE_ADP_NEEDS_REVIEW, PROVENANCE_ADP_MATCHED_NEEDS_REVIEW
@@ -224,8 +261,12 @@ def assign_sbv_status(
             # (not left implicit) in STARS_BY_VALUE_METHODOLOGY.md's
             # 2010-cohort section, flagged there for review if this
             # path is ever exercised against a real row (zero today).
-            status, provenance = STATUS_ADP_SCORED, PROVENANCE_ADP_MATCHED_CLEAN
-            e_p = _lookup_expected_production(expected_production_lookup, season, position, int(ac_result["adp_round"]))
+            override_round = int(ac_result["adp_round"])
+            if _round_beyond_fitted_range(expected_production_lookup, season, position, override_round):
+                status, provenance = STATUS_UNSCOREABLE_EP_OUT_OF_RANGE, PROVENANCE_KNOWN_COST_EP_OUT_OF_RANGE
+            else:
+                status, provenance = STATUS_ADP_SCORED, PROVENANCE_ADP_MATCHED_CLEAN
+                e_p = _lookup_expected_production(expected_production_lookup, season, position, override_round)
         elif ac_result["status"] == STATUS_MMC_SCORED:
             status, provenance = ac_result["status"], ac_result["provenance"]
             e_p = mmc.minimal_market_cost_expected_production(position, season)

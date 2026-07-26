@@ -451,6 +451,17 @@ SBV_STATUSES = (
     "unscoreable_ambiguous",
     "below_production_gate",
     "out_of_scope",
+    # 8th status, added 2026-07: a real ADP-matched, gate-clearing row
+    # whose draft_round falls outside the E_P lookup's fitted range
+    # (currently rounds 1-15, matching FFC's historical ~150-180-player
+    # coverage -- MFL's real 2025 market reaches deeper, up to round
+    # 30). Deliberately NOT capped at round 15 or substituted with the
+    # MMC baseline -- there is no real historical population past
+    # round 15 to fit an honest E_P from, and doing either would be
+    # artificial precision. Not necessarily permanent -- the honest
+    # current treatment until deeper historically-compatible ADP data
+    # exists. See docs/ADP_SOURCE_MATRIX.md's Blocker B entry.
+    "unscoreable_expected_production_out_of_range",
 )
 SBV_PROVENANCE_TYPES = (
     "adp_matched_clean",
@@ -463,6 +474,12 @@ SBV_PROVENANCE_TYPES = (
     "out_of_scope_non_skill_position",
     "out_of_scope_temporal_window",
     "out_of_scope_insufficient_participation",
+    # Paired with the 8th status above -- explicitly states acquisition
+    # cost (the ADP round) IS known and trustworthy; what's missing is
+    # an E_P value for that round, not the cost itself. Distinct from
+    # every "evidence_*"/"out_of_scope_*" provenance, which describe a
+    # DIFFERENT kind of gap (unresolved cost, or scope exclusion).
+    "known_acquisition_cost_ep_out_of_fitted_range",
 )
 
 # [IMPLEMENTATION METADATA] Canonical artifact paths -- see the
@@ -705,8 +722,12 @@ def validate_sbv_config():
         errors.append(f"SBV_STATUSES must not contain duplicates, got {SBV_STATUSES}")
     if len(SBV_PROVENANCE_TYPES) != len(set(SBV_PROVENANCE_TYPES)):
         errors.append(f"SBV_PROVENANCE_TYPES must not contain duplicates, got {SBV_PROVENANCE_TYPES}")
-    if len(SBV_STATUSES) != 7:
-        errors.append(f"SBV_STATUSES must have exactly 7 values (section 11), got {len(SBV_STATUSES)}")
+    if len(SBV_STATUSES) != 8:
+        errors.append(
+            f"SBV_STATUSES must have exactly 8 values (section 11's original 7, plus "
+            f"unscoreable_expected_production_out_of_range added 2026-07 -- see "
+            f"docs/ADP_SOURCE_MATRIX.md's Blocker B entry), got {len(SBV_STATUSES)}"
+        )
 
     # --- artifact paths: non-empty strings with the expected extension ---
     for name, path, expected_ext in [

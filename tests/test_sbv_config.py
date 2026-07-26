@@ -234,8 +234,10 @@ class TestMmcRoleConditionalDiscount:
 
 
 class TestStatusAndProvenanceEnumUniqueness:
-    def test_exactly_seven_statuses(self, config_mod):
-        assert len(config_mod.SBV_STATUSES) == 7
+    def test_exactly_eight_statuses(self, config_mod):
+        """7 from section 11 + unscoreable_expected_production_out_of_range,
+        added 2026-07 -- see docs/ADP_SOURCE_MATRIX.md's Blocker B entry."""
+        assert len(config_mod.SBV_STATUSES) == 8
 
     def test_statuses_have_no_duplicates(self, config_mod):
         config_mod.SBV_STATUSES = config_mod.SBV_STATUSES + (config_mod.SBV_STATUSES[0],)
@@ -256,6 +258,7 @@ class TestStatusAndProvenanceEnumUniqueness:
             "unscoreable_ambiguous",
             "below_production_gate",
             "out_of_scope",
+            "unscoreable_expected_production_out_of_range",
         }
 
     def test_expected_provenance_values_present(self, config_mod):
@@ -270,6 +273,7 @@ class TestStatusAndProvenanceEnumUniqueness:
             "out_of_scope_non_skill_position",
             "out_of_scope_temporal_window",
             "out_of_scope_insufficient_participation",
+            "known_acquisition_cost_ep_out_of_fitted_range",
         }
 
 
