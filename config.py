@@ -742,3 +742,93 @@ def validate_sbv_config():
         raise ValueError(
             "Invalid SBV configuration in config.py:\n  - " + "\n  - ".join(errors)
         )
+
+
+# --- 2025 MFL ADP: canonical raw value + QB/TE sensitivity-ordering field ---
+# NOT under the SBV_* prefix: this feeds the whole master DB (both
+# LWI's overall_adp_model and SBV's expected-production fitting), not
+# an SBV-only adjustment -- see the project-wide-integration decision
+# in docs/ADP_SOURCE_MATRIX.md's 2025 investigation entries.
+#
+# REVISED 2026-07 (supersedes the original "Method B corrects
+# overall_adp" design): a historical-reconstruction validation study
+# (docs/ADP_SOURCE_MATRIX.md's "MFL correction study" entries) found
+# that Method B's quantile-mapped output is mathematically RANK-scale
+# (inherited from FFToday avg_rank, itself an average of platform
+# RANKS), not genuine mean-pick ADP -- writing it into overall_adp
+# would silently recreate the same rank-vs-ADP incompatibility that
+# already disqualified FFToday from canonical status. A follow-up
+# historical FFC rank-to-ADP reconstruction study tested whether a
+# defensible conversion exists; walk-forward validation across
+# 2014-2024 showed the naive "rank IS the ADP" baseline beats every
+# tested historical curve on every metric -- no conversion clears the
+# bar. Per the pre-committed fallback rule: raw MFL AUG15 mean_adp is
+# the canonical overall_adp for ALL FOUR positions (QB/RB/WR/TE alike)
+# -- it preserves genuine mean-pick units and historical comparability,
+# even though the QB/TE source bias documented below remains
+# uncorrected in the number actually consumed downstream. Method B's
+# output survives only as a disclosed, NEVER-CONSUMED sensitivity
+# ordering field -- see MFL_2025_SENSITIVITY_RANK_FIELD and
+# tests/test_mfl_2025_adp_correction.py's
+# TestSensitivityFieldNeverConsumedDownstream for the mechanical
+# guarantee.
+#
+# Confidence in the underlying QB/TE ORDERING bias (not adopted as a
+# numeric correction, but still real, disclosed evidence -- see the
+# two-round validation study in ADP_SOURCE_MATRIX.md): QB -- HIGH
+# confidence. TE -- MODERATE confidence (ESPN/Sleeper favor Method B's
+# ordering, RTSports favors raw MFL's ordering on median error --
+# genuine market-source disagreement, disclosed not concealed). RB/WR
+# -- no correction ever proposed; raw MFL already agrees closely with
+# independent consensus for those positions.
+MFL_2025_CORRECTION_POSITIONS = {"QB", "TE"}
+MFL_2025_CORRECTION_METHOD_NAME = "mfl_2025_qb_te_quantile_mapping_v2_rank_n_minus_1"
+MFL_2025_CORRECTION_CALIBRATION_PATH = "data/manual/mfl_2025_qb_te_adp_correction_calibration.csv"
+# Distinct, honest source label for every 2025 MFL-derived row, every
+# position alike -- the SOURCE is MFL AUG15 either way; the disclosed
+# QB/TE bias is a separate, documented fact (see above), never baked
+# into the source label itself and never conflated with
+# FFC/FFToday/FantasyPros' existing adp_source values.
+MFL_2025_ADP_SOURCE = "mfl_aug15_2025"
+# Field name deliberately says RANK, not ADP -- see module docstring
+# in scripts/mfl_2025_adp_correction.py. Populated only for QB/TE;
+# NULL for RB/WR. Never read by any scoring/eligibility consumer --
+# mechanically enforced, not just documented.
+MFL_2025_SENSITIVITY_RANK_FIELD = "mfl_2025_sensitivity_market_rank"
+
+
+def validate_mfl_2025_correction_config():
+    """Fail loudly on invalid 2025-correction configuration -- mirrors
+    validate_sbv_config()'s role and calling convention."""
+    errors = []
+
+    if not MFL_2025_CORRECTION_POSITIONS:
+        errors.append("MFL_2025_CORRECTION_POSITIONS must not be empty")
+    if not MFL_2025_CORRECTION_POSITIONS.issubset(set(SBV_POSITIONS)):
+        errors.append(
+            f"MFL_2025_CORRECTION_POSITIONS must be a subset of SBV_POSITIONS "
+            f"{SBV_POSITIONS}, got {MFL_2025_CORRECTION_POSITIONS}"
+        )
+    if "RB" in MFL_2025_CORRECTION_POSITIONS or "WR" in MFL_2025_CORRECTION_POSITIONS:
+        errors.append(
+            "MFL_2025_CORRECTION_POSITIONS must not include RB or WR -- explicitly "
+            "excluded by the 2026-07 decision (raw MFL already agrees closely with "
+            "independent consensus for those positions)"
+        )
+    if not MFL_2025_CORRECTION_METHOD_NAME or not isinstance(MFL_2025_CORRECTION_METHOD_NAME, str):
+        errors.append("MFL_2025_CORRECTION_METHOD_NAME must be a non-empty string")
+    if not MFL_2025_CORRECTION_CALIBRATION_PATH.endswith(".csv"):
+        errors.append("MFL_2025_CORRECTION_CALIBRATION_PATH must end in .csv")
+    if not MFL_2025_ADP_SOURCE or not isinstance(MFL_2025_ADP_SOURCE, str):
+        errors.append("MFL_2025_ADP_SOURCE must be a non-empty string")
+    if not MFL_2025_SENSITIVITY_RANK_FIELD or "adp" in MFL_2025_SENSITIVITY_RANK_FIELD.lower():
+        errors.append(
+            "MFL_2025_SENSITIVITY_RANK_FIELD must be a non-empty string and must NOT "
+            "contain 'adp' -- it is a rank, not an ADP value, and must never be named "
+            "in a way that invites confusing the two"
+        )
+
+    if errors:
+        raise ValueError(
+            "Invalid 2025 MFL correction configuration in config.py:\n  - " + "\n  - ".join(errors)
+        )
