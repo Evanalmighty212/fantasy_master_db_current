@@ -96,6 +96,7 @@ import config
 from lib.stars_by_value import production as prod
 from lib.stars_by_value import expected_production as ep
 from lib.stars_by_value import labeling
+from lib.stars_by_value import schema as sbv_schema
 import mfl_client
 import nflverse_source
 
@@ -260,14 +261,23 @@ def write_diagnostic_output(out: pd.DataFrame, deferred: pd.DataFrame):
 
 
 def write_canonical_output(out: pd.DataFrame):
+    # Fail loudly BEFORE writing anything -- a canonical build must
+    # never produce a Parquet/CSV pair alongside a stale or missing
+    # data dictionary. See lib/stars_by_value/schema.py.
+    sbv_schema.validate_schema_matches_columns(out.columns.tolist())
+
     parquet_path = REPO_ROOT / config.SBV_OUTPUT_PARQUET_PATH
     csv_path = REPO_ROOT / config.SBV_OUTPUT_CSV_EXPORT_PATH
+    schema_path = REPO_ROOT / config.SBV_OUTPUT_CSV_SCHEMA_PATH
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(parquet_path, index=False)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(csv_path, index=False)
+    schema_path.parent.mkdir(parents=True, exist_ok=True)
+    schema_path.write_text(sbv_schema.render_schema_markdown())
     print(f"[CANONICAL] Wrote {parquet_path} ({len(out)} rows, zero deferred)")
     print(f"[CANONICAL] Wrote {csv_path}")
+    print(f"[CANONICAL] Wrote {schema_path}")
 
 
 def main():
