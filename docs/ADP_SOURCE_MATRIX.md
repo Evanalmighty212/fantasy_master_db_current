@@ -1869,3 +1869,64 @@ of not having a negative-override mechanism, not silently patched over.
   matching audit), not inferred from the synthetic tests alone.
 - **Next steps**: Commit E (master DB rebuild) can now proceed with
   Travis Hunter genuinely included, not silently missing.
+
+---
+
+### 2026-07 -- Blocker B settled: unscoreable_expected_production_out_of_range (8th status)
+
+- **Date**: 2026-07
+- **Decision**: NOT capped at round 15, NOT MMC-substituted -- there is
+  no real historical population past round 15 to fit an honest E_P
+  from (confirmed: zero rows in any 2006-2024 season ever exceed round
+  15), and doing either would be artificial precision. Instead, a real,
+  8th settled status: `unscoreable_expected_production_out_of_range`
+  (provenance `known_acquisition_cost_ep_out_of_fitted_range`) --
+  `score=NULL`, `label=NULL`, both thresholds populated. Acquisition
+  cost (the real ADP round) is known and trustworthy; what's
+  unavailable is an E_P value for that round. Not described as
+  permanent -- the honest current treatment until deeper historically-
+  compatible ADP data exists.
+- **Real stakes, precisely quantified before deciding**: of the 118
+  rows with `adp_round > 15` (2025 only), 110 already fail the
+  production gate regardless (status unaffected by this decision) and
+  only 8 clear the gate and genuinely need this status. Of those 8,
+  **none can reach their Star threshold even at the theoretical best
+  case (E_P=0)** -- this decision changes zero Star labels. Verified on
+  real, full-population data after implementation: `below_production_gate`
+  2377->2487 (+110), new status = 8 (exact match), `Stars unchanged at 74`.
+- **Mechanically guaranteed not to silently default to label=0**:
+  `tests/test_labeling.py::TestExpectedProductionOutOfRange::test_hypothetical_high_production_round16_player_still_gets_null_label`
+  pins a synthetic, absurdly-high-P player at an out-of-range round and
+  asserts `label=NULL`, not `label=1` or `label=0` -- the resolution is
+  genuinely unresolved, not a disguised default, regardless of how the
+  8 real 2025 cases happen to turn out.
+- **Confidence level**: High -- verified against real data at every
+  step, and the "zero Stars affected" finding was established BEFORE
+  the status was implemented, not asserted after the fact.
+- **Next steps**: none required to proceed to a canonical build on this
+  specific blocker. Revisit only if a genuine historically-compatible
+  ADP source with real round-16+ coverage is ever established.
+
+---
+
+### 2026-07 -- Blocker A: historical MFL backfill CI workflow built, not yet run
+
+- **Date**: 2026-07
+- **Built**: `scripts/mfl_historical_backfill.py` (driver, seasons
+  2011-2024, calls `mfl_client.fetch_adp()`/`fetch_players()`
+  unmodified -- existing caching/rate-limiting/integrity-check
+  behavior reused as-is, never `force_refresh=True` implicitly) +
+  `.github/workflows/fetch_mfl_historical.yml` (manual
+  `workflow_dispatch` only, mirrors `fetch_adp.yml`'s structure,
+  uploads `data/raw/mfl/` + the committed manifest as an artifact,
+  does NOT rebuild the master DB automatically). 9 mocked tests
+  (`tests/test_mfl_historical_backfill.py`) -- no real network calls
+  in normal test execution.
+- **Not yet run**: this workflow needs to actually be triggered (via
+  the GitHub Actions tab) and its resulting artifact downloaded into
+  `data/raw/mfl/` before the 4,893 deferred historical rows can be
+  re-attempted. Not something this session can trigger directly.
+- **Next steps**: run the workflow, place the resulting files under
+  `data/raw/mfl/`, re-run `scripts/11_calculate_stars_by_value.py
+  --mode diagnostic`, and report how many of the 4,893 deferred rows
+  become scoreable.
