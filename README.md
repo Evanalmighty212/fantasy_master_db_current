@@ -10,8 +10,18 @@ not just how many points they scored.
 **Current status**: Dataset 1 (the historical LWI, v2.1) is complete,
 deployed, and verified. See `docs/LWI_MODEL_CARD.md` for the full
 validation history and `CHANGELOG.md` for what changed and why.
-Next up: Dataset 2 (League Winner Traits) and Dataset 3 (a predictive
-model) -- both specced but not yet built, see `docs/` below.
+**Stars-by-Value** -- the canonical ground-truth LABEL-GENERATION
+PIPELINE (`scripts/11_calculate_stars_by_value.py --mode canonical`;
+see `research/dataset3/STARS_BY_VALUE_METHODOLOGY.md`) -- is also
+complete and released. It computes, for every ALREADY-COMPLETED
+historical player-season, whether that season was a "Star"
+(`star_by_value_label`) -- this is the historical fact Dataset 3's
+future predictive model will eventually be trained to forecast in
+advance. **Stars-by-Value is a prerequisite for Dataset 3, not Dataset
+3 itself** -- it never predicts anything; it only computes what
+already happened. Next up: Dataset 2 (League Winner Traits, not yet
+built) and then Dataset 3's actual predictive model (not yet built) --
+see `docs/` below.
 
 ---
 
@@ -186,12 +196,29 @@ Component 4's normalization, and others).
 ## Project roadmap
 
 1. ~~**Dataset 1**: League Winner Index~~ -- complete, deployed, v2.1
-2. **Dataset 2**: League Winner Traits -- research into what
+2. ~~**Stars-by-Value**~~ -- complete, deployed (2026-07). **Not a
+   numbered dataset itself** -- the ground-truth LABEL-GENERATION
+   PIPELINE that computes, for every completed historical
+   player-season, an absolute-impact "was this player-season a Star"
+   fact (real production vs. a real, historically-grounded acquisition
+   cost and position-specific threshold), replacing the
+   originally-proposed season-relative top-10%-by-position target --
+   see `docs/PREDICTION_SPECIFICATION.md`'s 2026-07 update and
+   `research/dataset3/STARS_BY_VALUE_METHODOLOGY.md`. This is the
+   historical fact Dataset 3 (below) will eventually be trained to
+   PREDICT in advance -- Stars-by-Value itself computes the past, it
+   does not forecast the future, and is a **prerequisite for Dataset
+   3, not Dataset 3 itself**.
+3. **Dataset 2**: League Winner Traits -- research into what
    preseason-available patterns actually predict becoming a league
-   winner (spec written, research not yet started)
-3. **Dataset 3**: Predictive League Winner Probability -- a model
-   trained on Dataset 2's findings, strictly time-validated (spec
-   written, model not yet built)
+   winner, i.e. a Stars-by-Value Star (spec written, research not yet
+   started)
+4. **Dataset 3**: Predictive League Winner Probability -- a model
+   trained on Dataset 2's findings, strictly time-validated, predicting
+   in advance whether a player-season will receive `star_by_value_label
+   == 1` (the historical fact Stars-by-Value computes after the
+   season). Spec written and updated for this target; the model itself
+   not yet built.
 
 The single largest open item right now isn't methodology -- it's data
 completeness: verifying which of the currently-excluded, no-ADP-match

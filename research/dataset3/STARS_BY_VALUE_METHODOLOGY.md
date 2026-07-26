@@ -1,11 +1,41 @@
-# Stars-by-Value Methodology (Provisional)
+# Stars-by-Value Methodology (Settled and Implemented)
 
-**Status: provisional decision record, not implemented.** Nothing here
-is wired into `config.py` or any canonical pipeline. This document
-exists to keep the settled-so-far construction in one durable place --
-the research/output CSVs behind these decisions are gitignored and
-regenerate on demand, but the decisions themselves shouldn't only live
-in conversation history.
+**Status: SETTLED AND IMPLEMENTED (2026-07).** The methodology below
+is wired into `config.py` (`SBV_STATUSES`, `SBV_PROVENANCE_TYPES`,
+`SBV_STAR_THRESHOLD`, `SBV_PRODUCTION_GATE_FLOOR`, etc.) and released
+as the canonical Stars-by-Value label pipeline
+(`scripts/11_calculate_stars_by_value.py --mode canonical`, backed by
+`lib/stars_by_value/`). Canonical outputs:
+`data/processed/stars_by_value_player_seasons.parquet`,
+`data/exports/stars_by_value_player_seasons.csv` (schema documented in
+the generated `data/exports/stars_by_value_player_seasons_SCHEMA.md`),
+and the evidence-audit artifact
+`data/exports/stars_by_value_evidence_audit.csv`.
+
+**Relationship to Dataset 3, stated explicitly so it's never
+conflated**: this pipeline is the canonical ground-truth
+LABEL-GENERATION SYSTEM Dataset 3's eventual predictive model will be
+trained and evaluated against -- see `docs/PREDICTION_SPECIFICATION.md`'s
+2026-07 update. **Stars-by-Value is NOT Dataset 3.** It computes a
+HISTORICAL fact (`star_by_value_label`) for player-seasons that have
+already happened; it never predicts anything about a future or
+held-out season. Dataset 3 is the separate, not-yet-built model that
+will eventually predict, in advance, the probability that a
+not-yet-observed player-season will go on to receive
+`star_by_value_label == 1` once Stars-by-Value is run against its real
+results.
+
+This document exists to keep the settled construction in one durable
+place -- the research/output CSVs behind these decisions are
+gitignored and regenerate on demand, but the decisions themselves
+shouldn't only live in conversation history.
+
+**Superseded status line, preserved as history**: this document was
+originally titled "(Provisional)" and marked "provisional decision
+record, not implemented -- nothing here is wired into `config.py` or
+any canonical pipeline." That was accurate throughout the methodology
+investigation and design phase; it stopped being accurate once the
+pipeline above was built and canonically released.
 
 This is the "absolute-impact, stars-by-value" methodology first
 scoped in `research/dataset3/README.md` and `LWI_COMPONENT_AUDIT.md`.

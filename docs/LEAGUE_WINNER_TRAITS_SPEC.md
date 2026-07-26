@@ -168,8 +168,12 @@ signal.
 **For categorical/binary traits** (team change: yes/no, undrafted-
 breakout flag, second-year player: yes/no): compute, within position
 strata, all of:
-- **Winner rate**: % of this trait-group that became a league winner
-  (top-10%-by-position LWI) the following season
+- **Winner rate**: % of this trait-group that received the historical
+  "Star" label (`star_by_value_label == 1`, produced by the
+  Stars-by-Value pipeline -- Dataset 3's settled target per
+  `docs/PREDICTION_SPECIFICATION.md`'s 2026-07 update, superseding the
+  top-10%-by-position-LWI definition this line originally referenced)
+  the following season
 - **Baseline rate**: % of the WHOLE eligible population (regardless of
   trait) that became a league winner
 - **Relative rate / lift**: winner rate ÷ baseline rate -- the actual
