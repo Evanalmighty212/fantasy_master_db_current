@@ -57,6 +57,16 @@ def _depth_chart_df(*rows):
     return pd.DataFrame(list(rows), columns=cols)
 
 
+def _depth_chart_2025_df(*rows):
+    cols = ["dt", "team", "gsis_id", "pos_abb", "pos_rank"]
+    return pd.DataFrame(list(rows), columns=cols)
+
+
+def _schedule_df(*rows):
+    cols = ["season", "game_type", "week", "gameday", "home_team", "away_team"]
+    return pd.DataFrame(list(rows), columns=cols)
+
+
 def _mfl_players(*entries):
     return {"players": {"player": list(entries)}}
 
@@ -163,16 +173,122 @@ class TestRookieQbDepthChartCorrection:
         result = ac.apply_rookie_qb_depth_chart_correction(ac.BUCKET_LIKELY_UNDRAFTED, 2012, "00-notfound", True, depth)
         assert result == ac.BUCKET_LIKELY_UNDRAFTED
 
-    def test_2025_raises_instead_of_silently_skipping_or_misparsing(self):
-        with pytest.raises(RuntimeError, match="2025"):
-            ac.apply_rookie_qb_depth_chart_correction(ac.BUCKET_LIKELY_UNDRAFTED, 2025, "00-w", True, _depth_chart_df())
+    def test_2025_with_real_data_but_no_team_or_schedule_raises(self):
+        """2025's schema has no week label -- team + schedule_df are
+        required to pick the right snapshot. Refuses to silently fall
+        back to the pre-2025 week/game_type columns, which do not
+        exist in depth_charts_2025.csv."""
+        depth = _depth_chart_2025_df({"dt": "2025-09-07T00:00:00Z", "team": "TEN", "gsis_id": "00-w", "pos_abb": "QB", "pos_rank": 1})
+        with pytest.raises(RuntimeError, match="requires both 'team' and 'schedule_df'"):
+            ac.apply_rookie_qb_depth_chart_correction(ac.BUCKET_LIKELY_UNDRAFTED, 2025, "00-w", True, depth)
+
+    def test_2025_empty_depth_chart_stays_likely_undrafted_without_raising(self):
+        """Missing/empty depth-chart data is treated the same as every
+        other season -- the missing-team/schedule guard only applies
+        once there's real depth-chart data to interpret."""
+        result = ac.apply_rookie_qb_depth_chart_correction(ac.BUCKET_LIKELY_UNDRAFTED, 2025, "00-w", True, _depth_chart_2025_df())
+        assert result == ac.BUCKET_LIKELY_UNDRAFTED
 
     def test_2025_does_not_raise_when_correction_would_not_fire_anyway(self):
         """The guard is specifically about the correction firing, not
         about the season itself -- a non-QB-rookie row in 2025 must
         not be blocked by a rule that would never apply to it."""
-        result = ac.apply_rookie_qb_depth_chart_correction(ac.BUCKET_AMBIGUOUS, 2025, "00-v", True, _depth_chart_df())
+        result = ac.apply_rookie_qb_depth_chart_correction(ac.BUCKET_AMBIGUOUS, 2025, "00-v", True, _depth_chart_2025_df())
         assert result == ac.BUCKET_AMBIGUOUS
+
+
+class TestRookieQbDepthChartCorrection2025Schema:
+    """Real, already-validated 2025 rookie-QB cases (2026-07 -- see
+    docs/ADP_SOURCE_MATRIX.md's depth-chart-schema entry), re-pinned
+    here as regression tests. Real per-team Week 1 2025 kickoff dates
+    from nflverse's schedules release: TEN/DAL/PHI etc. played
+    2025-09-07 (main Sunday slate); this fixture uses that date
+    directly rather than the full 32-team schedule, since only the
+    tested teams' games matter for these specific rows."""
+
+    SCHEDULE = _schedule_df(
+        {"season": 2025, "game_type": "REG", "week": 1, "gameday": "2025-09-07", "home_team": "DEN", "away_team": "TEN"},
+        {"season": 2025, "game_type": "REG", "week": 1, "gameday": "2025-09-07", "home_team": "WAS", "away_team": "NYG"},
+        {"season": 2025, "game_type": "REG", "week": 1, "gameday": "2025-09-07", "home_team": "CLE", "away_team": "CIN"},
+        {"season": 2025, "game_type": "REG", "week": 1, "gameday": "2025-09-07", "home_team": "LA", "away_team": "HOU"},
+    )
+
+    def test_cam_ward_confirmed_starter_corrected_to_ambiguous(self):
+        """Real, confirmed Week 1 2025 starter -- the only rookie QB in
+        the entire 2025 class with pos_rank==1 at kickoff."""
+        depth = _depth_chart_2025_df(
+            {"dt": "2025-09-07T00:00:00Z", "team": "TEN", "gsis_id": "00-ward", "pos_abb": "QB", "pos_rank": 1},
+        )
+        result = ac.apply_rookie_qb_depth_chart_correction(
+            ac.BUCKET_LIKELY_UNDRAFTED, 2025, "00-ward", True, depth,
+            team="TEN", schedule_df=self.SCHEDULE,
+        )
+        assert result == ac.BUCKET_AMBIGUOUS
+
+    def test_jaxson_dart_confirmed_backup_stays_likely_undrafted(self):
+        """Real: Russell Wilson was NYG's real Week 1 2025 starter."""
+        depth = _depth_chart_2025_df(
+            {"dt": "2025-09-07T00:00:00Z", "team": "NYG", "gsis_id": "00-wilson", "pos_abb": "QB", "pos_rank": 1},
+            {"dt": "2025-09-07T00:00:00Z", "team": "NYG", "gsis_id": "00-dart", "pos_abb": "QB", "pos_rank": 2},
+        )
+        result = ac.apply_rookie_qb_depth_chart_correction(
+            ac.BUCKET_LIKELY_UNDRAFTED, 2025, "00-dart", True, depth,
+            team="NYG", schedule_df=self.SCHEDULE,
+        )
+        assert result == ac.BUCKET_LIKELY_UNDRAFTED
+
+    def test_shedeur_sanders_confirmed_backup_stays_likely_undrafted(self):
+        """Real: Joe Flacco was CLE's real Week 1 2025 starter."""
+        depth = _depth_chart_2025_df(
+            {"dt": "2025-09-07T00:00:00Z", "team": "CLE", "gsis_id": "00-flacco", "pos_abb": "QB", "pos_rank": 1},
+            {"dt": "2025-09-07T00:00:00Z", "team": "CLE", "gsis_id": "00-sanders", "pos_abb": "QB", "pos_rank": 3},
+        )
+        result = ac.apply_rookie_qb_depth_chart_correction(
+            ac.BUCKET_LIKELY_UNDRAFTED, 2025, "00-sanders", True, depth,
+            team="CLE", schedule_df=self.SCHEDULE,
+        )
+        assert result == ac.BUCKET_LIKELY_UNDRAFTED
+
+    def test_uses_latest_snapshot_on_or_before_kickoff_not_after(self):
+        """A snapshot dated AFTER kickoff must never be used -- only
+        confirms the earlier (or same-day) snapshot is picked when
+        multiple exist."""
+        depth = _depth_chart_2025_df(
+            {"dt": "2025-09-05T00:00:00Z", "team": "TEN", "gsis_id": "00-ward", "pos_abb": "QB", "pos_rank": 2},
+            {"dt": "2025-09-07T00:00:00Z", "team": "TEN", "gsis_id": "00-ward", "pos_abb": "QB", "pos_rank": 1},
+            {"dt": "2025-09-10T00:00:00Z", "team": "TEN", "gsis_id": "00-ward", "pos_abb": "QB", "pos_rank": 2},  # after kickoff, must be ignored
+        )
+        result = ac.apply_rookie_qb_depth_chart_correction(
+            ac.BUCKET_LIKELY_UNDRAFTED, 2025, "00-ward", True, depth,
+            team="TEN", schedule_df=self.SCHEDULE,
+        )
+        assert result == ac.BUCKET_AMBIGUOUS
+
+    def test_player_absent_from_active_roster_snapshot_stays_likely_undrafted(self):
+        """Real: several Day-3/UDFA 2025 rookie QBs never appeared on
+        an active-roster depth chart at all."""
+        depth = _depth_chart_2025_df(
+            {"dt": "2025-09-07T00:00:00Z", "team": "TEN", "gsis_id": "00-ward", "pos_abb": "QB", "pos_rank": 1},
+        )
+        result = ac.apply_rookie_qb_depth_chart_correction(
+            ac.BUCKET_LIKELY_UNDRAFTED, 2025, "00-mccord", True, depth,
+            team="PHI", schedule_df=self.SCHEDULE,
+        )
+        assert result == ac.BUCKET_LIKELY_UNDRAFTED
+
+    def test_team_with_no_scheduled_week1_game_in_fixture_stays_likely_undrafted(self):
+        """No RuntimeError -- a team simply absent from the (real,
+        just incomplete-in-this-fixture) schedule means no kickoff
+        date is known, so the correction can't fire; it doesn't mean
+        the schema itself is unsupported."""
+        depth = _depth_chart_2025_df(
+            {"dt": "2025-09-07T00:00:00Z", "team": "ZZZ", "gsis_id": "00-nowhere", "pos_abb": "QB", "pos_rank": 1},
+        )
+        result = ac.apply_rookie_qb_depth_chart_correction(
+            ac.BUCKET_LIKELY_UNDRAFTED, 2025, "00-nowhere", True, depth,
+            team="ZZZ", schedule_df=self.SCHEDULE,
+        )
+        assert result == ac.BUCKET_LIKELY_UNDRAFTED
 
 
 class TestMflNameMatching:

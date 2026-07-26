@@ -135,6 +135,21 @@ PLAYERS_ASSET_NAME = "players.csv"
 PLAYERS_SCHEMA_VERSION = "nflverse_players_v1"
 PLAYERS_CACHE_PATH = Path("data/raw/nflverse/reference/players.csv")
 
+# --- schedules (real per-team game dates -- 2025 rookie-QB depth-chart
+# correction needs each team's actual Week 1 kickoff date, since
+# depth_charts_2025.csv carries no week label) -- single file, no
+# season grain, same shape as players.csv. Confirmed to exist via the
+# public GitHub API, 2026-07 (release tag "schedules", asset
+# "games.csv") before being wired in here.
+SCHEDULES_RELEASE_TAG = "schedules"
+SCHEDULES_ASSET_NAME = "games.csv"
+# Bump if nflverse changes games.csv's column set (verified current
+# columns include game_id, season, game_type, week, gameday, weekday,
+# home_team, away_team -- confirmed directly against a live download,
+# 2026-07-25).
+SCHEDULES_SCHEMA_VERSION = "nflverse_schedules_v1"
+SCHEDULES_CACHE_PATH = Path("data/raw/nflverse/reference/games.csv")
+
 # --- depth_charts (rookie-QB Week-1-starter correction) -- season grain ---
 DEPTH_CHARTS_RELEASE_TAG = "depth_charts"
 DEPTH_CHARTS_ASSET_NAME_TEMPLATE = "depth_charts_{season}.csv"
@@ -374,6 +389,74 @@ def fetch_players() -> pd.DataFrame:
     """Raw players.csv as-is -- no normalize step, see module
     docstring's "EXTENDED TO TWO MORE..." section for why."""
     path = fetch_players_raw()
+    return pd.read_csv(path, low_memory=False)
+
+
+# --- schedules (real per-team game dates) -- single file, no season grain ---
+
+
+def register_schedules_manifest_entry(force: bool = False) -> dict:
+    """The ONLY function that writes or updates the "schedules"
+    manifest entry -- same integrity model as
+    register_players_manifest_entry() above. One entry, not a seasons
+    dict -- games.csv covers every season in one file."""
+    asset_info = _lookup_asset_id_by_name(SCHEDULES_RELEASE_TAG, SCHEDULES_ASSET_NAME)
+
+    if force or not SCHEDULES_CACHE_PATH.exists():
+        _download_by_asset_id(asset_info["asset_id"], SCHEDULES_CACHE_PATH)
+
+    manifest = _load_manifest()
+    with open(SCHEDULES_CACHE_PATH, "rb") as f:
+        row_count = sum(1 for _ in f) - 1
+    manifest["schedules"] = {
+        "asset_id": asset_info["asset_id"],
+        "upstream_updated_at": asset_info["upstream_updated_at"],
+        "asset_url": f"{GITHUB_API_BASE}/releases/assets/{asset_info['asset_id']}",
+        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        "sha256": _sha256(SCHEDULES_CACHE_PATH),
+        "schema_version": SCHEDULES_SCHEMA_VERSION,
+        "row_count": row_count,
+    }
+    _save_manifest(manifest)
+    return manifest["schedules"]
+
+
+def fetch_schedules_raw() -> Path:
+    """Downloads (or reuses a cached copy of) games.csv BY ITS PINNED
+    ASSET ID from the committed manifest, then verifies it against the
+    manifest's recorded sha256 before returning the local path. Never
+    writes the manifest itself."""
+    manifest = _load_manifest()
+    recorded = manifest.get("schedules")
+    if recorded is None:
+        raise RuntimeError(
+            f"games.csv has no entry in {MANIFEST_PATH.name}. Call "
+            f"register_schedules_manifest_entry() deliberately to record "
+            f"its baseline asset id and hash before it can be used by "
+            f"the pipeline -- this is never done automatically."
+        )
+
+    if not SCHEDULES_CACHE_PATH.exists():
+        _download_by_asset_id(recorded["asset_id"], SCHEDULES_CACHE_PATH)
+
+    file_hash = _sha256(SCHEDULES_CACHE_PATH)
+    if recorded["sha256"] != file_hash:
+        raise RuntimeError(
+            f"INTEGRITY CHECK FAILED for games.csv: the file at "
+            f"{recorded['asset_url']} no longer matches the sha256 recorded "
+            f"in {MANIFEST_PATH.name} (recorded {recorded['sha256'][:12]}..., "
+            f"got {file_hash[:12]}...). Do not silently proceed. Investigate "
+            f"what changed, then deliberately call "
+            f"register_schedules_manifest_entry(force=True) to accept the new "
+            f"data as the new baseline."
+        )
+    return SCHEDULES_CACHE_PATH
+
+
+def fetch_schedules() -> pd.DataFrame:
+    """Raw games.csv as-is -- no normalize step, same convention as
+    fetch_players()."""
+    path = fetch_schedules_raw()
     return pd.read_csv(path, low_memory=False)
 
 

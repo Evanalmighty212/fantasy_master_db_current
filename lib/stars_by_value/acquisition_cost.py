@@ -232,27 +232,76 @@ def is_qb_rookie_this_season(season: int, gsis_id: str, players_df: pd.DataFrame
 
 def apply_rookie_qb_depth_chart_correction(
     bucket: str, season: int, gsis_id: str, is_qb_rookie: bool, depth_chart_df,
+    team: str = None, schedule_df=None,
 ) -> str:
     """Only fires when bucket==likely_undrafted AND is_qb_rookie==True
-    (rule 1 fired). Week 1, REG season, position==QB, this gsis_id:
-    depth_team==1 (real Week-1 starter) -> 'ambiguous'. Anything else,
-    including absence from that week's chart -> stays likely_undrafted.
-    Never generalized to other positions or a general drafted/undrafted
-    signal -- depth-chart status was tested for that broader purpose
-    and found weak (Vick 2010, OBJ 2014, Cruz 2011, Herbert 2020, and
-    Nacua 2023 all showed depth_team=2 despite being real, different
-    draft-cost cases)."""
+    (rule 1 fired). Real Week-1-starter status for this gsis_id ->
+    'ambiguous'. Anything else, including absence from the relevant
+    snapshot -> stays likely_undrafted. Never generalized to other
+    positions or a general drafted/undrafted signal -- depth-chart
+    status was tested for that broader purpose and found weak (Vick
+    2010, OBJ 2014, Cruz 2011, Herbert 2020, and Nacua 2023 all showed
+    depth_team=2 despite being real, different draft-cost cases).
+
+    2006-2024: week==1, game_type=="REG", position=="QB", depth_team==1
+    on the consistent 15-column schema.
+
+    2025 (validated 2026-07, see docs/ADP_SOURCE_MATRIX.md's
+    depth-chart-schema entry): depth_charts_2025.csv has no week label
+    at all -- it's a rolling daily snapshot feed (`dt`), a different,
+    incompatible 12-column schema (`gsis_id`/`team`/`pos_abb`/
+    `pos_rank`, no `week`/`game_type`/`position`/`depth_team`). Mapped
+    as: gsis_id -> gsis_id (unchanged), position -> pos_abb=="QB",
+    starter status -> pos_rank==1, "Week 1" -> the latest available
+    depth-chart snapshot on or before this player's TEAM's real first
+    regular-season game (from nflverse's `schedules` release, not a
+    shared project-wide date approximation -- every 2025 rookie QB
+    already checked resolves identically to the earlier shared-date
+    approximation, confirming this is not a live sensitivity, but the
+    real per-team date is what ships). Requires `team` and
+    `schedule_df` (nflverse_source.fetch_schedules()'s output) for
+    season 2025 -- raises if either is missing rather than silently
+    falling back to the pre-2025 schema, which would silently
+    mis-parse a structurally different file."""
     if not is_qb_rookie or bucket != BUCKET_LIKELY_UNDRAFTED:
         return bucket
+
     if season == 2025:
-        raise RuntimeError(
-            "Rookie-QB depth-chart correction invoked for season 2025, whose "
-            "depth_charts schema is incompatible with every other season (see "
-            "nflverse_source.py's module docstring, SBV Commit 2) -- no normalized "
-            "parser exists yet. Refusing to silently skip or mis-parse this row; "
-            "extend this function explicitly once a real 2025 rookie-QB candidate "
-            "needs it."
-        )
+        if depth_chart_df is None or len(depth_chart_df) == 0:
+            return bucket
+        if not team or schedule_df is None:
+            raise RuntimeError(
+                "Rookie-QB depth-chart correction for season 2025 requires both "
+                "'team' and 'schedule_df' (nflverse_source.fetch_schedules()) -- "
+                "the 2025 schema has no week label, so the real per-team kickoff "
+                "date is required to pick the right snapshot. Refusing to "
+                "silently fall back to the pre-2025 schema's week/game_type "
+                "columns, which do not exist in depth_charts_2025.csv."
+            )
+        week1_games = schedule_df[
+            (schedule_df["season"] == 2025) & (schedule_df["game_type"] == "REG")
+            & (schedule_df["week"] == 1)
+            & ((schedule_df["home_team"] == team) | (schedule_df["away_team"] == team))
+        ]
+        if week1_games.empty:
+            return bucket
+        kickoff = pd.to_datetime(week1_games.iloc[0]["gameday"])
+        dc = depth_chart_df.copy()
+        dc["date"] = pd.to_datetime(dc["dt"]).dt.tz_localize(None).dt.normalize()
+        eligible_dates = dc.loc[dc["date"] <= kickoff, "date"]
+        if eligible_dates.empty:
+            return bucket
+        snapshot_date = eligible_dates.max()
+        snap = dc[
+            (dc["date"] == snapshot_date) & (dc["team"] == team)
+            & (dc["pos_abb"] == "QB") & (dc["gsis_id"] == gsis_id)
+        ]
+        if snap.empty:
+            return bucket
+        if (snap["pos_rank"] == 1).any():
+            return BUCKET_AMBIGUOUS
+        return bucket
+
     if depth_chart_df is None or len(depth_chart_df) == 0:
         return bucket
     week1_reg = depth_chart_df[
