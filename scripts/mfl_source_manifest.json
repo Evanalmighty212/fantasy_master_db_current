@@ -113,6 +113,14 @@
         "sha256": "bc67b8a7c739478282a161b00d02c2c5e1c6425b8950cbcb083cabd8dcf1fca3",
         "total_drafts": "9468",
         "url": "https://api.myfantasyleague.com/2024/export?TYPE=adp&PERIOD=AUG15&JSON=1"
+      },
+      "2025": {
+        "retrieved_at": "2026-07-26T04:58:37.798280+00:00",
+        "row_count": 378,
+        "sbv_version": "1.0",
+        "sha256": "aac5d67f865b00f2ded348b022fac918b4b941fede0ecb0ac468a3d3969368b2",
+        "total_drafts": "3597",
+        "url": "https://api.myfantasyleague.com/2025/export?TYPE=adp&PERIOD=AUG15&JSON=1"
       }
     }
   },
@@ -231,6 +239,14 @@
         "sha256": "1cff9db41e959dab3412b1c75812d2be6a3e27d462e13133a2baaafe96177c17",
         "total_drafts": null,
         "url": "https://api.myfantasyleague.com/2024/export?TYPE=players&JSON=1"
+      },
+      "2025": {
+        "retrieved_at": "2026-07-26T04:58:39.698105+00:00",
+        "row_count": 2779,
+        "sbv_version": "1.0",
+        "sha256": "f8fdde55cf54f8296e9644075fe27848d0611c371f67bd1670c1fedd47c78f6f",
+        "total_drafts": null,
+        "url": "https://api.myfantasyleague.com/2025/export?TYPE=players&JSON=1"
       }
     }
   }
