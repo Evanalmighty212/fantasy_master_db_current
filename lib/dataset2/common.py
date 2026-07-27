@@ -9,7 +9,23 @@ time. Not a speculative abstraction -- real, exact duplication that
 had already happened once and was about to happen again.
 """
 
+import sys
+from pathlib import Path
+
 import pandas as pd
+
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+from config import SBV_SEASON_LENGTH_16_GAME, SBV_SEASON_LENGTH_17_GAME, SBV_SEASON_LENGTH_ERA_CUTOFF
+
+
+def season_length(season: int) -> int:
+    """Real NFL season length by era -- 17 from
+    config.SBV_SEASON_LENGTH_ERA_CUTOFF onward, 16 before. Reuses the
+    SBV_* config constants directly (this is the same verified
+    real-world fact SBV's own lib/stars_by_value/production.py::season_length()
+    encodes, not a Dataset-2-specific number) rather than duplicating
+    the era-cutoff literal in a second place."""
+    return SBV_SEASON_LENGTH_17_GAME if season >= SBV_SEASON_LENGTH_ERA_CUTOFF else SBV_SEASON_LENGTH_16_GAME
 
 
 def validate_columns(df: pd.DataFrame, required, label: str) -> None:

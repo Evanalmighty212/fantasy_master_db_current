@@ -2,13 +2,15 @@
 
 **Status: Roadmap and first-wave decisions APPROVED 2026-07. Families
 #1/#2/#4/#6 (`lib/dataset2/experience_age_draft.py`), #8/#39/#44
-(`lib/dataset2/prior_season_traits.py`), and #7
+(`lib/dataset2/prior_season_traits.py`), #7
 (`lib/dataset2/prior_finish_traits.py` +
-`lib/dataset2/prior_finish_analysis.py`) are IMPLEMENTED** — see each
-family's entry in §6 for build detail and the required real-data
-integration checkpoint (implementation correctness and real-data
-validation are tracked as two separate, not-yet-both-satisfied claims
-— see §6). Family #9's cutoff analysis is in progress; every other
+`lib/dataset2/prior_finish_analysis.py`), and #9's sample-size portion
+(`lib/dataset2/partial_season_traits.py`, minimum-opportunity floor
+still deliberately pending) are IMPLEMENTED** — see each family's
+entry in §6 for build detail and the required real-data integration
+checkpoint (implementation correctness and real-data validation are
+tracked as two separate, not-yet-both-satisfied claims — see §6).
+#10/#86-split/#88-split (depth-chart cluster) are next; every other
 family below remains proposal-only, not yet built. Responds to "FFRE
 Dataset Trait Taxonomy — Reconciled Draft" (90
 hypothesis families, 1658 trait entries, approved as the authoritative
@@ -803,11 +805,11 @@ reviewable slices, not all at once.**
   duplicate of identical logic — a mechanical refactor, re-verified
   against slices 1/2a's existing tests before proceeding, no behavior
   change. Full suite as of slice 2b: 719/719 passing, no regressions.
-- **#9** (partial-season splits): NOT yet implemented — per your
-  instruction, the minimum-sample/minimum-opportunity cutoffs must be
-  proposed from real data and approved before any split logic is
-  written. See the cutoff analysis below (not yet run at the time this
-  line was written — check its own subsection for status).
+- **Slice 3** (family #9's sample-size portion — half-split and
+  parametrized final-N-games PPG, primary ≥4/sensitivity ≥3 game
+  floors exposed separately, minimum-opportunity explicitly pending):
+  **BUILT** — `lib/dataset2/partial_season_traits.py`, 17 new tests.
+  Full suite as of slice 3: 738/738 passing, no regressions.
 - **#10/#86-split/#88-split** (depth-chart-derived, needs the
   leakage-timing verification): approved but not yet built.
 
@@ -1033,16 +1035,37 @@ satisfied.
 - Leakage: None
 - Decision needed: none
 
-**#9 — Partial-season production splits — CUTOFF ANALYSIS DONE
-(2026-07), NOT approved, NOT implemented**
+**#9 — Partial-season production splits — SAMPLE-SIZE PORTION BUILT
+(2026-07); minimum-opportunity floor still PENDING, by design**
+- Implementation: `lib/dataset2/partial_season_traits.py::build_half_split_traits()`
+  and `::build_final_n_games_traits()` (parametrized by `n`). 17 tests.
+  `opportunity_qualified` is the literal string `"pending"` on every
+  row — never True/False, never silently treated as qualified. A
+  window's PPG value is set to null whenever it has fewer than
+  `config.DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY` (3) games —
+  a structural guarantee, not just a flag a downstream consumer has to
+  remember to check.
+- **DECISION (2026-07, approved)**: minimum-SAMPLE floor is **≥4
+  games, primary** (`config.DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY`)
+  — chosen for a more credible sample while retaining 48.4% of the
+  real population with reasonably proportional era coverage. **≥3
+  games is a documented sensitivity comparison**
+  (`config.DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY`), exposed as
+  a SEPARATE qualification column, never substituted for the primary.
+  Fewer than 3 games is never a usable partial-season finding at all —
+  no lower fallback tier exists. **This is a provisional design, not a
+  final eligibility rule** — a games-played floor alone can still
+  include a player who was active but had a negligible role.
 - Initial traits: first-half vs. second-half PPG split; final-N-games
   PPG (threshold-sensitivity rule: implement as one parametrized
   window, not many fixed splits)
 - **Required build detail (approved 2026-07)**: every split-window PPG
   computation must apply a minimum-SAMPLE requirement AND a
-  minimum-OPPORTUNITY requirement. Per your instruction, real candidate
-  cutoffs and real retained counts are analyzed below BEFORE any split
-  logic is written — nothing here is implemented or approved yet.
+  minimum-OPPORTUNITY requirement. Real candidate cutoffs and real
+  retained counts were analyzed below BEFORE any split logic was
+  written, per your instruction — the sample-size portion is now
+  approved and built (above); the minimum-opportunity portion remains
+  explicitly deferred (below), not fabricated.
 
   **Minimum-SAMPLE candidates — real data, `weekly_results_ppr_2006_2025.csv`,
   skill positions only, n=10,659 total player-seasons 2006-2025:**
@@ -1102,20 +1125,20 @@ satisfied.
   filtered** — this is a real, disclosed limitation, not silently
   dropped.
 
-  **No cutoff selected.** The table above is for your review — a
-  reasonable-looking range is ≥3 or ≥4 games per half (retains
-  46-56% of the population, roughly proportional across era), but
-  QB's faster falloff is worth your explicit call before locking
-  anything in.
+  **Cutoff APPROVED (sample-size only) — see decision above.**
 - Source/seasons: `weekly_results_ppr_2006_2025.csv` — full
 - 2A/2B: Both
 - Research priority: **A** — plausible ("finishing strong" as a
   signal), but real risk of a weak or noisy effect size — flagged as
   a likely small-effect-size result even if the direction is real
-- Burden: Low/moderate (per-week aggregation)
+- Burden: Low/moderate (per-week aggregation) — sample-size portion
+  DONE; opportunity portion blocked on #15/#16/#20 retention work
 - Leakage: None (all pre-dates the season being predicted)
-- Decision needed: none beyond setting the exact minimum-sample/
-  minimum-opportunity floors at build time
+- Decision needed: **RESOLVED for sample size (2026-07)**. Still open:
+  the exact minimum-opportunity floor, deferred until targets/carries/
+  routes/snaps are retained and real distributions can be examined —
+  do not characterize this family's PPG output as a final,
+  opportunity-qualified finding until that floor is added.
 
 **#39 — Prior-season availability (durability) — BUILT (2026-07)**
 - Implementation: same module, column `prior_season_games_played`

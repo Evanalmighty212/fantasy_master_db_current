@@ -830,6 +830,23 @@ DATASET2_ADP_ROUND_BUCKETS = (
 # against how noisy small Dataset 2 cells actually turn out to be.
 DATASET2_ANALYSIS_MIN_CELL_SAMPLE_SIZE = 10
 
+# Family #9 (partial-season production splits) minimum-SAMPLE floors --
+# approved 2026-07 from real retained-count analysis against
+# weekly_results_ppr_2006_2025.csv (research/dataset2/DATASET2_TRAIT_ROADMAP.md
+# §6, family #9). PRIMARY is the headline floor (retains 48.4% of the
+# real population with roughly proportional era coverage); SENSITIVITY
+# is a documented, separately-exposed comparison, never silently
+# substituted for the primary result. A window with fewer than
+# SENSITIVITY games is never usable as a reported partial-season
+# finding at all -- there is no lower fallback tier below this.
+# Minimum-OPPORTUNITY (target/carry/snap-share) floor is DELIBERATELY
+# NOT set here -- deferred until target/carry/route/snap data is
+# retained and real distributions can be examined; do not add a number
+# here without that real data, per the same real-data-only decision
+# rule that produced the two floors below.
+DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY = 4
+DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY = 3
+
 
 # --- 2025 MFL ADP: canonical raw value + QB/TE sensitivity-ordering field ---
 # NOT under the SBV_* prefix: this feeds the whole master DB (both
