@@ -1033,21 +1033,80 @@ satisfied.
 - Leakage: None
 - Decision needed: none
 
-**#9 — Partial-season production splits**
+**#9 — Partial-season production splits — CUTOFF ANALYSIS DONE
+(2026-07), NOT approved, NOT implemented**
 - Initial traits: first-half vs. second-half PPG split; final-N-games
   PPG (threshold-sensitivity rule: implement as one parametrized
   window, not many fixed splits)
 - **Required build detail (approved 2026-07)**: every split-window PPG
-  computation must apply a minimum-SAMPLE requirement (a minimum
-  number of games played within that window — a 1-game "second half"
-  is not a usable PPG estimate) AND a minimum-OPPORTUNITY requirement
-  (the player must have had meaningful offensive opportunity in that
-  window — e.g. a target/carry-share or snap-share floor once #16/#20
-  are wired in — so a player who was active but not meaningfully used
-  doesn't get counted as a legitimate "weak second half"). Exact
-  numeric floors for both are not set here — that's an implementation
-  detail to fix when this family is actually built, not a roadmap-level
-  decision — but the requirement itself is now binding.
+  computation must apply a minimum-SAMPLE requirement AND a
+  minimum-OPPORTUNITY requirement. Per your instruction, real candidate
+  cutoffs and real retained counts are analyzed below BEFORE any split
+  logic is written — nothing here is implemented or approved yet.
+
+  **Minimum-SAMPLE candidates — real data, `weekly_results_ppr_2006_2025.csv`,
+  skill positions only, n=10,659 total player-seasons 2006-2025:**
+
+  *First-half/second-half split* (season-length-aware halves,
+  16-game era pre-2021, 17-game era from 2021; floor applies to BOTH
+  halves):
+
+  | Min games/half | n retained | % of population |
+  |---|---|---|
+  | ≥1 | 7,999 | 75.0% |
+  | ≥2 | 6,867 | 64.4% |
+  | ≥3 | 5,955 | 55.9% |
+  | ≥4 | 5,160 | 48.4% |
+  | ≥5 | 4,405 | 41.3% |
+  | ≥6 | 3,604 | 33.8% |
+
+  Floor≥3 by position: WR 2,448 / RB 1,600 / TE 1,259 / QB 648 (QB's
+  TOTAL population is 1,522, so this retains 42.6% of QBs vs. 59.7% of
+  WRs — QB retention is already lower here). Floor≥4 by position: WR
+  2,138 / RB 1,409 / TE 1,052 / QB 561 (QB retention drops to 36.9% of
+  its own population vs. 52.2% for WR) — **QB retention shrinks
+  fastest as the floor rises**, most likely because the QB population
+  includes many backup/emergency-QB seasons with genuinely few games,
+  not a flaw in the floor itself. Floor≥3 by era: 2011-2020 n=3,002 /
+  2021+ n=1,576 / pre-2011 n=1,377 (roughly proportional to each era's
+  real season count, no glaring era skew).
+
+  *Final-N-games split* (floor = min games within the trailing N
+  weeks):
+
+  | Window | Floor | n retained | % of population |
+  |---|---|---|---|
+  | Final 4 | ≥2 | 7,204 | 67.6% |
+  | Final 4 | ≥3 | 5,984 | 56.1% |
+  | Final 4 | ≥4 (every game) | 4,827 | 45.3% |
+  | Final 6 | ≥3 | 6,828 | 64.1% |
+  | Final 6 | ≥5 | 4,980 | 46.7% |
+  | Final 6 | ≥6 (every game) | 3,948 | 37.0% |
+  | Final 8 | ≥4 | 6,570 | 61.6% |
+  | Final 8 | ≥7 | 4,198 | 39.4% |
+  | Final 8 | ≥8 (every game) | 3,108 | 29.2% |
+
+  **Minimum-OPPORTUNITY candidates — CANNOT be computed with real
+  numbers yet.** Per the verified data inventory (§2), target/carry
+  share and snap counts are either fetched-but-not-retained
+  (`target_share`/`carries`, Tier 2) or not yet wired in at all
+  (`snap_counts`, §3e) — this is the SAME retention/wiring dependency
+  already documented for families #15/#16/#20, not a new gap. Proposing
+  a numeric opportunity floor without real data to test it against
+  would be a guess, which the coverage-aware and "flag and exclude,
+  never guess" rules both prohibit. **Recommendation: the minimum-
+  SAMPLE floor can be decided and implemented independently now; the
+  minimum-OPPORTUNITY floor should wait for the #15/#20 weekly-column
+  retention work, and until then #9's split should be built with the
+  sample-size floor only, clearly labeled as not yet opportunity-
+  filtered** — this is a real, disclosed limitation, not silently
+  dropped.
+
+  **No cutoff selected.** The table above is for your review — a
+  reasonable-looking range is ≥3 or ≥4 games per half (retains
+  46-56% of the population, roughly proportional across era), but
+  QB's faster falloff is worth your explicit call before locking
+  anything in.
 - Source/seasons: `weekly_results_ppr_2006_2025.csv` — full
 - 2A/2B: Both
 - Research priority: **A** — plausible ("finishing strong" as a
