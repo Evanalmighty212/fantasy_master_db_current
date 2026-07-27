@@ -798,6 +798,39 @@ def validate_sbv_config():
         )
 
 
+# =====================================================================
+# --- Dataset 2 (League Winner Traits) parameters ---
+# =====================================================================
+# Era boundaries used to stratify Dataset 2 trait analysis so a trait
+# isn't credited merely for correlating with a specific historical
+# period. INITIAL DEFAULTS, not finalized -- reused directly from
+# docs/LEAGUE_WINNER_TRAITS_SPEC.md's "Controlling for era and position
+# effects" section (pre-2011 / 2011-2020 / 2021+, roughly matching
+# known real NFL rule-change eras); that doc's own "Open decisions"
+# list already flags the exact boundaries as still open.
+# Format: (first_boundary_season, second_boundary_season).
+DATASET2_ERA_BOUNDARIES = (2011, 2021)
+
+# ADP-round buckets for Dataset 2 stratified analysis, first used
+# descriptively in research/dataset2/DATASET2_TRAIT_ROADMAP.md §3j's
+# bust-definition investigation, now the standard Dataset 2
+# ADP-conditioning bucket set. (label, min_round, max_round);
+# max_round=None means unbounded above. adp_round itself = ceil(adp/TEAMS).
+DATASET2_ADP_ROUND_BUCKETS = (
+    ("R1-2", 1, 2),
+    ("R3-5", 3, 5),
+    ("R6-10", 6, 10),
+    ("R11+", 11, None),
+)
+
+# Below this many rows, a stratified analysis cell's rate is still
+# reported (never dropped) but flagged confidence_flag="small_sample"
+# per the roadmap's §4.6 "minimum result outputs" confidence taxonomy.
+# An initial, exploratory default -- not yet empirically validated
+# against how noisy small Dataset 2 cells actually turn out to be.
+DATASET2_ANALYSIS_MIN_CELL_SAMPLE_SIZE = 10
+
+
 # --- 2025 MFL ADP: canonical raw value + QB/TE sensitivity-ordering field ---
 # NOT under the SBV_* prefix: this feeds the whole master DB (both
 # LWI's overall_adp_model and SBV's expected-production fitting), not

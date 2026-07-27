@@ -41,6 +41,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+from lib.dataset2.common import lag_join, validate_columns
 
 POPULATION_REQUIRED_COLUMNS = ("season", "player_id", "position", "team", "ppg_ppr", "games_played")
 
@@ -53,24 +54,6 @@ OUTPUT_COLUMNS = (
     "prior_season_games_played",
     "changed_team",
 )
-
-
-def _validate_columns(df: pd.DataFrame, required, label: str) -> None:
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(f"{label} is missing required columns: {missing}")
-
-
-def _lag_join(df: pd.DataFrame, value_col: str, lag: int) -> pd.Series:
-    """Value of `value_col` for this player at `season - lag`, aligned
-    to df's row order. A player with no row at season-lag (rookie, or
-    a genuine gap in the population) gets NaN -- never zero-filled or
-    guessed."""
-    lookup = df[["season", "player_id", value_col]].copy()
-    lookup["season"] = lookup["season"] + lag
-    lookup = lookup.rename(columns={value_col: "_lagged_value"})
-    merged = df[["season", "player_id"]].merge(lookup, on=["season", "player_id"], how="left")
-    return merged["_lagged_value"]
 
 
 def _slope_over_offsets(offsets_and_values) -> float:
@@ -103,7 +86,7 @@ def build_prior_season_traits(population: pd.DataFrame) -> pd.DataFrame:
     Returns one row per (season, player_id, position) with every
     column in OUTPUT_COLUMNS.
     """
-    _validate_columns(population, POPULATION_REQUIRED_COLUMNS, "population")
+    validate_columns(population, POPULATION_REQUIRED_COLUMNS, "population")
 
     # Everything is computed directly onto `base` (one row per season +
     # player_id, reset to a clean 0..n index) so every assignment below
@@ -114,9 +97,9 @@ def build_prior_season_traits(population: pd.DataFrame) -> pd.DataFrame:
     ).reset_index(drop=True)
 
     # --- #8: multi-year production trend ---
-    ppg_lag1 = _lag_join(base, "ppg_ppr", 1)
-    ppg_lag2 = _lag_join(base, "ppg_ppr", 2)
-    ppg_lag3 = _lag_join(base, "ppg_ppr", 3)
+    ppg_lag1 = lag_join(base, "ppg_ppr", 1)
+    ppg_lag2 = lag_join(base, "ppg_ppr", 2)
+    ppg_lag3 = lag_join(base, "ppg_ppr", 3)
 
     # _slope_over_offsets() already drops null points internally, so a
     # missing lag2 (e.g. a second-year player) naturally leaves the
@@ -129,10 +112,10 @@ def build_prior_season_traits(population: pd.DataFrame) -> pd.DataFrame:
     ]
 
     # --- #39: prior-season availability (durability) ---
-    base["prior_season_games_played"] = _lag_join(base, "games_played", 1)
+    base["prior_season_games_played"] = lag_join(base, "games_played", 1)
 
     # --- #44: player changed teams -- simple preseason-known binary flag ---
-    prior_team = _lag_join(base, "team", 1)
+    prior_team = lag_join(base, "team", 1)
     base["changed_team"] = np.where(
         prior_team.isna(), np.nan, (base["team"].to_numpy() != prior_team.to_numpy()).astype(float)
     )

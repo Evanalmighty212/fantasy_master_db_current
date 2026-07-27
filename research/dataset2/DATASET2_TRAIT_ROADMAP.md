@@ -1,14 +1,16 @@
 # Dataset 2 Trait Roadmap — APPROVED, first implementation wave underway
 
 **Status: Roadmap and first-wave decisions APPROVED 2026-07. Families
-#1/#2/#4/#6 (`lib/dataset2/experience_age_draft.py`) and #8/#39/#44
-(`lib/dataset2/prior_season_traits.py`) are IMPLEMENTED** — see each
+#1/#2/#4/#6 (`lib/dataset2/experience_age_draft.py`), #8/#39/#44
+(`lib/dataset2/prior_season_traits.py`), and #7
+(`lib/dataset2/prior_finish_traits.py` +
+`lib/dataset2/prior_finish_analysis.py`) are IMPLEMENTED** — see each
 family's entry in §6 for build detail and the required real-data
 integration checkpoint (implementation correctness and real-data
 validation are tracked as two separate, not-yet-both-satisfied claims
-— see §6). Family #7 and family #9's cutoff analysis are in progress;
-every other family below remains proposal-only, not yet built.
-Responds to "FFRE Dataset Trait Taxonomy — Reconciled Draft" (90
+— see §6). Family #9's cutoff analysis is in progress; every other
+family below remains proposal-only, not yet built. Responds to "FFRE
+Dataset Trait Taxonomy — Reconciled Draft" (90
 hypothesis families, 1658 trait entries, approved as the authoritative
 hypothesis inventory). This document maps every one of the 90 families
 to this repository's REAL, VERIFIED data inventory, assigns each to one
@@ -792,8 +794,15 @@ reviewable slices, not all at once.**
   transaction/context subtypes are a later, separate addition.
   Full suite as of slice 2a: 692/692 passing, no regressions.
 - **Slice 2b** (family #7 — prior-season finish, with the required
-  raw/ADP-conditioned/market-pricing three-part analysis design): not
-  yet built.
+  raw/ADP-conditioned/market-pricing three-part analysis design):
+  **BUILT** — `lib/dataset2/prior_finish_traits.py` (feature
+  construction only), `lib/dataset2/prior_finish_analysis.py` (the
+  three separate analysis functions), 21 new tests. A shared
+  `lib/dataset2/common.py` (`validate_columns()`, `lag_join()`) was
+  extracted from slices 1/2a during this slice to avoid a third/fourth
+  duplicate of identical logic — a mechanical refactor, re-verified
+  against slices 1/2a's existing tests before proceeding, no behavior
+  change. Full suite as of slice 2b: 719/719 passing, no regressions.
 - **#9** (partial-season splits): NOT yet implemented — per your
   instruction, the minimum-sample/minimum-opportunity cutoffs must be
   proposed from real data and approved before any split logic is
@@ -805,20 +814,26 @@ reviewable slices, not all at once.**
 Research Priority uses the S/A/B hierarchy from §4.5 — a SEPARATE axis
 from Implementation Tier, not a re-statement of it.
 
-**What "BUILT" means for slice 1, and what it doesn't (2026-07).** The
-19 tests prove **implementation correctness only** — the derivation
-logic (experience arithmetic, per-team kickoff-date age, join/rename
-behavior, z-scores, BMI, missingness handling) is verified against
-small, hand-constructed synthetic fixtures with known, hand-checked
-expected outputs. They say nothing about **real-data integration or
-coverage** — this module has never been run against the real
-`players.csv`/`schedules` population in this environment (that data
-isn't cached in this sandbox; real fetches go through the established
-GitHub Actions path per CLAUDE.md). Those are two different claims,
-and only the first is currently true.
+**What "BUILT" means for every slice so far, and what it doesn't
+(2026-07).** All tests across slices 1/2a/2b prove **implementation
+correctness only** — derivation and stratification logic verified
+against small, hand-constructed synthetic fixtures with known,
+hand-checked expected outputs. They say nothing about **real-data
+integration or coverage** — none of these modules has been run against
+the real `players.csv`/`schedules`/master-DB population in this
+environment (that data isn't cached in this sandbox; real fetches go
+through the established GitHub Actions path per CLAUDE.md). Those are
+two different claims, and only the first is currently true for any
+family built so far. Family #7's analysis functions carry an
+ADDITIONAL distinct gap beyond the other modules': even once run
+against real data, their OUTPUT is not itself a validated football
+finding until a human reviews it — the raw/ADP-conditioned/
+market-pricing reports are reproducible computations, not conclusions,
+until that review happens.
 
-**Required integration checkpoint — before slice 1's traits are used
-in any Dataset 2 analysis, run the module against real data and review:**
+**Required integration checkpoint — before any family built so far
+(#1/#2/#4/#6/#8/#39/#44/#7) is used in any Dataset 2 analysis, run
+every module above against real data and review:**
 1. Match rate to `players.csv` (what fraction of the real population
    joins successfully on `player_id`/`gsis_id`)
 2. Missing birth dates (real count/rate, and whether concentrated in
@@ -834,6 +849,22 @@ in any Dataset 2 analysis, run the module against real data and review:**
 7. Impossible values — negative experience, implausible ages
    (e.g. well under 20 or over 50), and heights/weights/BMI outside a
    plausible human-football-player range
+8. (slice 2a) Real `ppg_trend_2yr_slope`/`ppg_trend_3yr_slope`
+   distributions by position/era, and the real share of rows null due
+   to insufficient history (rookies/sophomores) vs. any unexpected gap
+9. (slice 2a) Real `changed_team` base rate by position/era, and
+   confirmation the rate is plausible (not inflated by a team-code
+   inconsistency, e.g. relocated/renamed franchises)
+10. (slice 2b) Real `prior_overall_finish`/`prior_positional_finish`/
+    `prior_ppg` coverage and distribution by position/era
+11. (slice 2b) Once run against real data, a human review of
+    `adp_conditioned_prior_finish_report()`'s actual output — cell
+    counts, whether `DATASET2_ANALYSIS_MIN_CELL_SAMPLE_SIZE=10` turns
+    out to be a sensible real threshold or needs revisiting, and
+    whether the quartile-collapsing limitation noted in
+    `prior_finish_analysis.py`'s own docstring (tied prior-finish
+    values shrinking a stratum below 4 real bins) materially affects
+    real cells
 
 This checkpoint is a required step of pipeline integration (the
 not-yet-built step that wires this module into a numbered script
@@ -932,8 +963,26 @@ satisfied.
 - Leakage: None
 - Decision needed: none
 
-**#7 — Previous-season finish — ANALYSIS DESIGN SETTLED (2026-07,
-approved), not yet run (family isn't built yet)**
+**#7 — Previous-season finish — BUILT (2026-07): feature construction
++ analysis functions, NOT yet run on real data**
+- Implementation: `lib/dataset2/prior_finish_traits.py::build_prior_finish_traits()`
+  builds `prior_overall_finish`/`prior_positional_finish`/`prior_ppg`
+  ONLY — no rate/report logic. `lib/dataset2/prior_finish_analysis.py`
+  holds the three required, structurally separate analysis functions
+  (`raw_prior_finish_report()`, `adp_conditioned_prior_finish_report()`,
+  `prior_finish_vs_current_adp_report()`) — feature construction and
+  empirical analysis are two different modules, per your instruction
+  to keep them separate. Each analysis function accepts a `finish_col`
+  parameter so overall finish, positional finish, and PPG can each be
+  tested independently, exactly as instructed. 21 tests (4 + 17)
+  verify the STRATIFICATION LOGIC (ADP-conditioned genuinely
+  stratifies by position × ADP-round-bucket × era rather than pooling;
+  small cells are flagged; the market-pricing function never requires
+  the Star label) against synthetic fixtures — **no real historical
+  data has been run through any of these functions yet**, so no
+  empirical finding about prior finish exists. That's a required,
+  separate next step (§6's integration checkpoint, extended below to
+  cover this module too).
 - Initial traits: prior-season overall finish, prior-season positional
   finish rank, and prior-season PPG (all three, not just positional
   finish as the earlier draft scoped it — per your instruction to test

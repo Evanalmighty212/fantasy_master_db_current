@@ -71,6 +71,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+from lib.dataset2.common import validate_columns
 
 POPULATION_REQUIRED_COLUMNS = ("season", "player_id", "position", "team")
 PLAYERS_REQUIRED_COLUMNS = (
@@ -103,12 +104,6 @@ OUTPUT_COLUMNS = (
     "weight_lbs",
     "body_size_bmi",
 )
-
-
-def _validate_columns(df: pd.DataFrame, required, label: str) -> None:
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(f"{label} is missing required columns: {missing}")
 
 
 def _week1_kickoff_by_team(schedule_df: pd.DataFrame, season: int) -> dict:
@@ -179,9 +174,9 @@ def build_experience_age_draft_traits(
     in OUTPUT_COLUMNS. Every row in `population` is preserved in the
     output -- see this module's docstring for the missingness policy.
     """
-    _validate_columns(population, POPULATION_REQUIRED_COLUMNS, "population")
-    _validate_columns(players_df, PLAYERS_REQUIRED_COLUMNS, "players_df")
-    _validate_columns(schedule_df, SCHEDULE_REQUIRED_COLUMNS, "schedule_df")
+    validate_columns(population, POPULATION_REQUIRED_COLUMNS, "population")
+    validate_columns(players_df, PLAYERS_REQUIRED_COLUMNS, "players_df")
+    validate_columns(schedule_df, SCHEDULE_REQUIRED_COLUMNS, "schedule_df")
 
     out = population[list(POPULATION_REQUIRED_COLUMNS)].drop_duplicates().copy()
 
