@@ -1,12 +1,14 @@
 # Dataset 2 Trait Roadmap — APPROVED, first implementation wave underway
 
 **Status: Roadmap and first-wave decisions APPROVED 2026-07. Families
-#1/#2/#4/#6 (the players.csv cluster) are IMPLEMENTED** in
-`lib/dataset2/experience_age_draft.py` (tests:
-`tests/test_dataset2_experience_age_draft.py`) — see each family's
-entry in §6 for build detail. Every other family below remains
-proposal-only, not yet built. Responds to "FFRE Dataset Trait
-Taxonomy — Reconciled Draft" (90
+#1/#2/#4/#6 (`lib/dataset2/experience_age_draft.py`) and #8/#39/#44
+(`lib/dataset2/prior_season_traits.py`) are IMPLEMENTED** — see each
+family's entry in §6 for build detail and the required real-data
+integration checkpoint (implementation correctness and real-data
+validation are tracked as two separate, not-yet-both-satisfied claims
+— see §6). Family #7 and family #9's cutoff analysis are in progress;
+every other family below remains proposal-only, not yet built.
+Responds to "FFRE Dataset Trait Taxonomy — Reconciled Draft" (90
 hypothesis families, 1658 trait entries, approved as the authoritative
 hypothesis inventory). This document maps every one of the 90 families
 to this repository's REAL, VERIFIED data inventory, assigns each to one
@@ -778,17 +780,30 @@ no verified historical depth.*
 split of 86, and the identified split of 88 (2026-07).** Family #49 is
 handled separately as mandatory infrastructure, not a build-and-test
 family (see its entry below). **Implementation is underway in small,
-reviewable slices, not all at once.** Slice 1 (families #1, #2, #4,
-#6 — the "players.csv cluster": every one of them derives purely from
-`players.csv` + `schedules`, zero new acquisition) is **BUILT** —
-`lib/dataset2/experience_age_draft.py`,
-`tests/test_dataset2_experience_age_draft.py` (19 tests, all passing;
-full suite 678/678 passing, no regressions). Families #7, #8, #9, #39,
-#44 (master-DB/weekly-derived) and #10/#86-split/#88-split
-(depth-chart-derived, needs the leakage-timing verification) are
-approved but NOT yet built — planned as subsequent slices. Research
-Priority uses the S/A/B hierarchy from §4.5 — a SEPARATE axis from
-Implementation Tier, not a re-statement of it.
+reviewable slices, not all at once.**
+- **Slice 1** (families #1, #2, #4, #6 — the "players.csv cluster"):
+  **BUILT** — `lib/dataset2/experience_age_draft.py`,
+  `tests/test_dataset2_experience_age_draft.py` (19 tests).
+- **Slice 2a** (families #8, #39, #44 — the "master-DB self-join
+  cluster," strictly-lagged season-over-season derivations): **BUILT**
+  — `lib/dataset2/prior_season_traits.py`,
+  `tests/test_dataset2_prior_season_traits.py` (12 tests). #44 is the
+  plain binary `changed_team` flag only, per the approved sequencing —
+  transaction/context subtypes are a later, separate addition.
+  Full suite as of slice 2a: 692/692 passing, no regressions.
+- **Slice 2b** (family #7 — prior-season finish, with the required
+  raw/ADP-conditioned/market-pricing three-part analysis design): not
+  yet built.
+- **#9** (partial-season splits): NOT yet implemented — per your
+  instruction, the minimum-sample/minimum-opportunity cutoffs must be
+  proposed from real data and approved before any split logic is
+  written. See the cutoff analysis below (not yet run at the time this
+  line was written — check its own subsection for status).
+- **#10/#86-split/#88-split** (depth-chart-derived, needs the
+  leakage-timing verification): approved but not yet built.
+
+Research Priority uses the S/A/B hierarchy from §4.5 — a SEPARATE axis
+from Implementation Tier, not a re-statement of it.
 
 **What "BUILT" means for slice 1, and what it doesn't (2026-07).** The
 19 tests prove **implementation correctness only** — the derivation
@@ -954,14 +969,18 @@ approved), not yet run (family isn't built yet)**
      Star/bust outcome, and must be reported as its own result, not
      folded into finding #2.
 
-**#8 — Multi-year production trend**
+**#8 — Multi-year production trend — BUILT (2026-07)**
+- Implementation: `lib/dataset2/prior_season_traits.py::build_prior_season_traits()`,
+  columns `ppg_trend_2yr_slope`/`ppg_trend_3yr_slope` — a real OLS
+  slope over the non-null lag points in each window; fewer than 2 real
+  points (rookie/sophomore) yields null, never a fabricated slope
 - Initial trait: 2-3 year rolling trend/slope in `ppg_ppr`; 3-year
   variant naturally has fewer eligible rows at career starts
 - Source/seasons: `fantasy_points_ppr`, `ppg_ppr` — full
 - 2A/2B: Both
 - Research priority: **A** — real, plausible incremental signal
   (trajectory beyond a single point-in-time snapshot)
-- Burden: Low (derived computation)
+- Burden: Low (derived computation) — DONE
 - Leakage: None
 - Decision needed: none
 
@@ -990,19 +1009,23 @@ approved), not yet run (family isn't built yet)**
 - Decision needed: none beyond setting the exact minimum-sample/
   minimum-opportunity floors at build time
 
-**#39 — Prior-season availability (durability)**
+**#39 — Prior-season availability (durability) — BUILT (2026-07)**
+- Implementation: same module, column `prior_season_games_played`
 - Initial trait: games played in the prior season (already available)
 - Source/seasons: `games_played` — full
 - 2A/2B: Both
 - Research priority: **A** — durability persistence is real but
   typically a modest effect size in fantasy research, not a strong
   standalone differentiator
-- Burden: None
+- Burden: None — DONE
 - Leakage: None
 - Decision needed: none
 
-**#44 — Player changed teams — sequencing APPROVED (2026-07), not yet
-built**
+**#44 — Player changed teams — sequencing APPROVED (2026-07) — BUILT
+(binary flag only)**
+- Implementation: same module, column `changed_team` — null for a
+  player's first season (no prior team to compare against), never
+  False; a real test guards this (`TestChangedTeam::test_rookie_is_null_not_false`)
 - Initial trait: binary team-change flag, `team` season N vs. N-1
 - Source/seasons: `team` — full
 - 2A/2B: Both
@@ -1010,15 +1033,16 @@ built**
   trade into a better opportunity, a trade into worse one, and
   unrestricted free agency are very different situations bundled into
   one binary flag as specified)
-- Burden: None
+- Burden: None — DONE
 - Leakage: None
-- Decision needed: **RESOLVED 2026-07** — build the plain binary
-  `changed_team` flag first (matches the taxonomy's own family
-  definition, per the "don't silently reinterpret" rule); transaction
-  and context subtypes (trade vs. free agency, opportunity direction)
-  are added only afterward, using documented source coverage, and must
-  not delay the binary trait. Consistent with how #45/#46 (teammate
-  departures/additions) are already scoped as downstream refinements.
+- Decision needed: **RESOLVED 2026-07** — plain binary `changed_team`
+  flag built first (matches the taxonomy's own family definition, per
+  the "don't silently reinterpret" rule); transaction and context
+  subtypes (trade vs. free agency, opportunity direction) are added
+  only afterward, using documented source coverage, and must not delay
+  the binary trait, which is already done. Consistent with how #45/#46
+  (teammate departures/additions) are already scoped as downstream
+  refinements.
 
 **#49 — Absolute ADP — ROLE SETTLED (2026-07, approved), not a Tier-1
 "trait to test" in the same sense as the others**
