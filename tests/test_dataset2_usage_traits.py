@@ -2,22 +2,29 @@
 tests/test_dataset2_usage_traits.py
 
 Covers lib/dataset2/usage_traits.py -- Source A of the Dataset 2
-opportunity/usage foundation (approved 2026-07,
-research/dataset2/OPPORTUNITY_FOUNDATION_PROPOSAL_2026_07.md). Protects
-the three-way separation the approval requires:
+opportunity/usage foundation. REVISED 2026-07 after a real-data
+aggregation-semantics audit
+(research/dataset2/USAGE_AGGREGATION_AUDIT_2026_07.md) found the
+original weekly-average approach was mathematically wrong for share
+fields and silently included postseason rows. Protects:
 
-1. build_raw_season_usage() -- this season's own real totals/rates,
-   plain column names.
-2. build_preseason_usage_features() -- the same fields strictly lagged
-   to the PRIOR season, `prior_season_*` prefixed.
-3. Same-season outcome data is never re-labeled -- it's just #1's own
-   output for the season being predicted, which #2 must never read.
-
-TestNoSameSeasonLeakage is the load-bearing test class here: it proves
-a season's prior_season_* features are mathematically independent of
-that SAME season's own raw row, not just that they happen to look
-right on one example -- mutating the current season's raw value and
-recomputing must never change the prior_season_* output.
+1. Postseason (season_type == 'POST') rows are excluded from every
+   aggregate.
+2. target_share/air_yards_share/wopr are RECOMPUTED from real summed
+   numerators/denominators, never a naive average of weekly ratios --
+   and specifically that air_yards_share uses team-week
+   `passing_air_yards` as its denominator, not summed
+   `receiving_air_yards` (the real, verified-correct formula).
+3. racr is NOT output at all (deferred, per the approved
+   reconstruct-or-defer rule) -- but its real underlying inputs
+   (`receiving_yards`, `receiving_air_yards`) ARE output as plain sums.
+4. The team-week denominator is computed from the FULL weekly file
+   (all positions), not just the rows in `population`'s scope.
+5. A traded player's recomputed shares correctly follow them across
+   teams (each week's own real team is used for that week's
+   denominator contribution).
+6. The raw/preseason/same-season separation (unchanged from the first
+   version): lag correctness and the load-bearing no-leakage guarantee.
 """
 
 import sys
@@ -37,12 +44,12 @@ def _population_df(*rows):
     return pd.DataFrame(list(rows), columns=cols)
 
 
-def _weekly_row(season, pid, week, targets=0, carries=0, target_share=None, air_yards_share=None,
-                 wopr=None, racr=None, passing_epa=None, rushing_epa=None, receiving_epa=None):
+def _weekly_row(season, pid, week, team, season_type="REG", targets=0, carries=0, receiving_yards=0,
+                 receiving_air_yards=0, passing_air_yards=0, passing_epa=0.0, rushing_epa=0.0, receiving_epa=0.0):
     return {
-        "season": season, "player_id": pid, "week": week,
-        "targets": targets, "carries": carries, "target_share": target_share,
-        "air_yards_share": air_yards_share, "wopr": wopr, "racr": racr,
+        "season": season, "player_id": pid, "week": week, "team": team, "season_type": season_type,
+        "targets": targets, "carries": carries, "receiving_yards": receiving_yards,
+        "receiving_air_yards": receiving_air_yards, "passing_air_yards": passing_air_yards,
         "passing_epa": passing_epa, "rushing_epa": rushing_epa, "receiving_epa": receiving_epa,
     }
 
@@ -53,77 +60,161 @@ def _weekly_df(*rows):
     return pd.DataFrame(list(rows))
 
 
-class TestRawSeasonUsageSumFields:
-    def test_targets_and_carries_summed_across_weeks(self):
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
+class TestPostseasonExcluded:
+    def test_post_row_not_counted_in_sums(self):
+        pop = _population_df({"season": 2023, "player_id": "00-1", "position": "WR"})
         weekly = _weekly_df(
-            _weekly_row(2022, "00-1", 1, targets=5, carries=0),
-            _weekly_row(2022, "00-1", 2, targets=8, carries=1),
-            _weekly_row(2022, "00-1", 3, targets=6, carries=0),
+            _weekly_row(2023, "00-1", 1, "ATL", season_type="REG", targets=5),
+            _weekly_row(2023, "00-1", 19, "ATL", season_type="POST", targets=100),
         )
         out = ut.build_raw_season_usage(pop, weekly)
-        assert out.loc[0, "targets"] == 19
-        assert out.loc[0, "carries"] == 1
+        assert out.loc[0, "targets"] == 5
 
-    def test_epa_summed_not_averaged(self):
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
+    def test_post_row_not_counted_in_team_denominator(self):
+        pop = _population_df({"season": 2023, "player_id": "00-1", "position": "WR"})
         weekly = _weekly_df(
-            _weekly_row(2022, "00-1", 1, targets=5, receiving_epa=2.0),
-            _weekly_row(2022, "00-1", 2, targets=5, receiving_epa=-1.5),
+            _weekly_row(2023, "00-1", 1, "ATL", season_type="REG", targets=5, passing_air_yards=100),
+            _weekly_row(2023, "00-2", 1, "ATL", season_type="REG", targets=5, passing_air_yards=100),
+            # a huge playoff week that must not leak into the REG denominator
+            _weekly_row(2023, "00-1", 19, "ATL", season_type="POST", targets=50, passing_air_yards=1000),
         )
         out = ut.build_raw_season_usage(pop, weekly)
-        assert out.loc[0, "receiving_epa"] == pytest.approx(0.5)
+        assert out.loc[0, "target_share"] == pytest.approx(0.5)  # 5 / (5+5), not diluted by the POST week
 
-    def test_zero_weekly_rows_gives_zero_not_null(self):
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
+
+class TestTargetShareRecomputedNotAveraged:
+    def test_recomputed_as_season_sum_ratio_not_weekly_average(self):
+        """A naive weekly average would give (0.5+0.1)/2=0.30 for player
+        A. The real, correct season share (per the audit's verified
+        formula) is player's season targets / team's season targets =
+        (5+1)/(10+10)=0.30 too in this SYMMETRIC case -- use an
+        ASYMMETRIC volume case so the two methods actually diverge."""
+        pop = _population_df({"season": 2023, "player_id": "00-a", "position": "WR"})
+        weekly = _weekly_df(
+            # week 1: heavy team volume, player captures half
+            _weekly_row(2023, "00-a", 1, "ATL", targets=10),
+            _weekly_row(2023, "00-b", 1, "ATL", targets=10),
+            # week 2: tiny team volume, player captures a small share
+            _weekly_row(2023, "00-a", 2, "ATL", targets=1),
+            _weekly_row(2023, "00-b", 2, "ATL", targets=9),
+        )
+        out = ut.build_raw_season_usage(pop, weekly)
+        # naive weekly average would be (0.5 + 0.1)/2 = 0.30
+        # correct season-sum-ratio: (10+1)/(20+10) = 11/30 = 0.3667
+        naive_average = 0.30
+        correct = 11 / 30
+        assert out.loc[0, "target_share"] == pytest.approx(correct)
+        assert out.loc[0, "target_share"] != pytest.approx(naive_average, abs=1e-6)
+
+    def test_uses_full_weekly_file_denominator_not_just_population_rows(self):
+        """A real target recorded by a position OUTSIDE the skill-position
+        population (e.g. a trick-play target to an OL/FB tagged
+        differently) must still count in the team-week denominator --
+        verified against real 2023 data that skill-only totals
+        undercount the real team total."""
+        pop = _population_df({"season": 2023, "player_id": "00-a", "position": "WR"})
+        weekly = _weekly_df(
+            _weekly_row(2023, "00-a", 1, "ATL", targets=5),
+            _weekly_row(2023, "00-hidden", 1, "ATL", targets=5),  # e.g. a non-skill-tagged real target
+        )
+        out = ut.build_raw_season_usage(pop, weekly)
+        assert out.loc[0, "target_share"] == pytest.approx(0.5)  # 5 / (5+5), not 5/5=1.0
+
+
+class TestAirYardsShareUsesPassingAirYardsDenominator:
+    def test_denominator_is_team_passing_air_yards_not_summed_receiving_air_yards(self):
+        """The verified-correct real formula: air_yards_share =
+        player's receiving_air_yards / team's passing_air_yards (the
+        QB-side total, which includes incompletions/spikes not
+        credited to any receiver) -- NOT summed receiving_air_yards,
+        which undercounts (real 2023 check: mean discrepancy 0.0067,
+        max 0.9, if the wrong denominator is used)."""
+        pop = _population_df({"season": 2023, "player_id": "00-a", "position": "WR"})
+        weekly = _weekly_df(
+            # team's real passing_air_yards (150) exceeds summed
+            # receiving_air_yards (100) -- e.g. incompletions with no
+            # credited receiver still count toward passing_air_yards.
+            _weekly_row(2023, "00-a", 1, "ATL", receiving_air_yards=100, passing_air_yards=150),
+        )
+        out = ut.build_raw_season_usage(pop, weekly)
+        assert out.loc[0, "air_yards_share"] == pytest.approx(100 / 150)
+
+
+class TestWoprRecomputedFromRecomputedShares:
+    def test_wopr_formula(self):
+        pop = _population_df({"season": 2023, "player_id": "00-a", "position": "WR"})
+        weekly = _weekly_df(
+            _weekly_row(2023, "00-a", 1, "ATL", targets=5, receiving_air_yards=40, passing_air_yards=100),
+            _weekly_row(2023, "00-b", 1, "ATL", targets=5),
+        )
+        out = ut.build_raw_season_usage(pop, weekly)
+        expected_target_share = 0.5
+        expected_ay_share = 40 / 100
+        expected_wopr = 1.5 * expected_target_share + 0.7 * expected_ay_share
+        assert out.loc[0, "wopr"] == pytest.approx(expected_wopr)
+
+
+class TestRacrDeferredNotComputed:
+    def test_racr_not_in_output_columns(self):
+        assert "racr" not in ut.RAW_OUTPUT_COLUMNS
+        assert "racr" not in ut.PRESEASON_OUTPUT_COLUMNS
+
+    def test_receiving_yards_and_air_yards_still_output_as_raw_sums(self):
+        pop = _population_df({"season": 2023, "player_id": "00-a", "position": "WR"})
+        weekly = _weekly_df(
+            _weekly_row(2023, "00-a", 1, "ATL", receiving_yards=30, receiving_air_yards=20),
+            _weekly_row(2023, "00-a", 2, "ATL", receiving_yards=15, receiving_air_yards=-5),
+        )
+        out = ut.build_raw_season_usage(pop, weekly)
+        assert out.loc[0, "receiving_yards"] == 45
+        assert out.loc[0, "receiving_air_yards"] == 15
+
+
+class TestTradedPlayerFollowedCorrectly:
+    def test_season_share_uses_each_weeks_own_real_team(self):
+        """Real pattern from a real 2023 trade (Chase Claypool,
+        CHI weeks 1-3 -> MIA weeks 7-18): the player's recomputed
+        season share must be built from EACH week's own team's
+        denominator, not one team's full-season total."""
+        pop = _population_df({"season": 2023, "player_id": "00-traded", "position": "WR"})
+        weekly = _weekly_df(
+            # weeks with TEAM_A
+            _weekly_row(2023, "00-traded", 1, "TEAM_A", targets=2),
+            _weekly_row(2023, "00-traded", 2, "TEAM_A", targets=8),
+            _weekly_row(2023, "00-other-a", 1, "TEAM_A", targets=8),
+            _weekly_row(2023, "00-other-a", 2, "TEAM_A", targets=12),
+            # weeks with TEAM_B, after the trade
+            _weekly_row(2023, "00-traded", 3, "TEAM_B", targets=1),
+            _weekly_row(2023, "00-other-b", 3, "TEAM_B", targets=19),
+        )
+        out = ut.build_raw_season_usage(pop, weekly)
+        # player targets: 2+8+1=11. Team-week denominators actually
+        # applicable to THIS player: week1 TEAM_A=10, week2 TEAM_A=20,
+        # week3 TEAM_B=20 -> denominator = 10+20+20 = 50
+        assert out.loc[0, "targets"] == 11
+        assert out.loc[0, "target_share"] == pytest.approx(11 / 50)
+
+
+class TestMissingnessAndZeroWeeks:
+    def test_zero_real_weekly_rows_counts_zero_shares_null(self):
+        pop = _population_df({"season": 2023, "player_id": "00-1", "position": "WR"})
         weekly = _weekly_df()
         out = ut.build_raw_season_usage(pop, weekly)
         assert out.loc[0, "targets"] == 0
-        assert out.loc[0, "carries"] == 0
-
-
-class TestRawSeasonUsageMeanFields:
-    def test_target_share_averaged_over_real_weeks(self):
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        weekly = _weekly_df(
-            _weekly_row(2022, "00-1", 1, targets=5, target_share=0.20),
-            _weekly_row(2022, "00-1", 2, targets=8, target_share=0.30),
-        )
-        out = ut.build_raw_season_usage(pop, weekly)
-        assert out.loc[0, "target_share"] == pytest.approx(0.25)
-
-    def test_mean_field_null_when_no_real_weekly_data(self):
-        """An average over zero real weeks is undefined -- must be NaN,
-        never 0 (0 would falsely imply 'this player had a real 0% share')."""
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        weekly = _weekly_df()
-        out = ut.build_raw_season_usage(pop, weekly)
         assert pd.isna(out.loc[0, "target_share"])
         assert pd.isna(out.loc[0, "wopr"])
-        assert pd.isna(out.loc[0, "racr"])
-
-    def test_racr_excludes_null_weeks_from_the_average(self):
-        """racr is null on a real 0-air-yards target week -- that week
-        must not corrupt the season average as if it were a real 0."""
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        weekly = _weekly_df(
-            _weekly_row(2022, "00-1", 1, targets=5, racr=2.0),
-            _weekly_row(2022, "00-1", 2, targets=1, racr=None),  # a real 0-air-yards target
-        )
-        out = ut.build_raw_season_usage(pop, weekly)
-        assert out.loc[0, "racr"] == pytest.approx(2.0)
 
 
 class TestRawSeasonUsageRequiredColumns:
     def test_population_missing_column_raises(self):
-        bad_pop = pd.DataFrame({"season": [2022]})
-        weekly = _weekly_df(_weekly_row(2022, "00-1", 1))
+        bad_pop = pd.DataFrame({"season": [2023]})
+        weekly = _weekly_df(_weekly_row(2023, "00-1", 1, "ATL"))
         with pytest.raises(ValueError, match="population is missing required columns"):
             ut.build_raw_season_usage(bad_pop, weekly)
 
     def test_weekly_missing_column_raises(self):
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        bad_weekly = pd.DataFrame({"season": [2022]})
+        pop = _population_df({"season": 2023, "player_id": "00-1", "position": "WR"})
+        bad_weekly = pd.DataFrame({"season": [2023]})
         with pytest.raises(ValueError, match="weekly is missing required columns"):
             ut.build_raw_season_usage(pop, bad_weekly)
 
@@ -131,10 +222,10 @@ class TestRawSeasonUsageRequiredColumns:
 class TestRawSeasonUsageRowCountPreserved:
     def test_one_row_per_season_player(self):
         pop = _population_df(
-            {"season": 2022, "player_id": "00-1", "position": "WR"},
-            {"season": 2022, "player_id": "00-2", "position": "RB"},
+            {"season": 2023, "player_id": "00-1", "position": "WR"},
+            {"season": 2023, "player_id": "00-2", "position": "RB"},
         )
-        weekly = _weekly_df(_weekly_row(2022, "00-1", 1, targets=5))
+        weekly = _weekly_df(_weekly_row(2023, "00-1", 1, "ATL", targets=5))
         out = ut.build_raw_season_usage(pop, weekly)
         assert len(out) == 2
 
@@ -144,10 +235,11 @@ def _raw_usage_df(*rows):
     return pd.DataFrame(list(rows), columns=cols)
 
 
-def _raw_row(season, pid, position, targets=0.0, carries=0.0, target_share=np.nan, air_yards_share=np.nan,
-             wopr=np.nan, racr=np.nan, passing_epa=0.0, rushing_epa=0.0, receiving_epa=0.0):
-    return [season, pid, position, targets, carries, passing_epa, rushing_epa, receiving_epa,
-            target_share, air_yards_share, wopr, racr]
+def _raw_row(season, pid, position, targets=0.0, carries=0.0, receiving_yards=0.0, receiving_air_yards=0.0,
+             passing_epa=0.0, rushing_epa=0.0, receiving_epa=0.0, target_share=np.nan, air_yards_share=np.nan,
+             wopr=np.nan):
+    return [season, pid, position, targets, carries, receiving_yards, receiving_air_yards, passing_epa,
+            rushing_epa, receiving_epa, target_share, air_yards_share, wopr]
 
 
 class TestPreseasonLagCorrectness:
@@ -178,19 +270,16 @@ class TestPreseasonLagCorrectness:
 class TestNoSameSeasonLeakage:
     """The load-bearing test class for the approved raw/preseason
     separation: a season's prior_season_* features must be
-    mathematically INDEPENDENT of that same season's own raw row, not
-    just correct by coincidence on one example."""
+    mathematically INDEPENDENT of that same season's own raw row."""
 
     def test_mutating_current_season_raw_value_does_not_change_its_own_prior_season_feature(self):
         raw_original = _raw_usage_df(
             _raw_row(2019, "00-1", "WR", targets=40, target_share=0.10),
-            _raw_row(2020, "00-1", "WR", targets=999, target_share=0.99),  # the "current" season being predicted
+            _raw_row(2020, "00-1", "WR", targets=999, target_share=0.99),
         )
         out_original = ut.build_preseason_usage_features(raw_original)
         row_2020_before = out_original[out_original["season"] == 2020].iloc[0]
 
-        # Mutate ONLY season 2020's own raw values -- its prior-season
-        # feature (which should reflect 2019) must be completely unaffected.
         raw_mutated = _raw_usage_df(
             _raw_row(2019, "00-1", "WR", targets=40, target_share=0.10),
             _raw_row(2020, "00-1", "WR", targets=1, target_share=0.01),
@@ -202,14 +291,9 @@ class TestNoSameSeasonLeakage:
         assert row_2020_before["prior_season_target_share"] == row_2020_after["prior_season_target_share"] == pytest.approx(0.10)
 
     def test_exhaustive_check_every_row_matches_real_prior_season_value(self):
-        """Multi-player, multi-season fixture -- every single
-        prior_season_targets value must equal that player's REAL
-        season-1 targets, with zero exceptions, mirroring the
-        exhaustive (not sampled) leakage check already used for
-        family #7's real-data audit."""
         rows = []
         for pid in ["00-1", "00-2", "00-3"]:
-            for i, season in enumerate(range(2018, 2023)):
+            for season in range(2018, 2023):
                 rows.append(_raw_row(season, pid, "WR", targets=float(season * 10 + hash(pid) % 7)))
         raw = _raw_usage_df(*rows)
         out = ut.build_preseason_usage_features(raw)

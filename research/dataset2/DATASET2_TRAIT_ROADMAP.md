@@ -997,6 +997,13 @@ required and has now been run.
   pre-analysis, per the roadmap's approved decision)
 - Burden: Low — DONE
 - Leakage: None
+- **Status, stated explicitly (2026-07)**: this family is APPROVED, not
+  an open research decision. What remains is one implementation
+  prerequisite — running the real per-team Week-1 kickoff-date
+  computation against real `schedules.csv` data (not yet available in
+  this sandbox) to confirm the already-implemented, already-tested
+  logic behaves correctly on real dates, the same way #1/#4/#6 already
+  were. This is a validation step, not a conceptual question.
 - **Approved decision applied**: age and experience are treated as
   DISTINCT hypotheses, not collapsed or deduplicated before testing.
   `measure_age_experience_collinearity()` in the same module MEASURES
@@ -1347,6 +1354,19 @@ design after a real-data investigation revised the original scope**
   the same proven mechanism as `acquisition_cost.py`. Both paths are
   covered by real regression tests (`TestPreseasonTimingValidation`),
   including a case proving a later-week promotion is never used.
+- **Status, stated explicitly (2026-07)**: this family is APPROVED, not
+  an open research decision — the tie-preserving design itself is
+  settled and implemented. What remains is two implementation
+  prerequisites: (1) running the 2025 snapshot-selection branch against
+  real `schedules.csv` data (not yet available in this sandbox) to
+  prove every real 2025 snapshot used genuinely predates that team's
+  real Week-1 kickoff — the pre-2025 `week == 1` path needs no such
+  check, since it doesn't depend on schedule dates at all; (2) the
+  generalized (beyond-QB) real-data validation is currently limited to
+  the full 2006-2024 pre-2025 population (already run, see
+  `INTEGRATION_AUDIT_2026_07.md`) — the 2025-schema generalization
+  itself is implemented and tested against synthetic fixtures, but not
+  yet run against real 2025 data for the same reason.
 - Decision needed: none — the tie-preserving design is settled and
   implemented
 
@@ -1477,30 +1497,69 @@ Full source investigation, sequencing (A → B → C), and family #9
 partial-window opportunity-floor requirements:
 `research/dataset2/OPPORTUNITY_FOUNDATION_PROPOSAL_2026_07.md`.
 
-**Source A — BUILT (2026-07)**: `lib/dataset2/usage_traits.py`.
-Season-level real aggregates of `targets`/`carries`/`target_share`/
-`air_yards_share`/`wopr`/`racr`/`passing_epa`/`rushing_epa`/
-`receiving_epa`, built directly from the already-cached
-`stats_player_week_{season}.csv` files — zero new acquisition. Per the
-approved design, THREE structurally separate things, never merged:
-`build_raw_season_usage()` (this season's own real totals, plain
-column names), `build_preseason_usage_features()` (the same fields
-strictly lagged to the PRIOR season only, `prior_season_*` prefixed —
-the only output safe to use as a preseason predictor), and same-season
-outcome data (simply `build_raw_season_usage()`'s own output for the
-season being predicted — never re-wrapped, the naming convention is
-the whole safeguard). 16 tests, including an exhaustive (not sampled)
-leakage-proof check and a test that mutating a season's own raw value
-never changes that season's `prior_season_*` output. Real-data spot
-check (2020-2023 population, real `stats_player_week` files): row
-count preserved exactly (2,419 in, 2,419 out), 0% missingness for
-`targets`/`target_share` in this real slice, and a real player's 2022
-raw `targets` (193) exactly matches their 2023 row's
-`prior_season_targets` — confirmed end-to-end against real data, not
-just synthetic fixtures. Unlocks the base variables for #15,
-#17, #20, #22 (target/carry half), #18's core inputs, and #88's
-touch-count sub-signal — no derived interaction, ratio, or threshold
-beyond the raw aggregates built yet, per the approved scope.
+**Source A — BUILT (2026-07), REVISED after a real-data
+aggregation-semantics audit**: `lib/dataset2/usage_traits.py`. Full
+audit report: `research/dataset2/USAGE_AGGREGATION_AUDIT_2026_07.md`.
+
+The FIRST version (16 tests, committed as `cdb3ede`) aggregated
+`target_share`/`air_yards_share`/`wopr` as a naive weekly AVERAGE and
+did not filter real postseason rows out of the source weekly file —
+both were REAL, CONFIRMED problems, not theoretical concerns: real
+postseason rows are present in `stats_player_week_{season}.csv`
+(837 in 2023 alone) and would have silently inflated a "season"
+aggregate; a naive weekly average of a share metric is not the same
+number as the real season share and does not match nflverse's own
+convention. The REVISED version (20 tests) instead:
+- Filters to `season_type == 'REG'` internally.
+- RECOMPUTES `target_share`/`air_yards_share`/`wopr` from real summed
+  numerators and denominators (player's season sum ÷ the real
+  team-week totals for the specific weeks that player played, looked
+  up via that week's own real team — correctly follows a mid-season
+  trade). Verified against real 2023 data to reconcile EXACTLY
+  (float-precision level) against nflverse's own real weekly values —
+  including finding and fixing that `air_yards_share`'s real
+  denominator is team-week `passing_air_yards`, not summed
+  `receiving_air_yards` as first assumed.
+- DEFERS `racr` entirely (not output) — real investigation found its
+  exact per-row formula could not be reliably reconstructed from
+  available data; `receiving_yards`/`receiving_air_yards` (its real
+  underlying inputs) are preserved as plain sums instead, per the
+  approved reconstruct-or-defer rule.
+- Requires the FULL raw weekly file (all positions) as input, not just
+  skill positions — verified real 2023 data that skill-only team
+  totals silently undercount (135 real targets, 66 real
+  passing-air-yards of real season volume come from non-skill-tagged
+  rows).
+
+`passing_epa`/`rushing_epa`/`receiving_epa` were explicitly re-verified
+as real per-week TOTALS (not per-play averages) — summing them across
+the season was already correct and unchanged by this revision.
+
+Per the approved design, THREE structurally separate things, never
+merged: `build_raw_season_usage()` (this season's own real totals,
+plain column names), `build_preseason_usage_features()` (the same
+fields strictly lagged to the PRIOR season only, `prior_season_*`
+prefixed — the only output safe to use as a preseason predictor), and
+same-season outcome data (simply `build_raw_season_usage()`'s own
+output for the season being predicted — never re-wrapped, the naming
+convention is the whole safeguard). Includes an exhaustive (not
+sampled) leakage-proof check and a test that mutating a season's own
+raw value never changes that season's `prior_season_*` output — both
+unaffected by this revision. Real-data validation: a real 2023 traded
+player (Chase Claypool, CHI weeks 1-3 → MIA weeks 7-18) hand-verified
+against the module's real output to full precision — see the audit doc
+for the full table. Unlocks the base variables for #15, #17, #20, #22
+(target/carry half), #18's core inputs, and #88's touch-count
+sub-signal — no derived interaction or threshold beyond the raw
+aggregates built yet, per the approved scope.
+
+**Test count, fully reconciled**: 655 (real, git-worktree-verified
+pre-Dataset-2 baseline) + 125 (8 pre-audit Dataset 2 test files) + 20
+(NOT a new test file — `test_no_isolated_research_dependency.py`, a
+pre-existing repo-wide guardrail that auto-parametrizes 2 checks per
+`lib/`/`scripts/` file and grew exactly in step with the 10 new
+`lib/dataset2/*.py` files this session added) + 4 (this audit's net
+test increase) = **804**, exact, no gap.
 
 **Source B (`snap_counts`, real coverage 2013-2025 — 2012 confirmed
 empty) and Source C (`pbp_participation`, real coverage 2016-2025,
