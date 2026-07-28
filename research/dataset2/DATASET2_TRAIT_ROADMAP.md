@@ -1471,6 +1471,49 @@ have real uncertainty, not settled findings:
 
 ---
 
+## 6.6. Second wave: opportunity/usage foundation (approved 2026-07)
+
+Full source investigation, sequencing (A → B → C), and family #9
+partial-window opportunity-floor requirements:
+`research/dataset2/OPPORTUNITY_FOUNDATION_PROPOSAL_2026_07.md`.
+
+**Source A — BUILT (2026-07)**: `lib/dataset2/usage_traits.py`.
+Season-level real aggregates of `targets`/`carries`/`target_share`/
+`air_yards_share`/`wopr`/`racr`/`passing_epa`/`rushing_epa`/
+`receiving_epa`, built directly from the already-cached
+`stats_player_week_{season}.csv` files — zero new acquisition. Per the
+approved design, THREE structurally separate things, never merged:
+`build_raw_season_usage()` (this season's own real totals, plain
+column names), `build_preseason_usage_features()` (the same fields
+strictly lagged to the PRIOR season only, `prior_season_*` prefixed —
+the only output safe to use as a preseason predictor), and same-season
+outcome data (simply `build_raw_season_usage()`'s own output for the
+season being predicted — never re-wrapped, the naming convention is
+the whole safeguard). 16 tests, including an exhaustive (not sampled)
+leakage-proof check and a test that mutating a season's own raw value
+never changes that season's `prior_season_*` output. Real-data spot
+check (2020-2023 population, real `stats_player_week` files): row
+count preserved exactly (2,419 in, 2,419 out), 0% missingness for
+`targets`/`target_share` in this real slice, and a real player's 2022
+raw `targets` (193) exactly matches their 2023 row's
+`prior_season_targets` — confirmed end-to-end against real data, not
+just synthetic fixtures. Unlocks the base variables for #15,
+#17, #20, #22 (target/carry half), #18's core inputs, and #88's
+touch-count sub-signal — no derived interaction, ratio, or threshold
+beyond the raw aggregates built yet, per the approved scope.
+
+**Source B (`snap_counts`, real coverage 2013-2025 — 2012 confirmed
+empty) and Source C (`pbp_participation`, real coverage 2016-2025,
+play-level, real 2023 schema fork found) — NOT yet built.** Per the
+approved sequencing, Source C's larger participation transformation
+does not begin until Source A and B are reviewed. Family #9's
+partial-window opportunity floors (final-N-games, starter-status,
+before/after injury or promotion/trade, half-split) are explicitly
+NOT selected yet — real candidate proposals for those come after this
+Source A review, not before.
+
+---
+
 ## 7. What this document does NOT do
 
 - Does not write, modify, or run any code.
