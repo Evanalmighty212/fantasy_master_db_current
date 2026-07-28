@@ -32,6 +32,37 @@ inventory" below) — not assumed, not carried over from memory, and in
 several places **correcting** claims in the existing
 `docs/LEAGUE_WINNER_TRAITS_SPEC.md`.
 
+### Canonical family numbering — verified 2026-07 against the source
+taxonomy directly
+
+This roadmap's family numbers were re-checked directly against
+`FFRE Dataset Trait Taxonomy — Reconciled Draft` (the original source
+document, not this roadmap's own prior notes) after a chat message
+referenced several opportunity/usage families by the wrong number. The
+taxonomy document is the canonical source; this roadmap's numbers
+**already matched it exactly** — the mismatch was in that one chat
+message, not in this roadmap. Recorded here as a permanent reference so
+it doesn't recur, per the standing rule: **when a family's number and
+name conflict, the family NAME is authoritative until reconciled** —
+never silently renumber a family to match a number that was used
+incorrectly elsewhere.
+
+Quick lookup for the families most referenced in the opportunity/usage
+work (§6's next wave) — verified directly against the taxonomy's own
+section headers:
+
+| # | Name |
+|---|---|
+| 9 | Partial-season production |
+| 14 | Return-role interpretation |
+| 15 | Target-earning ability |
+| 16 | Route participation |
+| 17 | Air-yard profile |
+| 18 | Receiving efficiency |
+| 20 | Carry profile |
+| 22 | Passing-game role for running backs |
+| 86 | Volume fragility |
+
 ---
 
 ## 1. Relationship to the existing `docs/LEAGUE_WINNER_TRAITS_SPEC.md`
