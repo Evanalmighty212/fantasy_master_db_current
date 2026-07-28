@@ -4,14 +4,19 @@
 #1/#2/#4/#6 (`lib/dataset2/experience_age_draft.py`), #8/#39/#44
 (`lib/dataset2/prior_season_traits.py`), #7
 (`lib/dataset2/prior_finish_traits.py` +
-`lib/dataset2/prior_finish_analysis.py`), and #9's sample-size portion
+`lib/dataset2/prior_finish_analysis.py`), #9's sample-size portion
 (`lib/dataset2/partial_season_traits.py`, minimum-opportunity floor
-still deliberately pending) are IMPLEMENTED** — see each family's
-entry in §6 for build detail and the required real-data integration
-checkpoint (implementation correctness and real-data validation are
-tracked as two separate, not-yet-both-satisfied claims — see §6).
-#10/#86-split/#88-split (depth-chart cluster) are next; every other
-family below remains proposal-only, not yet built. Responds to "FFRE
+still deliberately pending), #10 (`lib/dataset2/depth_chart_traits.py`,
+a tie-preserving design revised from the original scope after a real
+2020/2025 data investigation — see §3f's update note and §6), and
+#86-split/#88-split (`lib/dataset2/fragility_traits.py`, both
+partial builds with explicitly-documented deferred portions) are
+IMPLEMENTED** — see each family's entry in §6 for build detail and the
+required real-data integration checkpoint (implementation correctness
+and real-data validation are tracked as two separate,
+not-yet-both-satisfied claims — see §6). This completes the entire
+approved first implementation wave; every other family in this roadmap
+remains proposal-only, not yet built. Responds to "FFRE
 Dataset Trait Taxonomy — Reconciled Draft" (90
 hypothesis families, 1658 trait entries, approved as the authoritative
 hypothesis inventory). This document maps every one of the 90 families
@@ -231,6 +236,23 @@ family #10 from "moderate burden, 2025 needs a real decision" to "low
 burden, decision already made and validated once — needs generalizing
 beyond the QB-only case." Families #10/#12/#14/Category T's tier
 entries below are updated accordingly.
+
+**UPDATE (2026-07, at actual implementation time)**: the snapshot-
+selection mapping above (team + real Week-1 kickoff date → the right
+`dt`) held up exactly as described and IS what family #10 uses. But a
+SEPARATE, deeper investigation at build time — checking real tie rates
+across all 32 teams' 2020 depth charts, not just one example team —
+found the "combine sensibly via `pos_slot`" characterization above was
+incomplete: the pre-2025 schema's `depth_team` column does NOT give a
+clean ordinal for every position (WR structurally ties ~3 players at
+rank 1; RB/TE tie less often but genuinely, in real committee
+situations), while 2025's `pos_rank` is a strict ordinal that never
+ties, even in those same committee cases. This is a real,
+previously-undiscovered wrinkle beyond the snapshot-timing question
+this section originally resolved — see family #10's entry in §6 for
+the full finding and the tie-preserving design it produced. Not
+correcting the text above (per CLAUDE.md's decision-history
+preservation rule) — recording the refinement here instead.
 
 ### 3g. College data (Section B.5 and all its sub-buckets) is the single largest acquisition-burden cluster
 By raw bullet count, family #5 plus its four sub-buckets (college
@@ -810,8 +832,19 @@ reviewable slices, not all at once.**
   floors exposed separately, minimum-opportunity explicitly pending):
   **BUILT** — `lib/dataset2/partial_season_traits.py`, 17 new tests.
   Full suite as of slice 3: 738/738 passing, no regressions.
-- **#10/#86-split/#88-split** (depth-chart-derived, needs the
-  leakage-timing verification): approved but not yet built.
+- **Slice 4** (family #10, the depth-chart-dependent split of #86,
+  and the age/frame split of #88 — the depth-chart cluster): **BUILT**
+  — `lib/dataset2/depth_chart_traits.py` (19 tests) and
+  `lib/dataset2/fragility_traits.py` (13 tests). Real 2020/2025
+  nflverse data, inspected at build time, revised #10's original
+  binary/ordinal scope into a tie-preserving design — see §3f's update
+  note and #10's entry below for the full real-evidence writeup. Both
+  `common.py` helpers (`kickoff_lookup_table()`,
+  `within_group_zscore()`) were extracted a second/third time in this
+  slice for the same reason as slices 2b/3 — real duplication avoided,
+  not speculative. Full suite as of slice 4: 774/774 passing, no
+  regressions. **This completes the entire approved first
+  implementation wave.**
 
 Research Priority uses the S/A/B hierarchy from §4.5 — a SEPARATE axis
 from Implementation Tier, not a re-statement of it.
@@ -867,6 +900,18 @@ every module above against real data and review:**
     `prior_finish_analysis.py`'s own docstring (tied prior-finish
     values shrinking a stratum below 4 real bins) materially affects
     real cells
+12. (slice 4) Real match rate for `depth_chart_traits.py` across the
+    FULL 2006-2025 population (this design was validated against 2020
+    and 2025 only at build time) — confirm the offensive-personnel
+    filter and tie-rate patterns found in 2020 generalize across other
+    seasons, not just that one
+13. (slice 4) Real distribution of `committee_uncertainty` and
+    `team_qb_uncertainty` by position/era — how often each actually
+    fires, and whether `starter_group_size`/`position_starter_count`
+    ever diverge in an unexpected way (e.g. a position other than
+    QB/RB/TE showing a real, non-WR-structural tie)
+14. (slice 4) Real `body_size_position_z` distribution by position —
+    sanity-check against known real height/weight ranges per position
 
 This checkpoint is a required step of pipeline integration (the
 not-yet-built step that wires this module into a numbered script
@@ -1210,48 +1255,100 @@ satisfied.
      Star label directly, so using ADP as one input among many is
      standard, not circular, in that context specifically).
 
-**#10 — Projected depth-chart position**
-- Initial trait: binary/ordinal starter status (`pos_rank`/`depth_team`
-  == 1) as of the real per-team Week-1 kickoff date
+**#10 — Projected depth-chart position — BUILT (2026-07), tie-preserving
+design after a real-data investigation revised the original scope**
+- Implementation: `lib/dataset2/depth_chart_traits.py::build_depth_chart_traits()`.
+  19 tests. **DESIGN REVISED from the original binary/ordinal framing**
+  after real 2020 and 2025 depth-chart data showed the two schema eras
+  are NOT naturally comparable for every position — see the module's
+  own docstring for the full real-evidence writeup. Settled, approved
+  design:
+  - `depth_chart_native_rank`: the real, UNMODIFIED rank each schema
+    reports (`depth_team` pre-2025, `pos_rank` 2025) — ties preserved
+    exactly as given, never re-ordered by row order, alphabetization,
+    ADP, snaps, or later production.
+  - `depth_chart_status` (starter/backup/deeper): the PRIMARY
+    era-comparable feature, built identically from native rank in both
+    eras — ALL players tied at rank 1 are starters, none ranked ahead
+    of another.
+  - `depth_rank_tied`, `starter_group_size` (real, observed count at
+    rank 1), `position_starter_count` (FIXED structural reference —
+    `config.DATASET2_DEPTH_CHART_STRUCTURAL_STARTER_COUNT`, QB=RB=TE=1,
+    WR=3 — deliberately NOT derived from any team's own observed ties,
+    so a real 2-player RB committee stays distinguishable from WR's
+    routine 3-wide group even though both may share native rank 1).
+  - `depth_chart_schema_era`: labels every row as
+    `historical_tie_preserving` or `2025_vendor_strict_order`, so later
+    analysis can explicitly test whether an effect differs by schema
+    era rather than silently pooling two structurally different
+    sources.
+  - **No pre-2025 WR ordinal rank was built** — the real 2025
+    sequential WR rank is retained as source data (via
+    `depth_chart_native_rank` on 2025 rows only) but is explicitly
+    coverage-limited/deferred for cross-era WR-ordinal analysis until
+    multiple seasons exist or an older compatible source is found.
+  - Offensive-personnel filtering (`formation == 'Offense'` pre-2025,
+    `pos_grp == '3WR 1TE'` 2025) is REQUIRED and verified for all four
+    positions, not just WR — real data confirmed special-teams rows
+    (kick/punt returners, FG-unit players) appear under the same
+    position codes as offensive skill players in both eras.
+- Initial trait: standardized starter/backup/deeper status as of the
+  real per-team Week-1 kickoff date
 - Source/seasons: `depth_charts_{season}.csv`, full 2006-2025 including
-  2025 via the proven mapping (§3f) — reuses/generalizes
-  `apply_rookie_qb_depth_chart_correction()`'s already-validated logic
-  rather than new schema-parsing code
+  2025 via the proven snapshot-selection mapping (§3f) — reuses/
+  generalizes `apply_rookie_qb_depth_chart_correction()`'s
+  already-validated logic
 - 2A/2B: Both
 - Research priority: **S** — one of the more standard, well-supported
   predictive signals in fantasy analysis (starter vs. backup
   projection)
-- Burden: Low (mapping proven, needs generalizing beyond QB-only)
-- Leakage: **REQUIRED verification, not optional (approved 2026-07)**:
-  every depth-chart snapshot actually used to build this trait must be
-  validated as genuinely available before that player-team's real
-  applicable fantasy-draft cutoff (i.e., before that season's Week 1
-  kickoff, per the existing spec's leakage rule) — for BOTH schema eras:
-  the 2025 rolling-`dt` feed (confirm the selected snapshot date is
-  ≤ kickoff, per the mechanism already proven in `acquisition_cost.py`)
-  AND the 2006-2024 `week`-labeled files (confirm only `week == 1` /
-  preseason-appropriate rows are used, not later-week updates that
-  wouldn't have been knowable at draft time). This check must be run
-  and its result recorded before the trait is used in any Dataset 2
-  analysis — not assumed correct because the mapping itself is proven.
-- Decision needed: none beyond running and recording the leakage-timing
-  verification above, which is a required step, not a judgment call
+- Burden: Low — DONE
+- Leakage: **Verification implemented, not just documented** — pre-2025
+  uses exactly `week == 1, game_type == 'REG'`; 2025 selects the latest
+  real snapshot on or before that team's real Week-1 kickoff date, via
+  the same proven mechanism as `acquisition_cost.py`. Both paths are
+  covered by real regression tests (`TestPreseasonTimingValidation`),
+  including a case proving a later-week promotion is never used.
+- Decision needed: none — the tie-preserving design is settled and
+  implemented
 
-**#86 (split, part) — Volume fragility, competition/coaching-
-uncertainty sub-signals**
-- Initial traits: depends on #4/#10/#12 fields once available (e.g.
-  "committee" flagged via depth-chart ambiguity, "QB uncertainty" via
-  #10 applied to the QB position)
-- Source/seasons: same as #10/#12
+**#86 (split, part) — Volume fragility, committee/QB-uncertainty
+sub-signals — BUILT (2026-07), PARTIAL (the #12-dependent portion is
+still deferred)**
+- Implementation: `lib/dataset2/fragility_traits.py::build_volume_fragility_traits()`,
+  columns `committee_uncertainty` (real observed `starter_group_size`
+  exceeding the FIXED structural `position_starter_count` — a genuine
+  committee, never WR's routine 3-wide group) and `team_qb_uncertainty`
+  (broadcast team-wide from a tied-starter QB situation). 13 tests.
+  **The roadmap's original "high competition" sub-signal (via family
+  #12) is still NOT built** — #12 itself is Tier 3, not yet built —
+  this is a disclosed partial build of the family, not the full thing.
+- Initial traits: `committee_uncertainty`, `team_qb_uncertainty` (the
+  #10-dependent portion only)
+- Source/seasons: same as #10
 - 2A/2B: 2B primarily
-- Research priority: **A** — plausible 2B-specific mechanism, but
-  compound (built on top of #10/#12, so its own reliability is capped
-  by theirs until they're validated)
-- Burden: Low once #10 exists
-- Leakage: Same as #10/#12
-- Decision needed: none yet — wait for #10 to be validated first
+- Research priority: **A** — plausible 2B-specific mechanism
+- Burden: Low — DONE for the #10-dependent portion
+- Leakage: Same as #10
+- Decision needed: none for the built portion; #12-dependent expansion
+  waits for #12
 
-**#88 (split, part) — Workload/durability risk, age/frame sub-signals**
+**#88 (split, part) — Workload/durability risk, age/frame sub-signals
+— BUILT (2026-07), workload-gated portion explicitly PENDING**
+- Implementation: `lib/dataset2/fragility_traits.py::build_durability_risk_traits()`,
+  column `body_size_position_z` (BMI z-scored within position, same
+  pattern as #1/#2's z-scores) and `workload_qualified` (always the
+  literal string `"pending"`, same pattern as family #9's
+  `opportunity_qualified`). 13 tests (shared file with #86-split).
+  **Deliberately does NOT build a binary "age+frame risk" flag** —
+  the roadmap's original sub-bullets ("age + HIGH WORKLOAD," "small
+  frame + WORKHORSE role") both need a real touch/target workload
+  proxy this pipeline doesn't retain yet (same Tier-2 dependency as
+  #9/#16/#20), and picking a numeric age/BMI threshold without real
+  data to test it against would be exactly the kind of invented
+  cutoff this project's process has consistently required real-data
+  grounding and approval for (matching #9's own floor-approval
+  process) — not something to invent inline.
 - Initial traits: "age + high prior workload," "small frame + workhorse
   role" — compound flags from #2 (age) × workload proxy × #6 (height/
   weight)
@@ -1262,11 +1359,12 @@ uncertainty sub-signals**
   the weekly-column retention work, not yet done — so this family's
   full form is really a Tier 1/Tier 2 hybrid, flagged here rather than
   silently treated as fully Tier 1)
-- Burden: Low for the age/frame half; the workload half needs the
-  weekly-column retention work noted under Tier 2 (#87/#88 touch-count
-  split)
+- Burden: Low for the age/frame half — DONE; the workload half needs
+  the weekly-column retention work noted under Tier 2 (#87/#88
+  touch-count split)
 - Leakage: None
-- Decision needed: none
+- Decision needed: none for the built portion; workload-gated flag and
+  its exact thresholds wait for real data, same as #9
 
 ---
 

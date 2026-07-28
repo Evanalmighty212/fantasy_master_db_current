@@ -71,7 +71,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from lib.dataset2.common import validate_columns
+from lib.dataset2.common import kickoff_lookup_table, validate_columns, within_group_zscore
 
 POPULATION_REQUIRED_COLUMNS = ("season", "player_id", "position", "team")
 PLAYERS_REQUIRED_COLUMNS = (
@@ -106,55 +106,6 @@ OUTPUT_COLUMNS = (
 )
 
 
-def _week1_kickoff_by_team(schedule_df: pd.DataFrame, season: int) -> dict:
-    """Real per-team Week-1 REG-season kickoff date for `season`, keyed
-    by team code -- same convention already proven in
-    acquisition_cost.apply_rookie_qb_depth_chart_correction() (a real
-    per-team date, not a shared project-wide approximation like
-    "Sept 1"). A team with no Week-1 REG game in `schedule_df` for this
-    season is simply absent from the returned dict -- the caller treats
-    that as "kickoff date unknown" (null downstream), not an error."""
-    week1 = schedule_df[
-        (schedule_df["season"] == season) & (schedule_df["game_type"] == "REG") & (schedule_df["week"] == 1)
-    ]
-    kickoff = {}
-    for _, row in week1.iterrows():
-        gameday = pd.to_datetime(row["gameday"])
-        kickoff[row["home_team"]] = gameday
-        kickoff[row["away_team"]] = gameday
-    return kickoff
-
-
-def _kickoff_lookup_table(schedule_df: pd.DataFrame, seasons) -> pd.DataFrame:
-    """season/team/kickoff_date rows for every season in `seasons`,
-    built by calling _week1_kickoff_by_team() once per season (not once
-    per population row -- that would recompute the same per-season
-    dict thousands of times)."""
-    frames = []
-    for season in sorted(set(seasons)):
-        kickoff = _week1_kickoff_by_team(schedule_df, season)
-        if kickoff:
-            frames.append(
-                pd.DataFrame({"season": season, "team": list(kickoff.keys()), "_kickoff_date": list(kickoff.values())})
-            )
-    if not frames:
-        return pd.DataFrame(columns=["season", "team", "_kickoff_date"])
-    return pd.concat(frames, ignore_index=True)
-
-
-def _within_group_zscore(df: pd.DataFrame, value_col: str, group_col: str) -> pd.Series:
-    """Position-adjusted form: how many standard deviations this row's
-    value_col sits from the mean for its group_col, computed over the
-    population passed in. NaN input propagates to NaN output -- never
-    imputed. A group with zero variance (e.g. a single-row group)
-    produces NaN for that group rather than a divide-by-zero, which is
-    disclosed missingness, not a bug."""
-    grouped = df.groupby(group_col)[value_col]
-    mean = grouped.transform("mean")
-    std = grouped.transform("std").replace(0, np.nan)
-    return (df[value_col] - mean) / std
-
-
 def build_experience_age_draft_traits(
     population: pd.DataFrame, players_df: pd.DataFrame, schedule_df: pd.DataFrame
 ) -> pd.DataFrame:
@@ -187,7 +138,7 @@ def build_experience_age_draft_traits(
     out["experience_years"] = out["season"] - out["rookie_season"]
 
     # --- #2: Age curve -- real per-team Week-1 kickoff date ---
-    kickoff_table = _kickoff_lookup_table(schedule_df, out["season"].unique())
+    kickoff_table = kickoff_lookup_table(schedule_df, out["season"].unique())
     out = out.merge(kickoff_table, on=["season", "team"], how="left")
     out["birth_date"] = pd.to_datetime(out["birth_date"])
     out["age_at_week1_years"] = (out["_kickoff_date"] - out["birth_date"]).dt.days / 365.25
@@ -195,8 +146,8 @@ def build_experience_age_draft_traits(
 
     # --- Joint / interaction / position-adjusted forms (approved 2026-07) ---
     out["age_x_experience"] = out["age_at_week1_years"] * out["experience_years"]
-    out["experience_position_z"] = _within_group_zscore(out, "experience_years", "position")
-    out["age_position_z"] = _within_group_zscore(out, "age_at_week1_years", "position")
+    out["experience_position_z"] = within_group_zscore(out, "experience_years", "position")
+    out["age_position_z"] = within_group_zscore(out, "age_at_week1_years", "position")
 
     # --- #4: NFL draft capital -- nfl_draft_* naming (roadmap §3a) ---
     out = out.rename(

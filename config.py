@@ -847,6 +847,23 @@ DATASET2_ANALYSIS_MIN_CELL_SAMPLE_SIZE = 10
 DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY = 4
 DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY = 3
 
+# Family #10/#86/#88 depth-chart cluster: the STRUCTURAL (expected)
+# number of simultaneous starters per position under the base "3WR
+# 1TE" offensive personnel package -- approved 2026-07
+# (research/dataset2/DATASET2_TRAIT_ROADMAP.md §6, family #10). This
+# is a FIXED reference value, not derived from any specific
+# team-season's observed depth-chart ties -- conflating the two is
+# exactly what this design is meant to avoid (a real 2-player RB
+# committee and the position's normal 1-starter structure must stay
+# distinguishable). The 2025 schema's own `pos_grp` label ("3WR 1TE")
+# directly confirms WR=3/QB=RB=TE=1; the pre-2025 schema has no
+# equivalent explicit personnel-package label, but its own real
+# rank-1 WR ties are near-universal (32/32 teams checked, 2020 season)
+# and consistent with the same base personnel convention, so reusing
+# these same values across both eras is a documented, evidence-based
+# choice, not an assumption carried over unchecked.
+DATASET2_DEPTH_CHART_STRUCTURAL_STARTER_COUNT = {"QB": 1, "RB": 1, "WR": 3, "TE": 1}
+
 
 # --- 2025 MFL ADP: canonical raw value + QB/TE sensitivity-ordering field ---
 # NOT under the SBV_* prefix: this feeds the whole master DB (both
