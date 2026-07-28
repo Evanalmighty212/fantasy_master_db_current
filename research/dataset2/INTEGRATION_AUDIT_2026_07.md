@@ -192,8 +192,8 @@ behavior changed.
 
 ## 4. Methodological decisions requiring approval
 
-### Decision 1 (significant): the WR structural starter-count constant
-does not match most of the real historical data
+### Decision 1 (significant) — RESOLVED 2026-07: the WR structural
+starter-count constant does not match most of the real historical data
 
 `config.DATASET2_DEPTH_CHART_STRUCTURAL_STARTER_COUNT["WR"] = 3` was
 set from a single real 2020 spot-check plus the 2025 schema's own
@@ -213,17 +213,26 @@ still an inaccurate REFERENCE VALUE for roughly the first decade of
 data, which could matter to any future consumer that uses it
 differently (a ratio, or a both-directions deviation flag).
 
-**Options, not resolved here**:
-- (a) Keep the single fixed constant, with this limitation now
-  explicitly documented in `config.py`.
-- (b) Make `position_starter_count` era-varying for WR — requires
-  picking real era boundaries from data, the same kind of
-  real-data-grounded threshold decision as family #9's sample-size
-  floors.
-- (c) Something else you'd prefer.
-
-Not deciding this inline, per the standing rule this whole project has
-followed: no new numeric threshold gets picked without your review.
+**Resolution (2026-07, approved)**: neither option (a) nor (b) above —
+WR is removed from the committee/uncertainty-style interpretation
+entirely, since multiple rank-1 WRs primarily reflect real personnel
+structure, not role uncertainty the way an RB/TE committee does.
+`committee_uncertainty` (the old universal column) is replaced by
+position-scoped fields (`qb_starter_uncertainty`,
+`rb_committee_indicator`, `te_co_starter_indicator` — unaffected,
+QB/RB/TE's structural count of 1 is real and confirmed), a neutral
+`multiple_rank1_players` source fact for every position, and WR-specific
+personnel-structure fields including a REAL, EMPIRICALLY-COMPUTED
+`wr_league_starter_group_size_norm` (the season's actual mode, not a
+fixed constant) — this avoids inventing an era-boundary threshold
+entirely by comparing each season to its own real data. Verified: the
+real norm tracks the actual shift exactly (2.0 every season 2006-2022,
+3.0 from 2023-2024). `DATASET2_DEPTH_CHART_STRUCTURAL_STARTER_COUNT`
+itself is UNCHANGED (still required for `position_starter_count`'s
+output and the QB/RB/TE indicators) — only its former role as WR's
+committee gate was removed. Full detail: `lib/dataset2/fragility_traits.py`'s
+module docstring and family #86's entry in
+`DATASET2_TRAIT_ROADMAP.md` §6.
 
 ### Decision 2 (minor, flagged for awareness only): #9's split
 definition is calendar-week-based, not game-count-based

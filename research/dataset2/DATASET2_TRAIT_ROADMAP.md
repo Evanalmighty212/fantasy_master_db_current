@@ -1319,19 +1319,55 @@ design after a real-data investigation revised the original scope**
 - Decision needed: none — the tie-preserving design is settled and
   implemented
 
-**#86 (split, part) — Volume fragility, committee/QB-uncertainty
-sub-signals — BUILT (2026-07), PARTIAL (the #12-dependent portion is
-still deferred)**
-- Implementation: `lib/dataset2/fragility_traits.py::build_volume_fragility_traits()`,
-  columns `committee_uncertainty` (real observed `starter_group_size`
-  exceeding the FIXED structural `position_starter_count` — a genuine
-  committee, never WR's routine 3-wide group) and `team_qb_uncertainty`
-  (broadcast team-wide from a tied-starter QB situation). 13 tests.
-  **The roadmap's original "high competition" sub-signal (via family
-  #12) is still NOT built** — #12 itself is Tier 3, not yet built —
-  this is a disclosed partial build of the family, not the full thing.
-- Initial traits: `committee_uncertainty`, `team_qb_uncertainty` (the
-  #10-dependent portion only)
+**#86 (split, part) — Volume fragility, position-aware rank-1-tie
+sub-signals — REVISED (2026-07) after the integration audit; PARTIAL
+(the #12-dependent portion is still deferred)**
+- **REVISION, approved 2026-07**: the original single, universal
+  `committee_uncertainty` column is REMOVED and replaced. The
+  integration audit found it was correct for QB/RB/TE but WRONG for
+  WR — multiple rank-1 WRs reflect real, historically-shifting base
+  offensive personnel structure (real WR `starter_group_size` was 2,
+  not 3, in 85-99% of team-seasons 2006-2012, only becoming
+  majority-3 around 2023-2024), not role uncertainty the way a real
+  RB/TE committee does. See
+  `research/dataset2/INTEGRATION_AUDIT_2026_07.md` for the full
+  finding.
+- Implementation: `lib/dataset2/fragility_traits.py::build_volume_fragility_traits()`.
+  21 tests. New columns:
+  - `multiple_rank1_players` — the NEUTRAL source fact for every
+    position (real `starter_group_size > 1`), no interpretation.
+  - `qb_starter_uncertainty` / `rb_committee_indicator` /
+    `te_co_starter_indicator` — position-SCOPED (populated only for
+    their own position, null elsewhere); for QB/RB/TE this is
+    mechanically identical to the neutral fact, since their
+    structural starter count is genuinely 1 in both real eras.
+  - `wr_starter_group_size` / `wr_starter_group_member` — WR
+    membership/count facts, explicitly NOT framed as uncertainty.
+  - `wr_league_starter_group_size_norm` — the REAL, EMPIRICAL
+    per-season league-wide mode of WR `starter_group_size`, computed
+    fresh from data every season (never a fixed constant). Real-data
+    check: this tracks the actual personnel shift exactly — 2.0 for
+    every season 2006-2022, flipping to 3.0 in 2023-2024, entirely
+    from real data, no threshold picked.
+  - `wr_starter_group_size_vs_league_norm` — this team's real
+    deviation from that season's real norm, purely descriptive.
+  - `team_qb_uncertainty` — UNCHANGED (QB-specific, not affected by
+    the WR finding).
+  - `config.DATASET2_DEPTH_CHART_STRUCTURAL_STARTER_COUNT` is
+    UNCHANGED and still required — `depth_chart_traits.py`'s
+    `position_starter_count` output (explicitly preserved) and the
+    three QB/RB/TE indicators above still depend on it being 1 for
+    those three positions. Only its former role as WR's
+    committee-detection gate was removed.
+  - Real-data check (full 2006-2024 population): `qb_starter_uncertainty`
+    fires only in 2019 (4.5%) and 2022 (2.9%) — matching the same 5
+    real QB-tie cases the integration audit already verified.
+    `rb_committee_indicator` real rate ranges 3-26% by season;
+    `te_co_starter_indicator` ranges 8-47% by season — both plausible,
+    no WR contamination (confirmed: 0 WR rows have any of the three
+    indicators populated; 0 QB/RB/TE rows have any WR-specific field
+    populated).
+- Initial traits: as listed above (the #10-dependent portion only)
 - Source/seasons: same as #10
 - 2A/2B: 2B primarily
 - Research priority: **A** — plausible 2B-specific mechanism
