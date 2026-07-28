@@ -866,9 +866,16 @@ finding until a human reviews it — the raw/ADP-conditioned/
 market-pricing reports are reproducible computations, not conclusions,
 until that review happens.
 
-**Required integration checkpoint — before any family built so far
-(#1/#2/#4/#6/#8/#39/#44/#7) is used in any Dataset 2 analysis, run
-every module above against real data and review:**
+**Required integration checkpoint — RUN 2026-07, see
+`research/dataset2/INTEGRATION_AUDIT_2026_07.md` for the full,
+real-data audit report (passed checks / accepted warnings / zero
+implementation failures found / two methodological decisions flagged
+for approval, most significantly that the WR structural
+starter-count constant doesn't match real 2006-2012 data).** Age (#2)
+and #10's 2025 branch remain unvalidated — `schedules.csv` is not
+cached in this sandbox; re-run those two specifically once it's
+available. Every other item below was checked against real data in
+that audit. Original checklist, preserved for reference:
 1. Match rate to `players.csv` (what fraction of the real population
    joins successfully on `player_id`/`gsis_id`)
 2. Missing birth dates (real count/rate, and whether concentrated in
@@ -913,11 +920,11 @@ every module above against real data and review:**
 14. (slice 4) Real `body_size_position_z` distribution by position —
     sanity-check against known real height/weight ranges per position
 
-This checkpoint is a required step of pipeline integration (the
-not-yet-built step that wires this module into a numbered script
-against the real master DB), not optional polish — slice 1's tests
-passing is not sufficient evidence that this checkpoint has been
-satisfied.
+This checkpoint was a required step of pipeline integration, now
+satisfied for every module except age (#2) and #10's 2025 branch (see
+`INTEGRATION_AUDIT_2026_07.md`'s environment-constraint note) — tests
+passing alone was never sufficient evidence on its own, real data was
+required and has now been run.
 
 **#1 — NFL experience curve — BUILT (2026-07)**
 - Implementation: `lib/dataset2/experience_age_draft.py::build_experience_age_draft_traits()`,

@@ -862,6 +862,24 @@ DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY = 3
 # and consistent with the same base personnel convention, so reusing
 # these same values across both eras is a documented, evidence-based
 # choice, not an assumption carried over unchecked.
+#
+# REAL-DATA FINDING (2026-07 integration audit, NOT yet resolved --
+# see research/dataset2/DATASET2_TRAIT_ROADMAP.md's integration-audit
+# section): the WR=3 constant was checked against the full 2006-2024
+# depth-chart history, not just the single 2020 season above, and does
+# NOT hold for most of that history. Real WR starter_group_size was 2
+# (not 3) in 85-99% of team-seasons from 2006-2012, and only becomes
+# the real majority around 2023-2024 (59-64%) -- a real, gradual shift
+# in NFL base-personnel usage (increasing "11 personnel"/3-WR-base
+# adoption over the 2010s-2020s), not a data error. Currently this has
+# ZERO measured effect on committee_uncertainty (lib/dataset2/fragility_traits.py),
+# which only fires when starter_group_size EXCEEDS this constant, and
+# WR's real historical deviation is a SHORTFALL, not an excess -- but
+# the constant itself is still an inaccurate reference value for
+# roughly the first decade of data, which could matter to a future
+# consumer. Whether to make this era-varying, or accept the fixed
+# value with this known limitation, is an open decision -- not
+# resolved here, do not silently pick a new number.
 DATASET2_DEPTH_CHART_STRUCTURAL_STARTER_COUNT = {"QB": 1, "RB": 1, "WR": 3, "TE": 1}
 
 

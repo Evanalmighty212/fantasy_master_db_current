@@ -37,9 +37,25 @@ added and this module is revised to apply it.
 TEST SCOPE: tests/test_dataset2_partial_season_traits.py proves
 implementation correctness (floor enforcement, window parametrization,
 season-length-aware half boundaries) against synthetic fixtures only.
-Real-data integration and coverage validation has not happened yet --
-same required checkpoint as this module's siblings, see
-research/dataset2/DATASET2_TRAIT_ROADMAP.md §6.
+
+REAL-DATA FINDING (2026-07 integration audit, see
+research/dataset2/DATASET2_TRAIT_ROADMAP.md's integration-audit
+section): the "half split" boundary is a CALENDAR-WEEK cutoff
+(`week <= ceil(G/2)`), not a real-per-player-game-count split. Because
+each team's bye week can fall anywhere in the season, a specific
+player's real games-per-half is NOT guaranteed to be even -- verified
+against the full real 2006-2025 population that `first_half_games +
+second_half_games` always equals that player-season's true total
+`games_played` (zero exceptions), but the individual halves can run
+anywhere from roughly 7-9 games each (pre-2021 era) depending on when
+that team's bye fell, not a clean 8-8. This is a real, disclosed
+property of week-boundary splitting, not a bug -- the existing
+minimum-sample floors already exist partly to absorb this variability.
+If a strictly game-count-balanced split is ever wanted instead (e.g.
+"first N/2 games played" rather than "games in calendar weeks 1..N/2"),
+that is a real methodological change, not an implementation detail --
+raise it as its own decision rather than silently changing this
+module's definition.
 """
 
 import sys
