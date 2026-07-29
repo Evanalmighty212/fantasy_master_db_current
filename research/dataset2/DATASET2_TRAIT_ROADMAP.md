@@ -1561,15 +1561,53 @@ pre-existing repo-wide guardrail that auto-parametrizes 2 checks per
 `lib/dataset2/*.py` files this session added) + 4 (this audit's net
 test increase) = **804**, exact, no gap.
 
-**Source B (`snap_counts`, real coverage 2013-2025 — 2012 confirmed
-empty) and Source C (`pbp_participation`, real coverage 2016-2025,
-play-level, real 2023 schema fork found) — NOT yet built.** Per the
-approved sequencing, Source C's larger participation transformation
-does not begin until Source A and B are reviewed. Family #9's
-partial-window opportunity floors (final-N-games, starter-status,
-before/after injury or promotion/trade, half-split) are explicitly
-NOT selected yet — real candidate proposals for those come after this
-Source A review, not before.
+**Source B — BUILT (2026-07)**: real acquisition + identity crosswalk +
+traits. Full report: `research/dataset2/SNAP_COUNTS_IDENTITY_AUDIT_2026_07.md`.
+
+- **Real acquisition**: all 13 real `snap_counts` seasons (2013-2025)
+  fetched and cached via `scripts/nflverse_source.py`'s established
+  asset-ID-pinned, sha256-verified mechanism (new
+  `register_snap_counts_manifest_entry()`/`fetch_snap_counts()`,
+  mirroring `depth_charts` exactly). Season 2012 is refused outright
+  (real, confirmed empty asset), not silently skipped.
+- **Identity crosswalk**: `lib/dataset2/snap_identity.py`. Real match
+  rate 99.93% across the full 2013-2025 population (324,611 rows),
+  never below 99.79% by season or 99.49% by position. Zero duplicate-
+  `pfr_id` (one-to-many) or many-to-one conflicts found in real data —
+  but both are ACTIVELY CHECKED on every call, not just documented as
+  absent, and a real one-to-many conflict raises loudly rather than
+  silently fanning out the merge. Every unmatched row is preserved
+  with a real, specific `identity_match_status`, never dropped.
+- **Traits**: `lib/dataset2/snap_traits.py`, mirroring Source A's raw/
+  season/preseason separation exactly. Real, verified findings: the
+  raw layer actively checks for (not just documents) duplicate
+  `(gsis_id, game_id)` rows and raises if found (zero found in the
+  real full population); postseason rows are filtered internally
+  (same real bug class as Source A); `offense_pct` is RECOMPUTED from
+  a real max-based team-game denominator (verified exact against real
+  2023 data), while `defense_pct`/`st_pct` are DEFERRED entirely — real
+  investigation found their true denominators are NOT reliably
+  reconstructable (defense: 6.1% real discrepancy from rotation-heavy
+  games where no player anchors 100%; special teams: 90.6% real
+  discrepancy from multiple distinct situational units) — their real
+  underlying counts (`defense_snaps`/`st_snaps`) ARE output instead,
+  per the same reconstruct-or-defer rule already applied to Source A's
+  `racr`. `games_active` counts only real games with nonzero snap
+  activity. 31 new tests (13 + 18), including an exhaustive leakage-
+  proof check mirroring Source A's. Real validation: Christian
+  McCaffrey's real 2022 CAR→SF mid-season trade hand-verified end to
+  end, including the preseason lag (2023's `prior_season_offense_snaps`
+  exactly matches 2022's real `offense_snaps`).
+- **Full suite: 839/839 passing.**
+
+**Source C** (`pbp_participation`, real coverage 2016-2025, play-level,
+real 2023 schema fork found) — NOT yet built, per the approved
+sequencing (does not begin until Source A and B are reviewed — B is
+now built and awaiting review). Family #9's partial-window opportunity
+floors (final-N-games, starter-status, before/after injury or
+promotion/trade, half-split) and any route-participation/role
+derivation from snap data are explicitly NOT selected/derived yet, per
+instruction — stopping for review before either.
 
 ---
 

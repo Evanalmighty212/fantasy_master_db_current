@@ -179,6 +179,29 @@ DEPTH_CHARTS_CACHE_DIR = Path("data/raw/nflverse/annual")
 # agree between the old (recent_team) and new (team) release naming.
 TEAM_COLUMN_RENAME = {"team": "recent_team"}
 
+# --- snap_counts (Dataset 2 opportunity/usage foundation, Source B) --
+# season grain, same shape as depth_charts. Confirmed via the public
+# GitHub API and a real direct download, 2026-07: real columns are
+# game_id, pfr_game_id, season, game_type, week, player, pfr_player_id,
+# position, team, opponent, offense_snaps, offense_pct, defense_snaps,
+# defense_pct, st_snaps, st_pct. Identifies players by `pfr_player_id`
+# (Pro Football Reference format, e.g. "WillCh03"), NOT gsis_id --
+# lib/dataset2/snap_identity.py crosswalks this via players.csv's own
+# `pfr_id` column (verified 99.9% real match rate).
+SNAP_COUNTS_RELEASE_TAG = "snap_counts"
+SNAP_COUNTS_ASSET_NAME_TEMPLATE = "snap_counts_{season}.csv"
+SNAP_COUNTS_SCHEMA_VERSION = "nflverse_snap_counts_v1"
+SNAP_COUNTS_CACHE_DIR = Path("data/raw/nflverse/annual")
+
+# REAL, VERIFIED COVERAGE GAP: the release tag nominally spans
+# 2012-2025, but the real 2012 asset is a header-only file (154 bytes,
+# zero data rows -- confirmed by downloading it directly, 2026-07).
+# Real, usable coverage is 2013-2025. register_snap_counts_manifest_entry()
+# refuses 2012 rather than silently caching an empty file as if it were
+# real coverage -- see that function's own fail-loud check.
+SNAP_COUNTS_EMPTY_SEASON = 2012
+SNAP_COUNTS_FIRST_REAL_SEASON = 2013
+
 
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -533,4 +556,89 @@ def fetch_depth_chart(season: int) -> pd.DataFrame:
     """Raw depth_charts_<season>.csv as-is -- no normalize step, see
     module docstring's "EXTENDED TO TWO MORE..." section for why."""
     path = fetch_depth_chart_raw(season)
+    return pd.read_csv(path, low_memory=False)
+
+
+# --- snap_counts (Dataset 2 opportunity/usage foundation, Source B) ---
+
+
+def register_snap_counts_manifest_entry(season: int, force: bool = False) -> dict:
+    """The ONLY function that writes or updates a snap_counts manifest
+    entry -- mirrors register_depth_chart_manifest_entry() exactly,
+    keyed under manifest["snap_counts"]["seasons"]. Refuses season
+    2012 outright (real, confirmed empty asset -- see
+    SNAP_COUNTS_EMPTY_SEASON's own comment) rather than silently
+    caching a header-only file as if it were real coverage."""
+    if season == SNAP_COUNTS_EMPTY_SEASON:
+        raise ValueError(
+            f"snap_counts season {SNAP_COUNTS_EMPTY_SEASON} is a real, confirmed "
+            f"empty asset (header row only, zero data rows) -- not a genuine "
+            f"coverage year. Refusing to register it. Real snap_counts coverage "
+            f"starts at {SNAP_COUNTS_FIRST_REAL_SEASON}."
+        )
+
+    local_path = SNAP_COUNTS_CACHE_DIR / f"snap_counts_{season}.csv"
+    asset_info = _lookup_asset_id_by_name(
+        SNAP_COUNTS_RELEASE_TAG, SNAP_COUNTS_ASSET_NAME_TEMPLATE.format(season=season)
+    )
+
+    if force or not local_path.exists():
+        _download_by_asset_id(asset_info["asset_id"], local_path)
+
+    manifest = _load_manifest()
+    manifest.setdefault("snap_counts", {"seasons": {}})
+    with open(local_path, "rb") as f:
+        row_count = sum(1 for _ in f) - 1  # minus header
+    manifest["snap_counts"]["seasons"][str(season)] = {
+        "asset_id": asset_info["asset_id"],
+        "upstream_updated_at": asset_info["upstream_updated_at"],
+        "asset_url": f"{GITHUB_API_BASE}/releases/assets/{asset_info['asset_id']}",
+        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        "sha256": _sha256(local_path),
+        "schema_version": SNAP_COUNTS_SCHEMA_VERSION,
+        "row_count": row_count,
+    }
+    _save_manifest(manifest)
+    return manifest["snap_counts"]["seasons"][str(season)]
+
+
+def fetch_snap_counts_raw(season: int) -> Path:
+    """Downloads (or reuses a cached copy of) one season's raw
+    snap_counts file BY ITS PINNED ASSET ID from the committed
+    manifest, then verifies it against the manifest's recorded sha256
+    before returning the local path. Never writes the manifest
+    itself."""
+    manifest = _load_manifest()
+    recorded = manifest.get("snap_counts", {}).get("seasons", {}).get(str(season))
+    if recorded is None:
+        raise RuntimeError(
+            f"snap_counts season {season} has no entry in {MANIFEST_PATH.name}. "
+            f"If this is a genuinely new season, call "
+            f"register_snap_counts_manifest_entry({season}) deliberately to "
+            f"record its baseline asset id and hash before it can be used by "
+            f"the pipeline -- this is never done automatically."
+        )
+
+    local_path = SNAP_COUNTS_CACHE_DIR / f"snap_counts_{season}.csv"
+    if not local_path.exists():
+        _download_by_asset_id(recorded["asset_id"], local_path)
+
+    file_hash = _sha256(local_path)
+    if recorded["sha256"] != file_hash:
+        raise RuntimeError(
+            f"INTEGRITY CHECK FAILED for snap_counts season {season}: the "
+            f"file at {recorded['asset_url']} no longer matches the sha256 "
+            f"recorded in {MANIFEST_PATH.name} (recorded "
+            f"{recorded['sha256'][:12]}..., got {file_hash[:12]}...). Do not "
+            f"silently proceed. Investigate what changed, then deliberately "
+            f"call register_snap_counts_manifest_entry({season}, force=True) "
+            f"to accept the new data as the new baseline."
+        )
+    return local_path
+
+
+def fetch_snap_counts(season: int) -> pd.DataFrame:
+    """Raw snap_counts_<season>.csv as-is -- no normalize step, same
+    convention as fetch_depth_chart()/fetch_players()."""
+    path = fetch_snap_counts_raw(season)
     return pd.read_csv(path, low_memory=False)
