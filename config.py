@@ -831,21 +831,40 @@ DATASET2_ADP_ROUND_BUCKETS = (
 DATASET2_ANALYSIS_MIN_CELL_SAMPLE_SIZE = 10
 
 # Family #9 (partial-season production splits) minimum-SAMPLE floors --
-# approved 2026-07 from real retained-count analysis against
+# ORIGINALLY approved 2026-07 from real retained-count analysis against
 # weekly_results_ppr_2006_2025.csv (research/dataset2/DATASET2_TRAIT_ROADMAP.md
-# §6, family #9). PRIMARY is the headline floor (retains 48.4% of the
-# real population with roughly proportional era coverage); SENSITIVITY
-# is a documented, separately-exposed comparison, never silently
-# substituted for the primary result. A window with fewer than
-# SENSITIVITY games is never usable as a reported partial-season
-# finding at all -- there is no lower fallback tier below this.
+# §6, family #9), back when "games" meant raw calendar-week games in a
+# half/final-N window. That concept no longer exists in the code --
+# lib/dataset2/partial_season_traits.py was rewritten (2026-07) to
+# define windows by real team-game sequence instead (see
+# research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md §0/§1);
+# a team-game window's own size is now always exactly N by
+# construction, so "games in the window" is never the real constraint
+# -- "games with real ACTIVE USAGE" is.
+#
+# REVISED 2026-07 for that new meaning, per explicit approval (same
+# proposal doc, §2b item 1): PRIMARY(3) is the interpretability floor
+# -- the minimum real ACTIVE games for a per-active-game rate to be
+# shown at all (nulled below this). SENSITIVITY(4) is a stricter,
+# separately-exposed comparison flag, never silently substituted for
+# the primary result. Kept flat across final-4/6/8 (and first/second
+# half) rather than scaled up with window size -- real data confirmed
+# scaling to near-full attendance for larger windows would be overly
+# punishing (see the proposal doc's §2b "why NOT perfect attendance"
+# finding: requiring full attendance at final-6/8 retains only
+# 26-31% of the population, roughly half of what this flat floor
+# retains). NOTE the values are DELIBERATELY SWAPPED from the original
+# 2026-07 approval (which had PRIMARY=4/SENSITIVITY=3, for the
+# now-obsolete raw-calendar-games concept) -- this is not a silent
+# reinterpretation, it's a fresh, explicit approval of the opposite
+# assignment for a different, real underlying question.
 # Minimum-OPPORTUNITY (target/carry/snap-share) floor is DELIBERATELY
-# NOT set here -- deferred until target/carry/route/snap data is
-# retained and real distributions can be examined; do not add a number
-# here without that real data, per the same real-data-only decision
-# rule that produced the two floors below.
-DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY = 4
-DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY = 3
+# NOT set here -- still deferred, real efficiency-reliability and
+# meaningful-role analysis in progress (same proposal doc); do not add
+# a number here without that real data, per the same real-data-only
+# decision rule that produced the two floors below.
+DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY = 3
+DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY = 4
 
 # Family #10/#86/#88 depth-chart cluster: the STRUCTURAL (expected)
 # number of simultaneous starters per position under the base "3WR

@@ -89,6 +89,39 @@ MINIMUM-SAMPLE FLOOR, real but DIFFERENT MEANING per window type:
   active window) -- the floor is checked against this count directly,
   same convention as the module's original design.
 
+TWO DELIBERATELY SEPARATE RATES PER TEAM-GAME WINDOW, NEVER ONE
+AMBIGUOUS "PPG" FIELD (added 2026-07 per the reliability proposal --
+see research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md).
+A single "PPG" field would conflate two real, different questions:
+- `*_points_per_team_game` (e.g. `team_final_n_points_per_team_game`,
+  `first_half_points_per_team_game`): real total points divided by the
+  FIXED team-window size (`team_final_n_games`/`first_half_team_games`
+  -- always the real window size, e.g. always 4 for a final-4 window,
+  never the active-game count). ALWAYS DEFINED for any `applicable`
+  row, INCLUDING 0.0 for a player with zero real usage across the
+  entire window -- a real, meaningful "produced nothing across the
+  team's real final N games" fact, not a missing value. NEVER
+  floor-gated -- per the approved methodology, a raw per-team-game
+  rate is availability/production information, not something that
+  becomes "unreliable" just because the player didn't play much of the
+  window; nulling it would hide the exact zero-role signal this field
+  exists to preserve.
+- `*_points_per_active_game` (e.g. `team_final_n_points_per_active_game`,
+  `first_half_points_per_active_game`): real total points divided by
+  the real ACTIVE-game count (`team_final_n_active_games`/
+  `first_half_active_games`). Null whenever active games is 0 (no real
+  games to average over) and floor-gated below the sensitivity floor,
+  same convention as every other Dataset 2 active-game-based rate --
+  this is the "how well did they play when they actually played" rate,
+  and IS subject to the interpretability floor because dividing by a
+  near-zero real sample is what's actually unstable.
+Applied consistently to every team-game window this module builds:
+final-4/6/8 (`build_team_game_final_n_traits()`) and first/second half
+(`build_team_game_half_split_traits()`). ACTIVE-GAME windows
+(`build_active_game_final_n_traits()`) keep a single PPG field --
+there is no separate "team window size" concept there, the window IS
+the active-game set by definition, so no ambiguity exists to resolve.
+
 MINIMUM-OPPORTUNITY IS DELIBERATELY NOT IMPLEMENTED HERE.
 `opportunity_qualified` is present in every output row but is ALWAYS
 the literal string OPPORTUNITY_STATUS_PENDING -- never True/False,
@@ -133,7 +166,8 @@ TEAM_GAME_FINAL_N_OUTPUT_COLUMNS = (
     "team_game_window_status",
     "team_final_n_games",
     "team_final_n_active_games",
-    "team_final_n_games_ppg",
+    "team_final_n_points_per_team_game",
+    "team_final_n_points_per_active_game",
     "team_final_n_sample_qualified_primary",
     "team_final_n_sample_qualified_sensitivity",
     "opportunity_qualified",
@@ -158,29 +192,57 @@ TEAM_GAME_HALF_SPLIT_OUTPUT_COLUMNS = (
     "team_game_window_status",
     "first_half_team_games",
     "first_half_active_games",
-    "first_half_ppg",
+    "first_half_points_per_team_game",
+    "first_half_points_per_active_game",
     "first_half_sample_qualified_primary",
     "first_half_sample_qualified_sensitivity",
     "second_half_team_games",
     "second_half_active_games",
-    "second_half_ppg",
+    "second_half_points_per_team_game",
+    "second_half_points_per_active_game",
     "second_half_sample_qualified_primary",
     "second_half_sample_qualified_sensitivity",
     "opportunity_qualified",
 )
 
 
-def _apply_floor(active_games: pd.Series, ppg: pd.Series):
-    """Returns (ppg_with_floor_enforced, qualified_primary, qualified_sensitivity).
-    ppg is set to NaN wherever active_games < SENSITIVITY floor -- a
-    <3-real-game sample is never a usable finding, structurally, not
-    just by convention. `active_games` is the count of games with REAL
-    usage -- for a team-game window this is `*_active_games`, NOT the
-    (always-full) window size."""
+def _apply_floor(active_games: pd.Series, rate: pd.Series):
+    """Returns (rate_with_floor_enforced, qualified_primary, qualified_sensitivity).
+    `rate` is set to NaN wherever active_games < PRIMARY floor (3) -- a
+    <3-real-active-game sample is never interpretable, structurally,
+    not just by convention. `qualified_sensitivity` (active_games >= 4)
+    is a STRICTER, separately-exposed comparison flag on top of an
+    already-shown rate -- never a second nulling gate (see
+    config.py's DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY/SENSITIVITY
+    for the full real rationale, including why PRIMARY=3 is the LOWER
+    of the two here, unlike this pair's original, now-superseded
+    meaning). `active_games` is the count of games with REAL usage --
+    for a team-game window this is `*_active_games`, NOT the
+    (always-full) window size. Used ONLY for a per-ACTIVE-game rate --
+    see `_compute_dual_rates()`, never applied to a per-team-game rate,
+    which is deliberately never floor-gated."""
     qualified_primary = active_games >= DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY
     qualified_sensitivity = active_games >= DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY
-    ppg_enforced = np.where(qualified_sensitivity, ppg, np.nan)
-    return ppg_enforced, qualified_primary, qualified_sensitivity
+    rate_enforced = np.where(qualified_primary, rate, np.nan)
+    return rate_enforced, qualified_primary, qualified_sensitivity
+
+
+def _compute_dual_rates(total: pd.Series, team_games: pd.Series, active_games: pd.Series):
+    """From a real, zero-filled point total and the two real
+    denominators, returns (points_per_team_game, points_per_active_game,
+    qualified_primary, qualified_sensitivity) -- see the module
+    docstring's "TWO DELIBERATELY SEPARATE RATES" section for exactly
+    what each means and why neither substitutes for the other.
+    `points_per_team_game` is NEVER floor-gated (0.0 for a real,
+    fully-inactive applicable window, not null); `points_per_active_game`
+    IS floor-gated via `_apply_floor()` and is null when active_games
+    is 0."""
+    points_per_team_game = total / team_games
+    points_per_active_game_raw = total / active_games.replace(0, np.nan)
+    points_per_active_game, qualified_primary, qualified_sensitivity = _apply_floor(
+        active_games, points_per_active_game_raw
+    )
+    return points_per_team_game, points_per_active_game, qualified_primary, qualified_sensitivity
 
 
 def _player_team_status(population: pd.DataFrame, weekly_player: pd.DataFrame) -> pd.DataFrame:
@@ -245,21 +307,24 @@ def _downgrade_unmatched_applicable(out: pd.DataFrame, matched_games_col: str) -
 
 
 def _aggregate_team_window(
-    base: pd.DataFrame,
     player_team: pd.DataFrame,
     window_weeks: pd.DataFrame,
     weekly_player: pd.DataFrame,
-    label_prefix: str,
     games_col: str,
     active_col: str,
-    ppg_col: str,
+    total_col: str,
 ):
     """`window_weeks`: (season, team, week[, half]) -- the specific
     real team-games in scope. Joins each single-team player to their
     team's real games in the window, zero-fills any game with no real
     player row (inactive/no usage -- never dropped), and aggregates.
     Returns a DataFrame keyed on (season, player_id[, half]) with
-    `games_col`/`active_col`/`ppg_col` (raw, floor not yet applied)."""
+    `games_col` (real window size), `active_col` (real active-game
+    count), and `total_col` (real zero-filled point total) -- NO rate
+    is computed here. Callers use `_compute_dual_rates()` on top of
+    these raw fields so the per-team-game and per-active-game rates
+    stay two deliberately separate computations, never derived from
+    each other."""
     group_keys = ["season", "player_id"] + (["half"] if "half" in window_weeks.columns else [])
 
     scoped = player_team.merge(window_weeks, on=["season", "team"], how="inner")
@@ -272,13 +337,11 @@ def _aggregate_team_window(
     merged["_active"] = merged["_merge"] == "both"
     merged["fantasy_points_ppr"] = merged["fantasy_points_ppr"].fillna(0.0)
 
-    agg = (
+    return (
         merged.groupby(group_keys)
-        .agg(**{games_col: ("week", "nunique"), active_col: ("_active", "sum"), "_total": ("fantasy_points_ppr", "sum")})
+        .agg(**{games_col: ("week", "nunique"), active_col: ("_active", "sum"), total_col: ("fantasy_points_ppr", "sum")})
         .reset_index()
     )
-    agg[ppg_col] = agg["_total"] / agg[games_col].replace(0, np.nan)
-    return agg.drop(columns=["_total"])
 
 
 def build_team_game_final_n_traits(
@@ -304,14 +367,12 @@ def build_team_game_final_n_traits(
     final_n_weeks = tgi[tgi["_games_from_end"] < n][["season", "team", "week"]]
 
     agg = _aggregate_team_window(
-        base,
         player_team,
         final_n_weeks,
         weekly_player,
-        "team_final_n",
         "team_final_n_games",
         "team_final_n_active_games",
-        "team_final_n_games_ppg",
+        "_team_final_n_total",
     )
 
     out = base.merge(player_team, on=["season", "player_id"], how="left")
@@ -319,10 +380,11 @@ def build_team_game_final_n_traits(
     out["team_game_window_status"] = _downgrade_unmatched_applicable(out, "team_final_n_games")
 
     (
-        out["team_final_n_games_ppg"],
+        out["team_final_n_points_per_team_game"],
+        out["team_final_n_points_per_active_game"],
         out["team_final_n_sample_qualified_primary"],
         out["team_final_n_sample_qualified_sensitivity"],
-    ) = _apply_floor(out["team_final_n_active_games"], out["team_final_n_games_ppg"])
+    ) = _compute_dual_rates(out["_team_final_n_total"], out["team_final_n_games"], out["team_final_n_active_games"])
 
     out["window_n"] = n
     out["opportunity_qualified"] = OPPORTUNITY_STATUS_PENDING
@@ -394,9 +456,7 @@ def build_team_game_half_split_traits(
     tgi["half"] = np.where(tgi["team_game_index"] <= tgi["_cutoff"], "first_half", "second_half")
     half_weeks = tgi[["season", "team", "week", "half"]]
 
-    agg = _aggregate_team_window(
-        base, player_team, half_weeks, weekly_player, "half", "_games", "_active_games", "_ppg"
-    )
+    agg = _aggregate_team_window(player_team, half_weeks, weekly_player, "_games", "_active_games", "_total")
 
     matched_players = agg[["season", "player_id"]].drop_duplicates()
     matched_players["_matched"] = 1.0
@@ -408,14 +468,16 @@ def build_team_game_half_split_traits(
 
     for half, prefix in (("first_half", "first_half"), ("second_half", "second_half")):
         half_agg = agg[agg["half"] == half].drop(columns=["half"]).rename(
-            columns={"_games": f"{prefix}_team_games", "_active_games": f"{prefix}_active_games", "_ppg": f"{prefix}_ppg"}
+            columns={"_games": f"{prefix}_team_games", "_active_games": f"{prefix}_active_games", "_total": f"{prefix}_total"}
         )
         out = out.merge(half_agg, on=["season", "player_id"], how="left")
         (
-            out[f"{prefix}_ppg"],
+            out[f"{prefix}_points_per_team_game"],
+            out[f"{prefix}_points_per_active_game"],
             out[f"{prefix}_sample_qualified_primary"],
             out[f"{prefix}_sample_qualified_sensitivity"],
-        ) = _apply_floor(out[f"{prefix}_active_games"], out[f"{prefix}_ppg"])
+        ) = _compute_dual_rates(out[f"{prefix}_total"], out[f"{prefix}_team_games"], out[f"{prefix}_active_games"])
+        out = out.drop(columns=[f"{prefix}_total"])
 
     out["opportunity_qualified"] = OPPORTUNITY_STATUS_PENDING
 

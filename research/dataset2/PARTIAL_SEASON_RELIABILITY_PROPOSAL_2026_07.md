@@ -1,14 +1,14 @@
 # Family #9 Partial-Season Reliability Proposal — 2026-07
 
-**The bug fix and team-game-sequence redesign described in this
-document's §0/§1 are APPROVED and COMMITTED** (`c79eea0`, "Fix Dataset
-2 week-boundary bug and redefine family #9 windows by team-game
-sequence"). This round adds the exclusion audit requested before any
-floor is selected (§1a, new) and an explicit `team_game_window_status`
-field (code change, tested, NOT yet committed — see §1a) replacing the
-prior boolean `team_game_window_applicable`. **PROPOSAL ONLY beyond
-what's already committed — no threshold is chosen, no
-`opportunity_qualified` logic is implemented.**
+**Committed so far**: §0/§1 (bug fix, window redesign) in `c79eea0`;
+§1a's exclusion audit and `team_game_window_status` in `292d7d2`. §1b
+(the per-team-game/per-active-game rate split) and §2b item 1 (the
+flat 3-primary/4-sensitivity active-game interpretability floor) are
+**APPROVED and committed this round**. §2b items 2/3 (flat
+efficiency-volume and meaningful-role thresholds) were **rejected as
+too low** and are superseded by §2c/§2d/§2e, a revised three-concept
+framework (minimal computability / efficiency reliability / meaningful
+role) — proposal only, not implemented as code.
 
 ---
 
@@ -236,6 +236,39 @@ FULLY available elsewhere: a new regression test
 
 ---
 
+## 1b. Two deliberately separate rates, not one ambiguous PPG (new
+code, tested, not yet committed)
+
+Per instruction: a single "PPG" field conflated two real, different
+questions. Every team-game window (final-4/6/8 AND first/second half —
+applied consistently, since both use the same underlying aggregation)
+now exposes TWO fields instead of one:
+
+- **`*_points_per_team_game`** — real total points ÷ the FIXED team
+  window size (`team_final_n_games`, always the real window size, e.g.
+  always 4 for a final-4 window). **Never floor-gated.** A real,
+  applicable player with zero usage across the whole window gets
+  `0.0`, not null — e.g. `team_final_n_points_per_team_game == 0.0`
+  for a real zero-active-game applicable row. Verified by two new
+  tests: `test_fully_inactive_applicable_window_gets_zero_per_team_game_not_null`
+  and `test_below_primary_floor_active_rate_is_nan_but_team_rate_is_not`.
+- **`*_points_per_active_game`** — real total points ÷ the real
+  ACTIVE-game count (`team_final_n_active_games`). Null when active
+  games is 0, and floor-gated below the PRIMARY interpretability floor
+  (3 active games — §2b below; a stricter SENSITIVITY flag at 4 is
+  exposed separately, never a second nulling gate) — this is the "how
+  well did they play when they actually played" rate, and the only one
+  of the two where a small real sample makes the number itself
+  unstable.
+
+Active-game windows (`build_active_game_final_n_traits()`) keep a
+single PPG field — there's no separate "team window size" concept
+there, so no ambiguity to resolve.
+
+909/909 tests passing (`python -m pytest tests/ -q --import-mode=importlib`).
+
+---
+
 ## 2. Reliability floors: participation floor vs. meaningful-role
 floor, distinguished, not one universal threshold
 
@@ -317,6 +350,78 @@ concepts, not collapsed for convenience — which tier (or whether
 different positions warrant different tiers, e.g. QB not needing an
 opportunity overlay at all given the finding above) remains an open
 decision.
+
+---
+
+## 2b. Reduced recommendation matrix (proposal — not implemented)
+
+The 144 candidates collapse into three real recommendations, not 144
+separate choices. **Raw production, raw opportunity, availability,
+role-loss, and per-team-game rates get NO participation floor
+anywhere in this matrix** — that principle (§1a-1) already governs the
+committed code and isn't repeated as a "floor" below.
+
+### 1. Per-active-game rate interpretability floor — ONE recommendation
+for all three windows, not one per window
+
+**Recommended: primary = 3 active games, sensitivity = 4 active
+games, applied FLAT to final-4, final-6, AND final-8 (not scaled up
+with window size).**
+
+Your instinct (3 primary / 4 stricter) is **confirmed by the real
+table, not challenged** — with one clarification: keeping both numbers
+FLAT across window sizes, rather than scaling either up, is itself the
+right way to satisfy "scale proportionally rather than requiring
+perfect attendance by default." A flat absolute floor becomes
+*relatively* more lenient as the window grows (4-of-4 = 100%
+attendance at n=4, but 4-of-8 = only 50% attendance at n=8) — exactly
+the direction "don't punish larger windows" should point.
+
+| Window | Floor | Retained (of applicable) | Why this level, not the adjacent one |
+|---|---|---|---|
+| Final-4 | primary ≥3 | 5,939 (54.8%) | The already-approved project-wide "fewer than 3 games is never usable" floor (roadmap §6, from the original real retained-count analysis), reapplied here to active games specifically. Real, substantial gap vs. ≥4 (1,824 real player-seasons, 16.8 pts) — NOT a rounding difference, confirming 3 vs. 4 is a real, worthwhile distinction to keep separate. |
+| Final-4 | sensitivity ≥4 | 4,115 (38.0%) | Full attendance is only demanding here because the window itself is small (4 games) — coincides with "no misses at all," which is a real, meaningfully stricter but not devastating cohort (still 4,115 real seasons). |
+| Final-6 | primary ≥3 | 7,145 (65.9%) | Same absolute floor. Requiring the SAME 3-game minimum as final-4 costs nothing extra here — a real 3-game sample is equally interpretable regardless of the window it was drawn from. |
+| Final-6 | sensitivity ≥4 | 6,111 (56.4%) | A real, substantially higher bar than primary (66%→56%) without approaching perfect attendance (would be ≥6, retaining only 3,405 / 31.4% — confirmed too punishing, see §ii below). |
+| Final-8 | primary ≥3 | 7,839 (72.3%) | Same reasoning — flat floor, real interpretable sample regardless of window length. |
+| Final-8 | sensitivity ≥4 | 7,057 (65.1%) | Meaningfully stricter than primary without the perfect-attendance cliff (≥8 retains only 2,895 / 26.7% — confirmed too punishing). |
+
+**§ii — why NOT perfect attendance for final-6/8, confirmed with real
+numbers**: requiring `active_games == window_size` retains only 31.4%
+(final-6) and 26.7% (final-8) of the applicable population, roughly
+HALF what the flat sensitivity floor (≥4) retains. A single missed
+game for an ordinary reason (a coach's rest decision in a blowout, a
+minor in-season tweak) would wrongly disqualify an otherwise clearly
+startable player from the stricter cohort at these longer windows —
+exactly the outcome your instruction warned against.
+
+**ADP/era impact**: no material change at either floor, any window.
+Real composition stays close to proportional (e.g. final-4 primary:
+era 2011-2020/2021+/pre-2011 = 2,981/1,512/1,446 vs. the population's
+own roughly 50/28/22 split; ADP: R1-2 349/5,939 = 5.9% at primary vs.
+267/4,115 = 6.5% at sensitivity — moving the floor does not
+disproportionately gain or lose early-round players at any window).
+
+### 2/3. SUPERSEDED 2026-07 — efficiency-volume and meaningful-role
+thresholds below were rejected as too low, kept for the record, not
+deleted
+
+The two tables that originally lived here (position/metric minimum
+volumes for efficiency calculations, and one flat meaningful-role
+threshold per role type: QB attempts ≥15, RB carries ≥3, WR/TE targets
+≥2 for efficiency; RB carries ≥15 or WR/TE targets ≥8 for meaningful
+role) were reviewed and **rejected, per instruction**: they establish
+mathematical computability (a nonzero denominator), not reliable
+efficiency or a meaningful role, and a single flat total is
+particularly wrong applied unchanged across final-4/6/8 windows (a
+"≥15 carries" bar means something very different in a 4-game window
+than an 8-game one). Kept here as a real record of a rejected
+approach, per this project's standing rule against silently discarding
+decision history, rather than deleted. Superseded by §2c/§2d/§2e below,
+which separate three concepts (minimal computability, efficiency
+reliability via real split-half stability analysis, and meaningful
+role via continuous per-game/snap-share measures) instead of
+conflating them into "% of population retained."
 
 ---
 

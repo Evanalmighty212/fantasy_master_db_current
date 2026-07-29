@@ -100,7 +100,8 @@ class TestTeamGameFinalNRealBoundaries:
         # If postseason leaked in, the real final-4 would pull from
         # weeks 17-20 instead of the true real REG weeks 15-18.
         assert out.iloc[0]["team_final_n_active_games"] == 4
-        assert out.iloc[0]["team_final_n_games_ppg"] == 5.0
+        assert out.iloc[0]["team_final_n_points_per_team_game"] == 5.0
+        assert out.iloc[0]["team_final_n_points_per_active_game"] == 5.0
 
 
 class TestTeamGameFinalNInactiveZeroFill:
@@ -114,7 +115,28 @@ class TestTeamGameFinalNInactiveZeroFill:
         row = out.iloc[0]
         assert row["team_final_n_games"] == 4  # window always has 4 real team games
         assert row["team_final_n_active_games"] == 2  # only 2 had real usage
-        assert pd.isna(row["team_final_n_games_ppg"])  # 2 < sensitivity floor (3)
+        # per-team-game rate: real, defined, NEVER floor-gated -- (20+10+0+0)/4
+        assert row["team_final_n_points_per_team_game"] == 7.5
+        # per-active-game rate: floor-gated, null below the sensitivity floor (2 < 3)
+        assert pd.isna(row["team_final_n_points_per_active_game"])
+
+    def test_fully_inactive_applicable_window_gets_zero_per_team_game_not_null(self):
+        # The exact case §1a-0 of the reliability proposal distinguishes:
+        # a rostered, applicable player with ZERO real usage across the
+        # entire window must show a real 0.0 per-team-game rate, not a
+        # null -- a real "produced nothing" fact, never confused with
+        # "unavailable."
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        # a real row outside the final-4 window establishes the single team
+        wp = _weekly_player([(2015, "P1", AAA_2015_WEEKS[0], "AAA", 0.0)])
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
+        row = out.iloc[0]
+        assert row["team_game_window_status"] == TEAM_GAME_STATUS_APPLICABLE
+        assert row["team_final_n_active_games"] == 0
+        assert row["team_final_n_points_per_team_game"] == 0.0
+        assert not pd.isna(row["team_final_n_points_per_team_game"])
+        assert pd.isna(row["team_final_n_points_per_active_game"])
 
 
 class TestTeamGameWindowTradedPlayerExclusion:
@@ -130,7 +152,8 @@ class TestTeamGameWindowTradedPlayerExclusion:
         row = out.iloc[0]
         assert row["team_game_window_status"] == TEAM_GAME_STATUS_UNAVAILABLE_TRADED
         assert pd.isna(row["team_final_n_games"])
-        assert pd.isna(row["team_final_n_games_ppg"])
+        assert pd.isna(row["team_final_n_points_per_team_game"])
+        assert pd.isna(row["team_final_n_points_per_active_game"])
 
     def test_traded_player_still_gets_a_valid_active_game_window(self):
         # Team-game windows exclude traded players; active-game windows
@@ -195,15 +218,37 @@ class TestTeamGameFinalNFloorEnforcement:
         assert row["team_final_n_active_games"] == active_n
         assert row["team_final_n_sample_qualified_primary"] == True  # noqa: E712
 
-    def test_below_sensitivity_floor_ppg_is_nan(self):
+    def test_below_primary_floor_active_rate_is_nan_but_team_rate_is_not(self):
         pop = _population((2015, "P1", "WR"))
         wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
         last4 = AAA_2015_WEEKS[-4:]
-        below = DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY - 1
+        below = DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY - 1
         rows = [(2015, "P1", wk, "AAA", 10.0) for wk in last4[:below]] if below > 0 else []
         wp = _weekly_player(rows)
         out = build_team_game_final_n_traits(pop, wp, wap, n=4)
-        assert pd.isna(out.iloc[0]["team_final_n_games_ppg"])
+        row = out.iloc[0]
+        assert pd.isna(row["team_final_n_points_per_active_game"])
+        # per-team-game rate stays real and defined even below the floor
+        assert not pd.isna(row["team_final_n_points_per_team_game"])
+
+    def test_between_primary_and_sensitivity_rate_shown_but_not_sensitivity_qualified(self):
+        # PRIMARY(3) gates whether the rate is shown at all; SENSITIVITY(4)
+        # is a stricter, separately-exposed comparison flag on top of an
+        # already-shown rate -- never a second nulling gate. A player with
+        # exactly PRIMARY active games (3) should show a real, non-null
+        # rate while failing the stricter SENSITIVITY flag.
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        assert DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY < DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY
+        wp = _weekly_player(
+            [(2015, "P1", wk, "AAA", 10.0) for wk in last4[:DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY]]
+        )
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
+        row = out.iloc[0]
+        assert not pd.isna(row["team_final_n_points_per_active_game"])
+        assert row["team_final_n_sample_qualified_primary"] == True  # noqa: E712
+        assert row["team_final_n_sample_qualified_sensitivity"] == False  # noqa: E712
 
 
 class TestActiveGameFinalN:
