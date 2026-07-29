@@ -67,9 +67,11 @@ NO SEASON/WEEK/GAME_TYPE COLUMN EXISTS in the raw source -- both are
 derived from `nflverse_game_id` ("{season}_{week_token}_{away}_{home}",
 verified real format). Postseason rows are NOT separately labeled; a
 real `week_token` beyond that season's real REG week-slot count
-(`lib.dataset2.common.season_length(season) + 1`, the same real
-"+1 for the bye slot" fact already established for Source A) is a
-real playoff game -- verified directly against real 2016 (week tokens
+(`lib.dataset2.common.real_reg_week_slots(season)`, the shared helper
+extracted 2026-07 after this same "+1 for the bye slot" pattern was
+found missing -- and causing a real bug -- in
+partial_season_traits.py; see that module's docstring) is a real
+playoff game -- verified directly against real 2016 (week tokens
 01-21) and 2022 (01-22) data. Excluded by default, per instruction;
 `include_postseason=True` is available for a future analysis that
 explicitly wants it.
@@ -191,7 +193,7 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from lib.dataset2.common import season_length, validate_columns
+from lib.dataset2.common import real_reg_week_slots, validate_columns
 
 RAW_REQUIRED_COLUMNS = (
     "nflverse_game_id",
@@ -257,8 +259,7 @@ def _parse_game_id(game_id: str):
 
 
 def _is_postseason(season: int, week_token: str) -> bool:
-    reg_max_week = season_length(season) + 1
-    return int(week_token) > reg_max_week
+    return int(week_token) > real_reg_week_slots(season)
 
 
 def _split_list(value) -> list:

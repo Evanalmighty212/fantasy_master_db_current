@@ -1174,7 +1174,59 @@ required and has now been run.
 - Decision needed: none
 
 **#9 — Partial-season production splits — SAMPLE-SIZE PORTION BUILT
-(2026-07); minimum-opportunity floor still PENDING, by design**
+(2026-07), REWRITTEN 2026-07 after a real, confirmed week-boundary bug
+was found and FIXED; minimum-opportunity floor still PENDING, by
+design.**
+
+- **Bug fix (committed, tested)**: the original window logic used
+  `season_length()` (real games played, 16 or 17) directly as the
+  maximum real REG week number, off by one -- real REG weeks run
+  1..`season_length(season)+1` because every team's real bye consumes a
+  week-number slot without a played game. Verified directly against
+  the original committed code: `build_final_n_games_traits(n=4)`
+  against real 2015 data returned windows as large as 5 games, not 4.
+  Fixed via a new shared helper, `lib/dataset2/common.py::real_reg_week_slots()`,
+  now also used by `participation_traits.py`'s `_is_postseason()`
+  (refactored, not duplicated). An audit of every other
+  `lib/dataset2/*.py` module found no other instance of this mistake.
+- **Window redefinition (committed, tested), per instruction**:
+  windows are no longer calendar-week-based at all.
+  `lib/dataset2/common.py::build_team_game_index()` derives each real
+  team's chronological REG game sequence from the full weekly file (no
+  new schedule fetch). `lib/dataset2/partial_season_traits.py` now
+  builds TWO structurally separate window types: TEAM-GAME windows
+  (`build_team_game_final_n_traits()`, `build_team_game_half_split_traits()`
+  -- the team's real final N/half games, zero-filling any game the
+  player was inactive or had no real usage in -- the PRIMARY
+  late-season trait, restricted to single-team players) and
+  ACTIVE-GAME windows (`build_active_game_final_n_traits()` -- the
+  player's own real final N games with usage, immune to the
+  week-boundary bug by construction -- a SECONDARY
+  performance-when-active diagnostic). The old
+  `build_half_split_traits()`/`build_final_n_games_traits()` no longer
+  exist -- their calendar-week semantics were the bug, not a
+  preservable API.
+- **Full suite: 903/903 passing** (`python -m pytest tests/ -q
+  --import-mode=importlib`; 884 + 11 new `test_dataset2_common.py` + 8
+  net new in the rewritten `test_dataset2_partial_season_traits.py` =
+  903, exact).
+- **Reliability PROPOSAL (still not implementation), regenerated
+  2026-07 on the corrected code** — see
+  `research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md`
+  for real candidate participation-floor vs. opportunity-floor levels
+  (distinguished per instruction, general snap-share + position-
+  specific touch metrics), a real finding that the team-game and
+  active-game windows retain meaningfully different real populations
+  even at the "same" nominal floor, three-way trade-split counts
+  (before-only/after-only/both-sides, both-sides required for direct
+  conclusions), and confirmation that starter/promotion splits stay
+  deferred (needs weekly depth-chart resolution) and the
+  teammate-injury proxy is NOT being built as an injury trait (13 of
+  634 real cases is insufficient, and it must not be labeled injury
+  without real injury evidence). Awaiting approval on floor levels
+  before any `opportunity_qualified` trait is coded, and awaiting a
+  separate decision on whether to commit the bug-fix/window-redesign
+  code above.**
 - Implementation: `lib/dataset2/partial_season_traits.py::build_half_split_traits()`
   and `::build_final_n_games_traits()` (parametrized by `n`). 17 tests.
   `opportunity_qualified` is the literal string `"pending"` on every

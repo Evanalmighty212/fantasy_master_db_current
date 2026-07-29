@@ -1,199 +1,307 @@
 """
 tests/test_dataset2_partial_season_traits.py
 
-Covers lib/dataset2/partial_season_traits.py -- Dataset 2 family #9's
-sample-size portion (approved 2026-07: primary floor >=4 games,
-sensitivity floor >=3 games, exposed separately; opportunity
-qualification explicitly pending). Protects:
-
-- The two sample-size floors are exposed as SEPARATE columns, never
-  collapsed into one flag.
-- A window below the sensitivity floor (< 3 games) has its PPG value
-  structurally nulled -- not just flagged, actually unusable by
-  accident.
-- opportunity_qualified is the literal "pending" string on every row,
-  never True/False/silently-qualified.
-- Season-length-aware half boundaries (16-game vs. 17-game era).
-- final-N-games is genuinely parametrized (different n -> different
-  real counts on the same fixture), not a hardcoded single window.
-- Population rows with zero matching weekly data are preserved
-  (games=0, ppg=NaN), never dropped.
+Protects lib/dataset2/partial_season_traits.py -- REWRITTEN 2026-07
+after a real, confirmed week-boundary bug was found and fixed (see
+that module's own docstring and
+research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md §0).
+Regression-tests, per instruction: a real 16-game season played across
+Weeks 1-17, a real 17-game season played across Weeks 1-18, postseason
+exclusion, and final-N logic never returning more than N real TEAM
+games. Also proves the redefined team-game-vs-active-game window
+distinction, inactive-game zero-filling, and traded-player exclusion
+from team-game windows.
 """
 
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import config
-from lib.dataset2 import partial_season_traits as pst
-
-
-def _population_df(*rows):
-    cols = ["season", "player_id", "position"]
-    return pd.DataFrame(list(rows), columns=cols)
-
-
-def _weekly_df(*rows):
-    cols = ["season", "player_id", "week", "fantasy_points_ppr"]
-    return pd.DataFrame(list(rows), columns=cols)
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from config import DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY, DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY
+from lib.dataset2.partial_season_traits import (
+    OPPORTUNITY_STATUS_PENDING,
+    build_active_game_final_n_traits,
+    build_team_game_final_n_traits,
+    build_team_game_half_split_traits,
+)
 
 
-def _weeks(season, player_id, points_by_week):
-    """Helper: one weekly row per (week, points) pair."""
-    return [{"season": season, "player_id": player_id, "week": wk, "fantasy_points_ppr": pts} for wk, pts in points_by_week.items()]
+def _population(*rows):
+    return pd.DataFrame([{"season": s, "player_id": p, "position": pos} for s, p, pos in rows])
 
 
-class TestHalfSplitSeasonLengthAwareBoundaries:
-    def test_16_game_era_halves_at_week_8(self):
-        """2020 season (16 games): first half = weeks 1-8, second = 9-16."""
-        pop = _population_df({"season": 2020, "player_id": "00-1", "position": "WR"})
-        weekly = _weekly_df(*_weeks(2020, "00-1", {w: 10.0 for w in range(1, 17)}))
-        out = pst.build_half_split_traits(pop, weekly)
+def _weekly_all_positions(rows):
+    """rows: list of (season, week, team, season_type)."""
+    return pd.DataFrame([{"season": s, "week": w, "team": t, "season_type": st} for s, w, t, st in rows])
+
+
+def _weekly_player(rows):
+    """rows: list of (season, player_id, week, team, ppg)."""
+    return pd.DataFrame(
+        [{"season": s, "player_id": p, "week": w, "team": t, "fantasy_points_ppr": pts} for s, p, w, t, pts in rows]
+    )
+
+
+# Real 2015 (16-game era) team AAA: real bye at week 9 -> 16 real games
+# across weeks 1-17. Real 2021 (17-game era) team BBB: real bye at
+# week 10 -> 17 real games across weeks 1-18. Matches the real patterns
+# already verified directly against real nflverse data (see the module
+# docstring / proposal doc §0).
+AAA_2015_WEEKS = [wk for wk in range(1, 18) if wk != 9]  # 16 real games, real bye at week 9
+BBB_2021_WEEKS = [wk for wk in range(1, 19) if wk != 10]  # 17 real games, real bye at week 10
+
+
+class TestTeamGameFinalNRealBoundaries:
+    """Regression: a real 16-game season played across Weeks 1-17, a
+    real 17-game season played across Weeks 1-18, and final-N logic
+    never returning more than N real team games."""
+
+    def test_16_game_season_final_4_never_exceeds_4_team_games(self):
+        pop = _population((2015, "P1", "WR"))
+        # another player on the team supplies every real team-week
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 10.0) for wk in AAA_2015_WEEKS[-2:]])
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
         row = out.iloc[0]
-        assert row["first_half_games"] == 8
-        assert row["second_half_games"] == 8
+        assert row["team_final_n_games"] == 4
+        assert row["team_game_window_applicable"] == True  # noqa: E712
 
-    def test_17_game_era_halves_at_week_9(self):
-        """2022 season (17 games): ceil(17/2)=9 -> first half = weeks 1-9, second = 10-17."""
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        weekly = _weekly_df(*_weeks(2022, "00-1", {w: 10.0 for w in range(1, 18)}))
-        out = pst.build_half_split_traits(pop, weekly)
+    def test_17_game_season_final_4_never_exceeds_4_team_games(self):
+        pop = _population((2021, "P1", "WR"))
+        wap = _weekly_all_positions([(2021, wk, "BBB", "REG") for wk in BBB_2021_WEEKS])
+        wp = _weekly_player([(2021, "P1", wk, "BBB", 10.0) for wk in BBB_2021_WEEKS[-2:]])
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
+        assert out.iloc[0]["team_final_n_games"] == 4
+
+    def test_real_final_4_weeks_are_the_true_last_4_team_games_16_game_era(self):
+        # The team's true last 4 real games for AAA/2015 are the final
+        # 4 entries of AAA_2015_WEEKS (weeks 14,15,16,17 -- the bye at
+        # week 9 already excluded upstream).
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 1.0) for wk in AAA_2015_WEEKS])
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
+        assert out.iloc[0]["team_final_n_active_games"] == 4
+        # With the OLD buggy boundary this would have pulled 5 real
+        # weeks (13-17) instead of the true last 4 (14-17).
+
+    def test_postseason_weeks_excluded_from_team_game_index(self):
+        pop = _population((2023, "P1", "WR"))
+        wap = _weekly_all_positions(
+            [(2023, wk, "KC", "REG") for wk in range(1, 19)] + [(2023, 19, "KC", "POST"), (2023, 20, "KC", "POST")]
+        )
+        wp = _weekly_player([(2023, "P1", wk, "KC", 5.0) for wk in range(1, 19)])
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
+        # If postseason leaked in, the real final-4 would pull from
+        # weeks 17-20 instead of the true real REG weeks 15-18.
+        assert out.iloc[0]["team_final_n_active_games"] == 4
+        assert out.iloc[0]["team_final_n_games_ppg"] == 5.0
+
+
+class TestTeamGameFinalNInactiveZeroFill:
+    def test_inactive_team_game_zero_filled_not_dropped(self):
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        # player only has real usage in 2 of the team's real final 4 games
+        wp = _weekly_player([(2015, "P1", last4[0], "AAA", 20.0), (2015, "P1", last4[2], "AAA", 10.0)])
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
         row = out.iloc[0]
-        assert row["first_half_games"] == 9
-        assert row["second_half_games"] == 8
+        assert row["team_final_n_games"] == 4  # window always has 4 real team games
+        assert row["team_final_n_active_games"] == 2  # only 2 had real usage
+        assert pd.isna(row["team_final_n_games_ppg"])  # 2 < sensitivity floor (3)
 
 
-class TestFloorEnforcement:
-    def test_four_games_qualifies_both_floors(self):
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        weekly = _weekly_df(*_weeks(2022, "00-1", {1: 10.0, 2: 12.0, 3: 8.0, 4: 14.0}))
-        out = pst.build_half_split_traits(pop, weekly)
+class TestTeamGameWindowTradedPlayerExclusion:
+    def test_traded_player_gets_not_applicable(self):
+        pop = _population((2023, "P1", "WR"))
+        wap = _weekly_all_positions(
+            [(2023, wk, "KC", "REG") for wk in range(1, 10)] + [(2023, wk, "SF", "REG") for wk in range(10, 19)]
+        )
+        wp = _weekly_player(
+            [(2023, "P1", wk, "KC", 5.0) for wk in range(1, 10)] + [(2023, "P1", wk, "SF", 5.0) for wk in range(10, 19)]
+        )
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
         row = out.iloc[0]
-        assert row["first_half_games"] == 4
-        assert row["first_half_sample_qualified_primary"] == True  # noqa: E712
-        assert row["first_half_sample_qualified_sensitivity"] == True  # noqa: E712
-        assert row["first_half_ppg"] == pytest.approx((10 + 12 + 8 + 14) / 4)
+        assert row["team_game_window_applicable"] == False  # noqa: E712
+        assert pd.isna(row["team_final_n_games"])
+        assert pd.isna(row["team_final_n_games_ppg"])
 
-    def test_three_games_qualifies_sensitivity_only_ppg_still_populated(self):
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        weekly = _weekly_df(*_weeks(2022, "00-1", {1: 10.0, 2: 12.0, 3: 8.0}))
-        out = pst.build_half_split_traits(pop, weekly)
-        row = out.iloc[0]
-        assert row["first_half_games"] == 3
-        assert row["first_half_sample_qualified_primary"] == False  # noqa: E712
-        assert row["first_half_sample_qualified_sensitivity"] == True  # noqa: E712
-        assert row["first_half_ppg"] == pytest.approx((10 + 12 + 8) / 3)
+    def test_single_team_player_gets_applicable(self):
+        pop = _population((2023, "P1", "WR"))
+        wap = _weekly_all_positions([(2023, wk, "KC", "REG") for wk in range(1, 19)])
+        wp = _weekly_player([(2023, "P1", wk, "KC", 5.0) for wk in range(1, 19)])
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
+        assert out.iloc[0]["team_game_window_applicable"] == True  # noqa: E712
 
-    def test_two_games_fails_both_floors_and_ppg_is_structurally_nulled(self):
-        """Below the sensitivity floor -- PPG must be NaN, not just flagged."""
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        weekly = _weekly_df(*_weeks(2022, "00-1", {1: 10.0, 2: 12.0}))
-        out = pst.build_half_split_traits(pop, weekly)
-        row = out.iloc[0]
-        assert row["first_half_games"] == 2
-        assert row["first_half_sample_qualified_primary"] == False  # noqa: E712
-        assert row["first_half_sample_qualified_sensitivity"] == False  # noqa: E712
-        assert pd.isna(row["first_half_ppg"])
 
-    def test_zero_games_preserved_row_not_dropped(self):
-        """Player in population but with no weekly rows in this half
-        (e.g. injured all season) -- row stays, games=0, ppg null."""
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        weekly = _weekly_df()  # no weekly rows at all
-        out = pst.build_half_split_traits(pop, weekly)
-        assert len(out) == 1
+class TestTeamGameFinalNFloorEnforcement:
+    def test_primary_floor_from_config(self):
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        active_n = DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 10.0) for wk in last4[:active_n]])
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
         row = out.iloc[0]
-        assert row["first_half_games"] == 0
-        assert row["second_half_games"] == 0
-        assert pd.isna(row["first_half_ppg"])
-        assert pd.isna(row["second_half_ppg"])
+        assert row["team_final_n_active_games"] == active_n
+        assert row["team_final_n_sample_qualified_primary"] == True  # noqa: E712
+
+    def test_below_sensitivity_floor_ppg_is_nan(self):
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        below = DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY - 1
+        rows = [(2015, "P1", wk, "AAA", 10.0) for wk in last4[:below]] if below > 0 else []
+        wp = _weekly_player(rows)
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
+        assert pd.isna(out.iloc[0]["team_final_n_games_ppg"])
+
+
+class TestActiveGameFinalN:
+    def test_never_exceeds_n_active_games(self):
+        pop = _population((2015, "P1", "WR"))
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 5.0) for wk in range(1, 18)])
+        out = build_active_game_final_n_traits(pop, wp, n=4)
+        assert out.iloc[0]["active_final_n_games"] == 4
+
+    def test_player_with_fewer_real_games_than_n_gets_actual_count(self):
+        pop = _population((2015, "P1", "WR"))
+        wp = _weekly_player([(2015, "P1", 1, "AAA", 5.0), (2015, "P1", 2, "AAA", 7.0)])
+        out = build_active_game_final_n_traits(pop, wp, n=4)
+        assert out.iloc[0]["active_final_n_games"] == 2
+        assert pd.isna(out.iloc[0]["active_final_n_games_ppg"])  # below sensitivity floor
+
+    def test_takes_the_players_own_most_recent_real_rows_regardless_of_week_gaps(self):
+        pop = _population((2015, "P1", "WR"))
+        wp = _weekly_player(
+            [
+                (2015, "P1", 1, "AAA", 1.0),
+                (2015, "P1", 2, "AAA", 1.0),
+                (2015, "P1", 15, "AAA", 9.0),
+                (2015, "P1", 16, "AAA", 9.0),
+                (2015, "P1", 17, "AAA", 9.0),
+            ]
+        )
+        out = build_active_game_final_n_traits(pop, wp, n=3)
+        assert out.iloc[0]["active_final_n_games_ppg"] == 9.0
+
+    def test_no_week_arithmetic_means_no_era_sensitivity(self):
+        # Immune to the real week-boundary bug by construction -- same
+        # correctness for a 16-game-era and 17-game-era season with no
+        # special-casing needed.
+        pop = _population((2015, "P1", "WR"), (2021, "P2", "WR"))
+        wp = _weekly_player(
+            [(2015, "P1", wk, "AAA", 5.0) for wk in AAA_2015_WEEKS]
+            + [(2021, "P2", wk, "BBB", 5.0) for wk in BBB_2021_WEEKS]
+        )
+        out = build_active_game_final_n_traits(pop, wp, n=4)
+        assert (out["active_final_n_games"] == 4).all()
+
+
+class TestTeamGameHalfSplitRealBoundaries:
+    def test_half_split_uses_team_game_index_not_calendar_week(self):
+        # AAA/2015: 16 real games, bye at week 9. Team-game-index cutoff
+        # = ceil(16/2) = 8.
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 1.0) for wk in AAA_2015_WEEKS])
+        out = build_team_game_half_split_traits(pop, wp, wap)
+        row = out.iloc[0]
+        assert row["first_half_team_games"] == 8
+        assert row["second_half_team_games"] == 8
+
+    def test_17_game_era_half_split_boundary(self):
+        # BBB/2021: 17 real games, bye at week 10. cutoff = ceil(17/2) = 9.
+        pop = _population((2021, "P1", "WR"))
+        wap = _weekly_all_positions([(2021, wk, "BBB", "REG") for wk in BBB_2021_WEEKS])
+        wp = _weekly_player([(2021, "P1", wk, "BBB", 1.0) for wk in BBB_2021_WEEKS])
+        out = build_team_game_half_split_traits(pop, wp, wap)
+        row = out.iloc[0]
+        assert row["first_half_team_games"] == 9
+        assert row["second_half_team_games"] == 8
+
+    def test_games_split_sums_to_real_season_total(self):
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 1.0) for wk in AAA_2015_WEEKS])
+        out = build_team_game_half_split_traits(pop, wp, wap)
+        row = out.iloc[0]
+        assert row["first_half_team_games"] + row["second_half_team_games"] == 16
+
+    def test_inactive_half_game_zero_filled(self):
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        first_half_weeks = AAA_2015_WEEKS[:8]
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 10.0) for wk in first_half_weeks[:4]])
+        out = build_team_game_half_split_traits(pop, wp, wap)
+        row = out.iloc[0]
+        assert row["first_half_active_games"] == 4
+        assert row["first_half_team_games"] == 8
+
+    def test_traded_player_not_applicable(self):
+        pop = _population((2023, "P1", "WR"))
+        wap = _weekly_all_positions(
+            [(2023, wk, "KC", "REG") for wk in range(1, 10)] + [(2023, wk, "SF", "REG") for wk in range(10, 19)]
+        )
+        wp = _weekly_player(
+            [(2023, "P1", wk, "KC", 5.0) for wk in range(1, 10)] + [(2023, "P1", wk, "SF", 5.0) for wk in range(10, 19)]
+        )
+        out = build_team_game_half_split_traits(pop, wp, wap)
+        assert out.iloc[0]["team_game_window_applicable"] == False  # noqa: E712
 
 
 class TestOpportunityQualifiedAlwaysPending:
-    def test_half_split_output(self):
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        weekly = _weekly_df(*_weeks(2022, "00-1", {1: 10.0, 2: 12.0, 3: 8.0, 4: 14.0}))
-        out = pst.build_half_split_traits(pop, weekly)
-        assert (out["opportunity_qualified"] == pst.OPPORTUNITY_STATUS_PENDING).all()
+    def _pop_and_data(self):
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 5.0) for wk in AAA_2015_WEEKS])
+        return pop, wp, wap
 
-    def test_final_n_games_output(self):
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        weekly = _weekly_df(*_weeks(2022, "00-1", {1: 10.0, 2: 12.0, 3: 8.0, 4: 14.0}))
-        out = pst.build_final_n_games_traits(pop, weekly, n=4)
-        assert (out["opportunity_qualified"] == pst.OPPORTUNITY_STATUS_PENDING).all()
-        # never a boolean or any other type
-        assert set(out["opportunity_qualified"].unique()) == {"pending"}
+    def test_team_game_final_n(self):
+        pop, wp, wap = self._pop_and_data()
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
+        assert (out["opportunity_qualified"] == OPPORTUNITY_STATUS_PENDING).all()
 
+    def test_active_game_final_n(self):
+        pop, wp, _ = self._pop_and_data()
+        out = build_active_game_final_n_traits(pop, wp, n=4)
+        assert (out["opportunity_qualified"] == OPPORTUNITY_STATUS_PENDING).all()
 
-class TestFinalNGamesParametrization:
-    def test_different_n_produce_different_real_counts(self):
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        weekly = _weekly_df(*_weeks(2022, "00-1", {w: 10.0 + w for w in range(1, 18)}))  # full 17-game season
-        out_n4 = pst.build_final_n_games_traits(pop, weekly, n=4)
-        out_n6 = pst.build_final_n_games_traits(pop, weekly, n=6)
-        assert out_n4.iloc[0]["final_n_games"] == 4
-        assert out_n6.iloc[0]["final_n_games"] == 6
-        assert out_n4.iloc[0]["window_n"] == 4
-        assert out_n6.iloc[0]["window_n"] == 6
-
-    def test_window_uses_trailing_weeks_not_leading(self):
-        """Points differ by week (week 14-17 = 100s, weeks 1-13 = 1s) --
-        a trailing-4 window must average the LATE points, not the
-        early ones."""
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        points = {w: 1.0 for w in range(1, 14)}
-        points.update({14: 100.0, 15: 100.0, 16: 100.0, 17: 100.0})
-        weekly = _weekly_df(*_weeks(2022, "00-1", points))
-        out = pst.build_final_n_games_traits(pop, weekly, n=4)
-        assert out.iloc[0]["final_n_games_ppg"] == pytest.approx(100.0)
-
-    def test_invalid_n_raises(self):
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        weekly = _weekly_df(*_weeks(2022, "00-1", {1: 10.0}))
-        with pytest.raises(ValueError, match="n must be a positive integer"):
-            pst.build_final_n_games_traits(pop, weekly, n=0)
+    def test_team_game_half_split(self):
+        pop, wp, wap = self._pop_and_data()
+        out = build_team_game_half_split_traits(pop, wp, wap)
+        assert (out["opportunity_qualified"] == OPPORTUNITY_STATUS_PENDING).all()
 
 
 class TestRequiredColumnValidation:
-    def test_half_split_missing_population_column_raises(self):
-        bad_pop = pd.DataFrame({"season": [2022]})
-        weekly = _weekly_df(*_weeks(2022, "00-1", {1: 10.0}))
-        with pytest.raises(ValueError, match="population is missing required columns"):
-            pst.build_half_split_traits(bad_pop, weekly)
+    def test_final_n_missing_team_column_raises(self):
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        bad_weekly = pd.DataFrame([{"season": 2015, "player_id": "P1", "week": 1, "fantasy_points_ppr": 5.0}])
+        with pytest.raises(ValueError, match="missing required columns"):
+            build_team_game_final_n_traits(pop, bad_weekly, wap, n=4)
 
-    def test_half_split_missing_weekly_column_raises(self):
-        pop = _population_df({"season": 2022, "player_id": "00-1", "position": "WR"})
-        bad_weekly = pd.DataFrame({"season": [2022]})
-        with pytest.raises(ValueError, match="weekly is missing required columns"):
-            pst.build_half_split_traits(pop, bad_weekly)
-
-    def test_final_n_games_missing_column_raises(self):
-        bad_pop = pd.DataFrame({"season": [2022]})
-        weekly = _weekly_df(*_weeks(2022, "00-1", {1: 10.0}))
-        with pytest.raises(ValueError, match="population is missing required columns"):
-            pst.build_final_n_games_traits(bad_pop, weekly, n=4)
-
-
-class TestConfigConsistency:
-    def test_sensitivity_floor_never_exceeds_primary_floor(self):
-        assert config.DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY <= config.DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY
-
-    def test_floors_are_positive(self):
-        assert config.DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY >= 1
-        assert config.DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY >= 1
+    def test_invalid_n_raises(self):
+        pop = _population((2015, "P1", "WR"))
+        wp = _weekly_player([(2015, "P1", 1, "AAA", 5.0)])
+        with pytest.raises(ValueError, match="n must be a positive integer"):
+            build_active_game_final_n_traits(pop, wp, n=0)
 
 
 class TestRowCountPreserved:
-    def test_one_row_per_season_player_half_split(self):
-        pop = _population_df(
-            {"season": 2022, "player_id": "00-1", "position": "WR"},
-            {"season": 2022, "player_id": "00-2", "position": "RB"},
-        )
-        weekly = _weekly_df(*_weeks(2022, "00-1", {1: 10.0}))
-        out = pst.build_half_split_traits(pop, weekly)
+    def test_population_row_count_preserved_team_game(self):
+        pop = _population((2015, "P1", "WR"), (2015, "P2", "RB"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 5.0) for wk in AAA_2015_WEEKS])
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
+        assert len(out) == 2  # P2 preserved even with zero real rows anywhere
+
+    def test_population_row_count_preserved_active_game(self):
+        pop = _population((2015, "P1", "WR"), (2015, "P2", "RB"))
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 5.0) for wk in AAA_2015_WEEKS])
+        out = build_active_game_final_n_traits(pop, wp, n=4)
         assert len(out) == 2

@@ -24,8 +24,33 @@ def season_length(season: int) -> int:
     SBV_* config constants directly (this is the same verified
     real-world fact SBV's own lib/stars_by_value/production.py::season_length()
     encodes, not a Dataset-2-specific number) rather than duplicating
-    the era-cutoff literal in a second place."""
+    the era-cutoff literal in a second place.
+
+    THIS IS REAL GAMES PLAYED, NOT THE MAXIMUM REAL REG WEEK NUMBER --
+    see real_reg_week_slots() below. Using this function's return value
+    directly as a max-week bound is a real, previously-committed bug
+    (lib/dataset2/partial_season_traits.py, found and fixed 2026-07,
+    see research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md):
+    real REG week NUMBERS run 1..season_length(season)+1, one higher
+    than the games-played count, because every team's real bye week
+    consumes a week number without being a played game (verified
+    directly: real 2015 weeks run 1-17 despite season_length(2015)==16;
+    real 2021 weeks run 1-18 despite season_length(2021)==17)."""
     return SBV_SEASON_LENGTH_17_GAME if season >= SBV_SEASON_LENGTH_ERA_CUTOFF else SBV_SEASON_LENGTH_16_GAME
+
+
+def real_reg_week_slots(season: int) -> int:
+    """The real maximum REG week NUMBER for `season` -- season_length(season)
+    + 1, accounting for the one week-number slot every team's real bye
+    consumes without a played game. THE SHARED, CANONICAL way to bound
+    or classify a real `week` column anywhere in Dataset 2 -- e.g. "is
+    this week real postseason" (`week > real_reg_week_slots(season)`,
+    the exact rule already proven in participation_traits.py's real
+    2016/2022 week-range checks) or "what's the real week-number
+    ceiling for this season." Do NOT use season_length() directly for
+    this -- see that function's own docstring for the real bug this
+    helper exists to prevent from recurring in a second module."""
+    return season_length(season) + 1
 
 
 def validate_columns(df: pd.DataFrame, required, label: str) -> None:
@@ -89,6 +114,39 @@ def lag_join(df: pd.DataFrame, value_col: str, lag: int) -> pd.Series:
     lookup = lookup.rename(columns={value_col: "_lagged_value"})
     merged = df[["season", "player_id"]].merge(lookup, on=["season", "player_id"], how="left")
     return merged["_lagged_value"]
+
+
+def build_team_game_index(weekly_all_positions: pd.DataFrame) -> pd.DataFrame:
+    """Real (season, team, week) -> chronological `team_game_index`
+    (1..G) and `team_total_games` (G), derived from the real REG weeks
+    where AT LEAST ONE player recorded a real weekly row for that team
+    -- no separate schedule fetch needed. `weekly_all_positions` must be
+    the FULL weekly file (every position, not just skill positions --
+    restricting first risks missing a real team-week, the same real
+    risk already documented in Source A's own team-week-denominator
+    audit) with at least `season`, `week`, `team`, `season_type`
+    columns; filtered to REG internally.
+
+    Verified directly against real data before this was written: a
+    team's real REG week COUNT from this method exactly matches
+    season_length(season) for every real team-season checked (real
+    2015: 16; real 2021: 17) -- a real bye week correctly produces a
+    gap in the raw week numbers (e.g. real 2015 New England: weeks
+    1,2,3,5,6,...,17 -- week 4 is the real bye, absent, not a zero-row
+    placeholder), which ranking the existing weeks 1..G correctly
+    compresses out. This is the real, general building block for every
+    Dataset 2 team-game-sequence window (final-N team games,
+    team-game-index half-split) -- see partial_season_traits.py.
+    """
+    validate_columns(weekly_all_positions, ("season", "week", "team", "season_type"), "weekly_all_positions")
+
+    reg = weekly_all_positions[weekly_all_positions["season_type"] == "REG"]
+    team_weeks = reg[["season", "team", "week"]].drop_duplicates().sort_values(["season", "team", "week"])
+
+    team_weeks["team_game_index"] = team_weeks.groupby(["season", "team"]).cumcount() + 1
+    team_weeks["team_total_games"] = team_weeks.groupby(["season", "team"])["team_game_index"].transform("max")
+
+    return team_weeks.reset_index(drop=True)
 
 
 def within_group_zscore(df: pd.DataFrame, value_col: str, group_col: str) -> pd.Series:
