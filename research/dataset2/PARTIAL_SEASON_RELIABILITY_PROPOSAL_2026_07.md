@@ -1,60 +1,40 @@
 # Family #9 Partial-Season Reliability Proposal — 2026-07
 
-**REGENERATED 2026-07 after the week-boundary bug fix and the
-team-game/active-game window redesign.** Every table in this version
-comes from running the real, committed, tested
-`lib/dataset2/partial_season_traits.py` and
-`lib/dataset2/common.py::build_team_game_index()` (plus a research
-script that extends the same corrected window logic with Source A/B
-opportunity fields not yet part of the committed module's output)
-against real Sources A/B and the real master DB population — not
-samples, not synthetic data, and not the superseded numbers from this
-document's first version. **PROPOSAL ONLY — no threshold is chosen, no
-`opportunity_qualified` logic is implemented, and nothing here has been
-committed.**
+**The bug fix and team-game-sequence redesign described in this
+document's §0/§1 are APPROVED and COMMITTED** (`c79eea0`, "Fix Dataset
+2 week-boundary bug and redefine family #9 windows by team-game
+sequence"). This round adds the exclusion audit requested before any
+floor is selected (§1a, new) and an explicit `team_game_window_status`
+field (code change, tested, NOT yet committed — see §1a) replacing the
+prior boolean `team_game_window_applicable`. **PROPOSAL ONLY beyond
+what's already committed — no threshold is chosen, no
+`opportunity_qualified` logic is implemented.**
 
 ---
 
-## 0. The week-boundary bug — FIXED, not just flagged
+## 0. The week-boundary bug — FIXED and committed
 
-The first version of this proposal found and flagged (not fixed) a
-real bug: `lib/dataset2/partial_season_traits.py` used
-`season_length()` (real games played, 16 or 17) directly as the
-maximum real REG week number, when real REG week numbers actually run
-one higher (`season_length(season) + 1`) because every team's real bye
-consumes a week-number slot without a played game.
+`lib/dataset2/partial_season_traits.py` used `season_length()` (real
+games played, 16 or 17) directly as the maximum real REG week number,
+when real REG week numbers actually run one higher
+(`season_length(season) + 1`) because every team's real bye consumes a
+week-number slot without a played game.
 
-**Fixed this round**: `lib/dataset2/common.py` now has
-`real_reg_week_slots(season)` — the one shared, documented helper for
-this fact, reused by `participation_traits.py`'s `_is_postseason()`
-(refactored to call it instead of re-deriving `+1` inline) and by every
-Dataset 2 module going forward. An audit of every other
-`lib/dataset2/*.py` module for the same mistake found none — the bug
-was isolated to `partial_season_traits.py`.
+Fixed via a new shared helper, `common.py::real_reg_week_slots()`,
+reused by `participation_traits.py`'s `_is_postseason()` (refactored,
+not duplicated). An audit of every other `lib/dataset2/*.py` module
+found no other instance of the mistake.
 
-**Regression tests added** (`tests/test_dataset2_common.py`,
-`tests/test_dataset2_partial_season_traits.py`): a real 16-game season
-played across Weeks 1-17, a real 17-game season played across Weeks
-1-18, postseason exclusion at both boundaries, and confirmation that
-final-4 logic never returns more than 4 real team games (verified
-against realistic bye-gap fixtures for both eras, not just the
-already-correct `real_reg_week_slots()` helper in isolation).
-
-**Full suite: 903/903 passing** (`python -m pytest tests/ -q
---import-mode=importlib`; 884 before this round + 11
-`test_dataset2_common.py` + net +8 in the rewritten
-`test_dataset2_partial_season_traits.py` [25 new vs. 17 before] = 903,
-exact).
+Regression tests: a real 16-game season played across Weeks 1-17, a
+real 17-game season played across Weeks 1-18, postseason exclusion at
+both boundaries, and confirmation that final-4 logic never returns
+more than 4 real team games.
 
 ---
 
-## 1. The window redefinition, per instruction: team-game sequence, not
-calendar week
+## 1. The window redefinition — team-game sequence, not calendar week
 
-Windows are no longer defined by calendar week number or arithmetic
-against `season_length()` at all. Two structurally different window
-types are now built and compared, matching the original module's real,
-committed functions:
+Two structurally different window types, both committed:
 
 **A. TEAM-GAME windows (PRIMARY late-season trait)** —
 `build_team_game_final_n_traits()`, `build_team_game_half_split_traits()`.
@@ -62,233 +42,360 @@ A team's real final N (or first/second half of) REG games, built from
 `build_team_game_index()` (derived from the FULL real weekly file — no
 new schedule fetch). Every one of the team's real games in the window
 counts, INCLUDING a game the player was inactive or recorded zero real
-usage in — zero-filled, never dropped. This is what "reflects real
-late-season availability and production" means. Restricted to
-single-team players (10,835 of 11,174 real population rows, 97%) — a
-traded player's "team's final N games" is genuinely ambiguous; that
-comparison belongs to the separate trade-split analysis (§4).
+usage in — zero-filled, never dropped. Restricted to single-team
+players — a traded player's "team's final N games" is genuinely
+ambiguous; that comparison belongs to the separate trade-split
+analysis (§4).
 
 **B. ACTIVE-GAME windows (SECONDARY performance-when-active
 diagnostic)** — `build_active_game_final_n_traits()`. The player's own
 real final N games WITH real usage, in chronological order, wherever
 in the season they fell. Immune to the week-boundary bug by
-construction (no week-number arithmetic at all — just the player's own
-last N real rows).
+construction.
 
 **First/second half** now split on each team's real chronological
-game INDEX (`ceil(team_total_games / 2)`), not calendar week — a real,
-verified difference from the original definition: for a 16-game-era
-team, the corrected cutoff is `ceil(16/2) = 8` team-games, which (for a
-team whose real bye falls before its 8th game) does NOT land on the
-same calendar week the old, buggy `ceil(16/2) = 8`-used-as-a-week-number
-version did.
-
-**A real, previously invisible finding from comparing the two window
-types on the SAME real data**: the active-game "games≥4" population is
-dramatically larger than the team-game "active_games≥4" population for
-every position (QB 1,059 vs. 486; RB 2,430 vs. 1,118; WR 3,678 vs.
-1,790; TE 1,959 vs. 721). This makes real sense — the active-game
-window can pull a player's "last 4 games with usage" from ANYWHERE in
-the season (an early-season cameo before a season-long benching still
-counts), while the team-game window is restricted to what actually
-happened in the team's true final 4 games. The active-game window's
-opportunity distribution is also real and meaningfully lower at every
-percentile (e.g. QB attempts p10: 36 active-game vs. 97 team-game) —
-concrete, real confirmation that these two windows answer different
-questions and neither should be treated as a stand-in for the other.
+game INDEX (`ceil(team_total_games / 2)`), not calendar week.
 
 ---
 
-## 2. Reliability floors: participation floor vs. opportunity floor,
-distinguished per instruction
+## 1a-0. Terminology clarification (requested) — three separate
+concepts, not two
 
-**Minimum-SAMPLE (participation) floor** — unchanged, already approved:
-**≥4 active games primary**, **≥3 sensitivity**, below 3 never usable.
-For team-game windows this is checked against `*_active_games` (how
-many of the window's real team games had real usage), NOT the window
-size itself (which is always exactly N by construction). For
-active-game windows it's checked against the window's own real game
-count (which can be less than N).
+The prior round's summary conflated two different statements in a way
+that read as contradictory: "final-4 team-game qualification requires
+real usage in all four games" and "2,148 players with zero usage
+remain represented" are BOTH true, but they describe two different
+stages, not the same one. Stated explicitly and kept separate from
+here on:
 
-**Two distinct opportunity-related floors, not one, per instruction**:
+1. **Inclusion in the underlying team-game window dataset** —
+   determined solely by `team_game_window_status`. A player is
+   INCLUDED whenever status is `applicable` (a single real team was
+   identified and that team's real games were found) — REGARDLESS of
+   how much real usage they had in the window. The 2,148 zero-usage
+   players are fully included at this stage: `team_final_n_games == 4`
+   (the real window size), `team_final_n_active_games == 0` (the real
+   fact). Only `unavailable_traded`/`unavailable_no_team_evidence`/
+   `unavailable_other` rows are excluded from this stage, and that
+   exclusion is about identity resolution (which team's games apply),
+   never about how much the player played.
+2. **Meeting the participation/interpretability floor** —
+   `team_final_n_active_games ≥` the sample floor (4 primary, 3
+   sensitivity). This is a SEPARATE, later question: given the player
+   IS in the dataset (stage 1), is their real usage sample big enough
+   for a RATE (PPG, snap share, catch rate, etc.) computed from it to
+   be interpretable at all? A zero-usage player is included per stage
+   1 but fails this floor — their raw fields stay populated (as real,
+   informative zeros); only a RATE field gets nulled.
+3. **Meeting the meaningful-role floor** — a further, stronger
+   opportunity threshold (targets/carries/attempts/snap-share) checked
+   only among players who already cleared stage 2, distinguishing a
+   real substantial role from merely-interpretable involvement.
 
-- **A minimum PARTICIPATION floor** — the lowest real bar needed for
-  the trait to be interpretable at all (excludes a true statistical
-  zero — e.g. a player who "played" 4 team games but recorded 0 or 1
-  real touches, which is not usage, it's roster presence).
-- **A stronger OPPORTUNITY floor** — representing a real, meaningful
-  role, not just non-zero involvement.
+**A player with an applicable team-game window and zero usage is
+never described as "excluded" in this document going forward** —
+they are included (stage 1), and separately, correctly, reported as
+not meeting the participation floor (stage 2). Excluded is reserved
+for the real `unavailable_*` statuses only.
 
-Real candidate levels (informed by the percentiles computed against
-the corrected windows, not picked in the abstract):
+## 1a-1. Methodology: what gets a floor, and how
 
-| Position | Metric | Participation floor (candidate) | Opportunity floor (candidate) |
-|---|---|---|---|
-| QB | attempts | ≥15 | ≥60 |
-| RB | carries | ≥3 | ≥15 |
-| WR | targets | ≥2 | ≥8 |
-| TE | targets | ≥2 | ≥8 |
-| All (general, position-normalized, Source B 2013+ only) | `offense_snap_share` | ≥10% | ≥30% |
+Per instruction, applied consistently from here on:
 
-**Real retained counts, TEAM-GAME final-4 window (base:
-active_games≥4)**:
-
-| Position | Base n | Participation floor n (%) | Opportunity floor n (%) | Opportunity-floor snap-share n (%) |
-|---|---|---|---|---|
-| QB | 486 | 483 (99.4%) | 482 (99.2%) | 305 (62.8%, of 307 with real 2013+ coverage) |
-| RB | 1,118 | 1,049 (93.8%) | 844 (75.5%) | 490 (68.2% of 719 with coverage) |
-| WR | 1,790 | 1,470 (82.1%) | 1,306 (73.0%) | 996 (84.8% of 1,175 with coverage) |
-| TE | 721 | 641 (88.9%) | 517 (71.7%) | 463 (92.6% of 500 with coverage) |
-
-Real era breakdown at the OPPORTUNITY floor (RB carries≥15, the
-position most affected): 2011-2020 n=432, pre-2011 n=214, 2021+ n=198
-— roughly proportional to each era's real population share. ADP
-breakdown: 300 of 844 have no real market ADP (replacement-level/
-undrafted), 173 R6-10, 132 R1-2, 124 R3-5, 115 R11+ — the opportunity
-floor does not disproportionately exclude any single ADP tier.
-
-**Real retained counts, ACTIVE-GAME final-4 window (base: games≥4),
-for direct comparison**:
-
-| Position | Base n | Participation floor n (%) | Opportunity floor n (%) |
-|---|---|---|---|
-| QB | 1,059 | 999 (94.3%) | 902 (85.2%) |
-| RB | 2,430 | 2,127 (87.5%) | 1,534 (63.1%) |
-| WR | 3,678 | 2,907 (79.0%) | 2,311 (62.8%) |
-| TE | 1,959 | 1,621 (82.7%) | 975 (49.8%) |
-
-**Real, disclosed asymmetry worth deciding on explicitly, not by
-convenience**: the SAME nominal "opportunity floor" retains a much
-larger raw count from the active-game population than the team-game
-population (e.g. WR: 2,311 vs. 1,306) — because the active-game base
-population itself is larger and includes more marginal players to
-begin with (§1). This is not evidence one window's floor should be
-loosened or tightened to match the other — they are answering
-different real questions and are expected to retain different real
-populations. Per instruction, no single universal floor is proposed
-merely for convenience; the table above is presented so the
-position/window-specific floor decision can be made deliberately.
-
-*(Final-6/8 and half-split tables were computed the same way, using
-the same corrected windows — omitted here for length; available on
-request. The real pattern is consistent: retained counts and
-percentiles grow with window length, the team-vs-active asymmetry
-holds at every window size.)*
+- **Raw team-game production, usage, availability, and role-loss
+  traits get NO minimum opportunity floor.** `team_final_n_games`,
+  `team_final_n_active_games`, and any future raw per-window
+  target/carry/attempt/snap COUNT are exposed for every `applicable`
+  row regardless of how small the real number is — a real zero is
+  itself potentially predictive (a role disappearing is information,
+  not noise to be filtered out) and must stay measurable. **This is
+  already how the committed code behaves** — `_apply_floor()` only
+  ever nulls the PPG (rate) output; it has never gated
+  `team_final_n_games`/`team_final_n_active_games` themselves. No code
+  change is needed for this principle; it's confirmed, not new.
+- **Rate, share, and efficiency traits require the participation
+  floor** (stage 2 above) — PPG is the one currently implemented
+  (`_apply_floor()`, nulled below the sensitivity floor); the same
+  rule would apply to any future rate field (e.g. a windowed catch
+  rate or `offense_snap_share`) built on top of this module.
+- **Meaningful-role thresholds (§2's candidate table) should produce a
+  SEPARATE role-status flag, not a filter that removes low-opportunity
+  players from the underlying dataset or from raw-trait analyses.**
+  None of the candidate thresholds in the table below have been
+  implemented as a filter anywhere in the committed code — the table
+  is exploratory (which real threshold would flag which real
+  population), not a description of rows being removed. If and when a
+  meaningful-role flag is built, it should live as its own boolean/
+  categorical column alongside the always-present raw fields, e.g.
+  `meaningful_role_qualified`, not as a `WHERE` clause applied before
+  the raw data is even exposed.
+- **No single universal floor across all partial-season traits.**
+  Different metrics (PPG vs. snap share vs. targets) and positions
+  (QB vs. RB/WR/TE, per §2's finding below) warrant different real
+  floors — forcing one threshold to serve every purpose would either
+  be too loose for a rate calculation or too strict for a raw
+  availability trait.
 
 ---
 
-## 3. What each floor excludes (unchanged real finding, now on
-corrected data)
+## 1a. Exclusion audit (new, requested before any floor is selected)
 
-The real "decoy" case the original module's docstring worried about is
-still real and still present on the corrected data: the 10th-percentile
-WR/TE in the team-game final-4 `active_games≥4` population has **zero**
-real targets despite having real usage in all 4 of the team's final
-games (a real complementary/decoy role, not a data artifact). Even the
-loosest participation floor (≥2 targets) removes a real, non-trivial
-slice of this population.
+Every number below comes from running the real, committed library
+functions (`build_team_game_final_n_traits()`,
+`build_active_game_final_n_traits()`) against the full real 2006-2025
+population (11,175 skill-position player-seasons) — via a new,
+tested, NOT YET COMMITTED code change replacing the prior boolean
+`team_game_window_applicable` with an explicit
+`team_game_window_status` field (see below for why the boolean wasn't
+enough).
+
+### 1. Why the active-game population is more than twice the team-game
+population — reconciled, not just described
+
+The real driver is a STRUCTURAL zero-slack effect at `n=4`, not
+primarily the trade exclusion. For the team-game final-4 window, the
+sample floor `active_games ≥ 4` is checked against a window that is
+ALWAYS exactly 4 real games — so at `n=4` specifically, clearing the
+floor requires real usage in literally ALL 4 of the team's final
+games, zero slack. The active-game window has no such constraint: it
+can find its 4 qualifying games anywhere across the real season.
+
+Verified directly by re-running both window builders at `n=4/6/8` and
+computing the ratio of active-game-qualified to team-game-qualified
+player-seasons:
+
+| Window | Team-game qualified (active_games≥4) | Active-game qualified (games≥4) | Ratio |
+|---|---|---|---|
+| Final 4 (0 games of slack) | 4,115 | 9,126 | **2.22** |
+| Final 6 (2 games of slack) | 6,111 | 9,126 | **1.49** |
+| Final 8 (4 games of slack) | 7,057 | 9,126 | **1.29** |
+
+The ratio shrinks monotonically as real slack increases — direct,
+quantitative confirmation that the zero-slack structural effect, not
+some other artifact, drives the gap. Decomposing the 5,011
+player-seasons that qualify for active-game-final-4 but not
+team-game-final-4: only **298 (5.9%)** are traded players (team-game
+inapplicable entirely); the remaining **4,713 (94.1%)** are
+SINGLE-TEAM players who had a real 4-game usage stretch somewhere in
+the season that did not coincide with their team's specific final 4
+games (e.g. productive in September, quiet or inactive down the real
+stretch, or the reverse). Trade exclusion is real but secondary.
+
+### 2. Counts excluded from team-game windows, by real cause
+
+`team_game_window_status` (new field, replacing the prior boolean),
+real counts at `n=4` across the full population (11,175):
+
+| Status | n | Real meaning |
+|---|---|---|
+| `applicable` | 10,835 | Single real team identified, that team's real games found |
+| `unavailable_traded` | 339 | 2+ distinct real teams this season |
+| `unavailable_no_team_evidence` | 1 | Zero real weekly rows this season at all |
+| `unavailable_other` | 0 | Defensive catch-all (single team found but that team has no real games in the index) — real, disclosed, simply not triggered by this population |
+
+The single `unavailable_no_team_evidence` case is real and
+identifiable: **Travis Hunter (WR, 2025)** — in the master DB
+population but with zero real rows in the Source A weekly file this
+season. **"No Source B coverage"** is a separate, metric-specific gap,
+not a team-game-window-applicability status: `offense_snap_share`
+requires Source B, real coverage 2013-2025 only (e.g. of the 1,118
+team-game-applicable RB player-seasons, only 719 have any real
+2013+ coverage to compute a snap share from at all — the touch-count
+metrics from Source A remain available for the full 2006-2025 range
+regardless).
+
+### 3. True zero opportunity vs. unavailable data — confirmed
+distinct, confirmed represented
+
+Of the 10,835 `applicable` rows (single real team, that team's real
+games found), **2,148 (19.8%) have `team_final_n_active_games == 0`**
+— a real, meaningful "rostered for the team's real final 4 games, but
+zero recorded usage in any of them" fact. These rows are NOT dropped
+and NOT confused with `unavailable_*` — they carry
+`team_game_window_status == "applicable"`, `team_final_n_games == 4`
+(the real window size), and `team_final_n_active_games == 0` (the real
+zero-usage fact), fully distinguishable from a genuinely inapplicable
+row (which has every numeric field null). A new regression test
+(`test_rostered_but_fully_inactive_player_represented_with_zero_not_dropped`)
+proves this directly. Remaining applicable-population breakdown: 4,115
+meet the primary sample floor (`active_games≥4`); 4,572 have partial
+activity (1-3 of the 4 real window games).
+
+### 4/5. Explicit status fields; traded players available elsewhere
+
+`team_game_window_status` (§2 above) now distinguishes every real
+non-applicable cause instead of collapsing them into one boolean — a
+real, disclosed correction: the prior boolean could not tell a reader
+whether a `False`/null row meant "traded" or "never appeared in the
+data at all," two very different real situations. Traded players get
+`unavailable_traded` for TEAM-GAME windows specifically, and remain
+FULLY available elsewhere: a new regression test
+(`test_traded_player_still_gets_a_valid_active_game_window`) confirms
+`build_active_game_final_n_traits()` never filters by team at all, and
+§4's trade-split analysis is built specifically for this population.
+
+---
+
+## 2. Reliability floors: participation floor vs. meaningful-role
+floor, distinguished, not one universal threshold
+
+**Minimum-SAMPLE (participation) floor for the WINDOW itself** —
+unchanged, already approved: **≥4 active games primary**, **≥3
+sensitivity**, below 3 never usable. Checked against `*_active_games`
+for team-game windows (not the window size, which is always exactly
+N), and against the active-game window's own real count otherwise.
+This is stage 2 of §1a-0's three-stage distinction — it governs
+whether a RATE (PPG) is interpretable, not whether a player is in the
+dataset.
+
+**Two further, distinct concepts for the OPPORTUNITY layer, per
+instruction — not one universal floor, and per §1a-1 neither is a
+dataset filter**:
+- **Participation floor** (for a rate/opportunity metric specifically,
+  distinct from the games-based floor above): the lowest real bar
+  needed for a metric like `offense_snap_share` to be interpretable —
+  excludes a true statistical zero (0-1 real touches) from being
+  read as a meaningful rate.
+- **Meaningful-role floor**: a real, substantial role, not just
+  non-zero involvement — proposed as a future SEPARATE flag (§1a-1),
+  never as a row filter.
+- A **moderate** middle tier is also shown below, since a binary
+  lenient/strict choice would itself be an arbitrary simplification.
+
+**Full compact table, every candidate, all three windows (final-4/6/8)
+and both window types (team-game/active-game)**: see
+`research/dataset2/PARTIAL_SEASON_FLOOR_CANDIDATE_TABLE_2026_07.md`
+(144 real rows) — shown in full in chat for this round. The excerpt
+below is the final-4/team-game slice only, kept here for the
+QB-sensitivity finding's context.
+
+### Compact decision table — TEAM-GAME final-4 window (base:
+`applicable` AND `active_games≥4`), real counts, no selection made
+
+| Position | Metric | Base n | Lenient (participation) | Moderate | Meaningful-role |
+|---|---|---|---|---|---|
+| QB | attempts | 486 | ≥15: 483 (99.4%) | ≥40: 483 (99.4%) | ≥60: 482 (99.2%) |
+| RB | carries | 1,118 | ≥3: 1,049 (93.8%) | ≥8: 975 (87.2%) | ≥15: 844 (75.5%) |
+| WR | targets | 1,790 | ≥2: 1,470 (82.1%) | ≥5: 1,385 (77.4%) | ≥8: 1,306 (73.0%) |
+| TE | targets | 721 | ≥2: 641 (88.9%) | ≥5: 601 (83.4%) | ≥8: 517 (71.7%) |
+| All (general, Source B 2013+ only) | `offense_snap_share` | varies (n with real coverage below) | ≥10% | ≥20% | ≥30% |
+
+**Snap-share tier detail** (n with real 2013+ coverage / retained at
+each tier): QB 307 coverage → 306 / 306 / 305; RB 719 → 662 / 591 /
+490; WR 1,175 → 1,114 / 1,048 / 996; TE 500 → 496 / 483 / 463.
+
+**Real, disclosed finding: QB's touch/share metrics barely move across
+tiers (483→483→482 attempts; 306→306→305 snap-share)** — confirms
+§1a's structural point differently: because the team-game `n=4` window
+requires ALL 4 games active, a QB who clears the sample floor at all
+is already, almost by construction, the real starter. For QB
+specifically, the sample-floor decision (§ above) is doing nearly all
+the real work; an opportunity overlay adds little. RB/WR/TE show real,
+substantial movement across tiers (RB: 93.8%→87.2%→75.5%), where the
+opportunity-floor decision matters much more.
+
+**Real era/ADP composition, meaningful-role tier, RB carries≥15 (most
+affected position)**: era 2011-2020 n=432, pre-2011 n=214, 2021+
+n=198 — roughly proportional to population share. ADP: 300 of 844 no
+real market ADP, 173 R6-10, 132 R1-2, 124 R3-5, 115 R11+ — no single
+tier disproportionately excluded.
+
+The ACTIVE-GAME window's own equivalent table, and the final-6/final-8
+versions of both window types, are computed the same way and included
+in full in `PARTIAL_SEASON_FLOOR_CANDIDATE_TABLE_2026_07.md` (and
+shown in full in chat this round) — not omitted this time. The real
+pattern holds across all of them: retained counts and percentiles grow
+with window length; QB's low sensitivity to the opportunity overlay
+and RB/WR/TE's higher sensitivity are consistent at every window size
+and in both window types. Half-split tables were not recomputed this
+round (the exclusion audit and three-window table were the specific
+request) — available on request if wanted before threshold approval.
+
+**No floor is selected here.** Per instruction, the lenient/moderate/
+meaningful-role distinction is preserved as three genuinely different
+concepts, not collapsed for convenience — which tier (or whether
+different positions warrant different tiers, e.g. QB not needing an
+opportunity overlay at all given the finding above) remains an open
+decision.
+
+---
+
+## 3. What each candidate threshold would flag differently (not
+"exclude" — see §1a-0)
+
+The real "decoy" case is still present on the corrected data: the
+10th-percentile WR/TE in the team-game final-4 `active_games≥4`
+population has **zero** real targets despite real usage in all 4 of
+the team's final games (a real complementary/decoy role, fully present
+in the raw dataset per §1a-1). Even the lenient candidate (≥2 targets)
+would separate out a real, non-trivial slice of this population if
+built as a role-status flag.
 
 ---
 
 ## 4. Trade splits — coverage-limited research, three-way counts
-preserved per instruction
+preserved
 
 **339 real traded skill-position player-seasons, 2006-2025** (WR 164,
-RB 121, TE 40, QB 14) — real counts unchanged from this proposal's
-first version (trade detection doesn't depend on the week-boundary fix
-— it's a distinct-team count plus each player's own chronological
-row order, never a `season_length()`-derived boundary).
-
-**Full three-way breakdown, not collapsed into a single "qualifies"
-count**:
+RB 121, TE 40, QB 14).
 
 | Floor | Before-side only | After-side only | Both sides | Neither side | Total |
 |---|---|---|---|---|---|
 | Primary (≥4) | 60 | 88 | **105** | 86 | 339 |
 | Sensitivity (≥3) | 52 | 81 | **152** | 54 | 339 |
 
-**Per instruction: direct before/after conclusions require BOTH sides
-independently qualifying.** At the primary floor that is 105 of 339
-(31%) — the standard is not loosened to inflate this number. The
-before-only (60) and after-only (88) groups remain real and reportable
-for a ONE-SIDED question ("how did this player perform after landing
-with his new team," ignoring the before side, or vice versa) but must
-not be silently combined into a two-sided before/after comparison —
-that would use a real "after" value next to a missing or
-floor-failing "before" value, understating the real comparison's own
-uncertainty.
+Direct before/after conclusions require BOTH sides independently
+qualifying (105 of 339, 31%, at the primary floor) — the standard is
+not loosened to inflate this number. Before-only/after-only groups
+remain real and reportable for one-sided questions only.
 
 ---
 
-## 5. Deferred event-based splits — status unchanged, restated
-explicitly per instruction
+## 5. Deferred event-based splits
 
 **Starter/promotion splits remain approved but deferred** until the
-depth-chart source is extended to weekly resolution (currently only a
-preseason snapshot is built — see this proposal's first version §5 for
-the real feasibility check: weekly depth-chart data exists in the raw
-source, median 13.5 real weeks of coverage per player in a 2020
-sample, but no module reads it at week grain yet). Not attempted this
-round; still a separate, explicitly-scoped follow-up.
+depth-chart source is extended to weekly resolution.
 
 **The teammate-injury proxy is NOT being implemented as an injury
-trait.** The first version of this proposal tested a real,
-leakage-safe usage-ABSENCE proxy (season-attempts-leader QB with 0 real
-attempts in a week the team played) and found it caught only 13 of 634
-real team-seasons (2%) — far too narrow, and demonstrably mislabels
-the real sequence of events for a starter who lost the job permanently
-early in the season rather than briefly missing time. **Per
-instruction: 13 of 634 is insufficient, and this proxy must not be
-labeled "injury" without real injury evidence** — no real injury
-designation data is acquired in this project (nflverse's `injuries`
-release exists per the roadmap's inventory but was never fetched).
-Injury-conditioned splits are deferred until that source is wired in.
-A future TEAMMATE-ABSENCE variable (explicitly not named or framed as
-injury) may be tested separately on its own real merits — not proposed
-or scoped further here.
+trait.** The tested usage-absence proxy caught only 13 of 634 real
+team-seasons (2%) — insufficient, and it must not be labeled "injury"
+without real injury evidence, which this project does not have wired
+in. A future TEAMMATE-ABSENCE variable (not framed as injury) may be
+tested separately on its own merits — not scoped further here.
 
 ---
 
-## 6. Not buildable now, unchanged from the first version
+## 6. Not buildable now
 
-Usage before/after bye (needs real schedule data, neither Source A nor
-B — low-burden future addition, not attempted here), points after
-coaching change (no data source exists), usage with/without starting
-QB and RB-committee games (need the same weekly depth-chart resolution
-as §5), production excluding injury-limited/return-from-injury games
-(needs real injury data, same gap as §5's proxy finding).
+Usage before/after bye (needs real schedule data), points after
+coaching change (no data source), usage with/without starting QB and
+RB-committee games (need weekly depth-chart resolution), production
+excluding injury-limited/return-from-injury games (needs real injury
+data).
 
 ---
 
-## 7. No leakage — unchanged design constraint
+## 7. No leakage — design constraint, unchanged
 
-Every split above describes something that happened during season N.
-None of it may be used to predict season N's own outcome. Whatever
-final family #9 features are eventually built get computed as
-season-N raw values, then strictly lagged via `lag_join()` (the same
-pattern already proven for Sources A/B) to produce
-`prior_season_team_final_4_games_ppg`,
-`prior_season_active_final_4_games_ppg`, etc. Not implemented in this
-proposal — the design constraint is restated so any future
-implementation is held to it from the start.
+Whatever final family #9 features are eventually built get computed as
+season-N raw values, then strictly lagged via `lag_join()` to produce
+`prior_season_team_final_4_games_ppg`, etc. Not implemented in this
+proposal.
 
 ---
 
 ## Stop point
 
-This is a proposal only. No threshold has been chosen and no
-`opportunity_qualified` logic has been implemented. What HAS changed
-in this round, as real, tested, committed code (not proposal-only):
-the week-boundary bug fix (`common.py::real_reg_week_slots()`), the
-team-game-index infrastructure (`common.py::build_team_game_index()`),
-and the redefined `partial_season_traits.py` window functions
-(`build_team_game_final_n_traits()`, `build_active_game_final_n_traits()`,
-`build_team_game_half_split_traits()`) — all with regression tests,
-all passing (903/903). Nothing has been git-committed yet. Awaiting
-your decision on:
-1. Whether the participation-floor / opportunity-floor candidate
-   levels in §2 (or different levels) should be selected.
-2. Whether the team-game window should be the only one that gets a
-   final `opportunity_qualified` treatment, or both window types.
-3. Whether to commit the code changes described above (the bug fix and
-   window redesign) now, independent of the floor-selection question.
+§0/§1 (bug fix, window redesign) are committed (`c79eea0`). This
+round's new work — the `team_game_window_status` field, its tests, and
+the exclusion audit / floor decision table above — is real, tested
+(907/907 passing, `python -m pytest tests/ -q --import-mode=importlib`),
+and **NOT yet committed**, per instruction to stop again before
+committing or selecting thresholds. Awaiting your decision on:
+1. Whether to commit the `team_game_window_status` code change now
+   (independent of any floor decision).
+2. Which lenient/moderate/meaningful-role tier (or a different one, or
+   different tiers per position given QB's low sensitivity to the
+   opportunity overlay) to select for each position/metric.
+3. Whether the team-game window, the active-game window, or both get a
+   final `opportunity_qualified` treatment.

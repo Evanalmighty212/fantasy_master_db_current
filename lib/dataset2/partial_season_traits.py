@@ -41,13 +41,40 @@ they answer different real questions:
    arithmetic at all, just takes the player's own last N real rows in
    week order.
 
-TEAM-GAME WINDOWS ARE RESTRICTED TO SINGLE-TEAM PLAYERS. A player with
-2+ distinct real teams in `weekly_player` this season is explicitly
-EXCLUDED from team-game windows (`team_game_window_applicable=False`,
-every trait field null, never guessed or defaulted) -- "the team's
-final N games" is genuinely ambiguous for a player who changed teams
-mid-season. That real comparison belongs to a separate trade-split
-analysis (see the reliability proposal doc's §4), not this module.
+TEAM-GAME WINDOWS ARE RESTRICTED TO SINGLE-TEAM PLAYERS, WITH AN
+EXPLICIT STATUS FIELD, NOT A BARE BOOLEAN (revised 2026-07 per the
+reliability proposal's exclusion audit -- see
+research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md).
+Every row gets `team_game_window_status`, one of:
+- `TEAM_GAME_STATUS_APPLICABLE`: a single real team was identified and
+  that team's real games were found -- `team_final_n_games` (or
+  `first_half_team_games`/`second_half_team_games`) is populated,
+  ALWAYS equal to the real window size. `team_final_n_active_games`
+  can legitimately be 0 here -- that is a REAL, MEANINGFUL "rostered
+  but had zero real usage across the window" fact, not missing data,
+  and stays fully represented (zero-filled PPG/opportunity), never
+  dropped from the population.
+- `TEAM_GAME_STATUS_UNAVAILABLE_TRADED`: 2+ distinct real teams in
+  `weekly_player` this season -- "the team's final N games" is
+  genuinely ambiguous for a player who changed teams mid-season. That
+  real comparison belongs to the separate trade-split analysis (see
+  the reliability proposal doc's §4), not this module. Traded players
+  ARE still fully available to `build_active_game_final_n_traits()`
+  (which never filters by team) and to a dedicated trade-split
+  analysis -- this status is scoped to TEAM-GAME windows specifically,
+  not a claim the player is unanalyzable everywhere.
+- `TEAM_GAME_STATUS_UNAVAILABLE_NO_TEAM_EVIDENCE`: zero real rows in
+  `weekly_player` this season at all (never appeared in Source A's
+  weekly file -- practice squad, unrostered, etc.) -- no team can be
+  identified, so no team-game window can be looked up.
+- `TEAM_GAME_STATUS_UNAVAILABLE_OTHER`: a defensive, disclosed
+  catch-all -- a single real team WAS identified from `weekly_player`,
+  but that team has no real games in `weekly_all_positions`'s
+  `build_team_game_index()` output for this season (a real data
+  inconsistency between the two inputs, or a genuine edge case, not
+  silently treated as "applicable" with a null result).
+Every trait field is null for every non-applicable status -- never
+guessed or defaulted.
 
 MINIMUM-SAMPLE FLOOR, real but DIFFERENT MEANING per window type:
 - Team-game windows: `team_final_n_games`/`first_half_team_games`/
@@ -93,12 +120,17 @@ WEEKLY_PLAYER_REQUIRED_COLUMNS = ("season", "player_id", "week", "team", "fantas
 
 OPPORTUNITY_STATUS_PENDING = "pending"
 
+TEAM_GAME_STATUS_APPLICABLE = "applicable"
+TEAM_GAME_STATUS_UNAVAILABLE_TRADED = "unavailable_traded"
+TEAM_GAME_STATUS_UNAVAILABLE_NO_TEAM_EVIDENCE = "unavailable_no_team_evidence"
+TEAM_GAME_STATUS_UNAVAILABLE_OTHER = "unavailable_other"
+
 TEAM_GAME_FINAL_N_OUTPUT_COLUMNS = (
     "season",
     "player_id",
     "position",
     "window_n",
-    "team_game_window_applicable",
+    "team_game_window_status",
     "team_final_n_games",
     "team_final_n_active_games",
     "team_final_n_games_ppg",
@@ -123,7 +155,7 @@ TEAM_GAME_HALF_SPLIT_OUTPUT_COLUMNS = (
     "season",
     "player_id",
     "position",
-    "team_game_window_applicable",
+    "team_game_window_status",
     "first_half_team_games",
     "first_half_active_games",
     "first_half_ppg",
@@ -151,35 +183,65 @@ def _apply_floor(active_games: pd.Series, ppg: pd.Series):
     return ppg_enforced, qualified_primary, qualified_sensitivity
 
 
-def _player_single_team(weekly_player: pd.DataFrame) -> pd.DataFrame:
-    """(season, player_id) -> their one real team for the season, ONLY
-    for players with exactly one distinct real team in `weekly_player`.
-    A traded player (2+ distinct real teams) or a player with zero real
-    rows is simply absent from the result, never guessed -- team-game
-    windows require an unambiguous "the team" to look up that team's
-    real games."""
-    counts = weekly_player.groupby(["season", "player_id"])["team"].nunique()
-    single_ids = counts[counts == 1].index
-    first_team = weekly_player.groupby(["season", "player_id"])["team"].first()
-    return first_team.loc[single_ids].rename("team").reset_index()
+def _player_team_status(population: pd.DataFrame, weekly_player: pd.DataFrame) -> pd.DataFrame:
+    """Every (season, player_id) in `population` -> (team,
+    team_game_window_status). `team` is set only when status is
+    APPLICABLE (exactly one real team found in `weekly_player`); null
+    for TRADED (2+ distinct real teams) and NO_TEAM_EVIDENCE (zero real
+    rows this season) -- see the module docstring's status field
+    section for what each value means. Never guesses a team, never
+    drops a population row."""
+    counts = weekly_player.groupby(["season", "player_id"])["team"].nunique().rename("n_teams")
+    first_team = weekly_player.groupby(["season", "player_id"])["team"].first().rename("team")
+    joined = pd.concat([counts, first_team], axis=1).reset_index()
+
+    base_keys = population[["season", "player_id"]].drop_duplicates()
+    out = base_keys.merge(joined, on=["season", "player_id"], how="left")
+    out["n_teams"] = out["n_teams"].fillna(0).astype(int)
+
+    out["team_game_window_status"] = np.select(
+        [out["n_teams"] == 0, out["n_teams"] == 1, out["n_teams"] >= 2],
+        [
+            TEAM_GAME_STATUS_UNAVAILABLE_NO_TEAM_EVIDENCE,
+            TEAM_GAME_STATUS_APPLICABLE,
+            TEAM_GAME_STATUS_UNAVAILABLE_TRADED,
+        ],
+        default="",
+    )
+    out.loc[out["n_teams"] != 1, "team"] = None
+    return out[["season", "player_id", "team", "team_game_window_status"]]
 
 
 def _scope_to_team_games(
     population: pd.DataFrame, weekly_player: pd.DataFrame, weekly_all_positions: pd.DataFrame
 ):
     """Shared setup for every team-game-window builder: `base`
-    (population scope), `player_team` (single-team players only), and
-    `team_game_index` (every real team's real REG games, chronologically
-    indexed, bye-gap-compressed -- see common.build_team_game_index())."""
+    (population scope), `player_team` (every population row's team +
+    team_game_window_status), and `team_game_index` (every real team's
+    real REG games, chronologically indexed, bye-gap-compressed -- see
+    common.build_team_game_index())."""
     validate_columns(population, POPULATION_REQUIRED_COLUMNS, "population")
     validate_columns(weekly_player, WEEKLY_PLAYER_REQUIRED_COLUMNS, "weekly_player")
 
     base = population[list(POPULATION_REQUIRED_COLUMNS)].drop_duplicates(subset=["season", "player_id"]).reset_index(
         drop=True
     )
-    player_team = _player_single_team(weekly_player)
+    player_team = _player_team_status(base, weekly_player)
     team_game_index = build_team_game_index(weekly_all_positions)
     return base, player_team, team_game_index
+
+
+def _downgrade_unmatched_applicable(out: pd.DataFrame, matched_games_col: str) -> pd.Series:
+    """A row marked APPLICABLE (single real team found) but with no
+    real games found for that team in `team_game_index` is a genuine
+    "other causes" case (module docstring's `TEAM_GAME_STATUS_UNAVAILABLE_OTHER`)
+    -- reclassified here rather than silently left as "applicable" with
+    a null result."""
+    return np.where(
+        (out["team_game_window_status"] == TEAM_GAME_STATUS_APPLICABLE) & out[matched_games_col].isna(),
+        TEAM_GAME_STATUS_UNAVAILABLE_OTHER,
+        out["team_game_window_status"],
+    )
 
 
 def _aggregate_team_window(
@@ -225,9 +287,13 @@ def build_team_game_final_n_traits(
     """PRIMARY late-season trait: the player's own (single) team's real
     final `n` REG games, zero-filling any game the player didn't record
     real usage in (inactive, healthy scratch, etc. -- cause not
-    distinguished, only the real fact of zero usage that game).
-    Traded players get `team_game_window_applicable=False` and every
-    other field null."""
+    distinguished, only the real fact of zero usage that game -- a real
+    `team_final_n_active_games == 0` is a meaningful "rostered, zero
+    role" finding, kept fully represented, not dropped). Non-applicable
+    rows (traded, no real team evidence, or the defensive "other"
+    catch-all) get every trait field null -- see module docstring's
+    `team_game_window_status` section for exactly what each value
+    means."""
     if not isinstance(n, int) or n < 1:
         raise ValueError(f"n must be a positive integer, got {n!r}")
 
@@ -249,8 +315,8 @@ def build_team_game_final_n_traits(
     )
 
     out = base.merge(player_team, on=["season", "player_id"], how="left")
-    out["team_game_window_applicable"] = out["team"].notna()
     out = out.merge(agg, on=["season", "player_id"], how="left")
+    out["team_game_window_status"] = _downgrade_unmatched_applicable(out, "team_final_n_games")
 
     (
         out["team_final_n_games_ppg"],
@@ -317,8 +383,10 @@ def build_team_game_half_split_traits(
     calendar week without changing its real game-index position, so
     this is NOT the same split the original (buggy) week-number version
     produced. Zero-fills any team game the player had no real usage in,
-    same as build_team_game_final_n_traits(). Traded players get
-    `team_game_window_applicable=False`."""
+    same as build_team_game_final_n_traits(). Non-applicable rows
+    (traded, no real team evidence, or the defensive "other" catch-all)
+    get `team_game_window_status` set accordingly and every trait field
+    null -- see module docstring."""
     base, player_team, team_game_index = _scope_to_team_games(population, weekly_player, weekly_all_positions)
 
     tgi = team_game_index.copy()
@@ -330,8 +398,13 @@ def build_team_game_half_split_traits(
         base, player_team, half_weeks, weekly_player, "half", "_games", "_active_games", "_ppg"
     )
 
+    matched_players = agg[["season", "player_id"]].drop_duplicates()
+    matched_players["_matched"] = 1.0
+
     out = base.merge(player_team, on=["season", "player_id"], how="left")
-    out["team_game_window_applicable"] = out["team"].notna()
+    out = out.merge(matched_players, on=["season", "player_id"], how="left")
+    out["team_game_window_status"] = _downgrade_unmatched_applicable(out, "_matched")
+    out = out.drop(columns=["_matched"])
 
     for half, prefix in (("first_half", "first_half"), ("second_half", "second_half")):
         half_agg = agg[agg["half"] == half].drop(columns=["half"]).rename(

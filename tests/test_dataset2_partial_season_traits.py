@@ -23,6 +23,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY, DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY
 from lib.dataset2.partial_season_traits import (
     OPPORTUNITY_STATUS_PENDING,
+    TEAM_GAME_STATUS_APPLICABLE,
+    TEAM_GAME_STATUS_UNAVAILABLE_TRADED,
     build_active_game_final_n_traits,
     build_team_game_final_n_traits,
     build_team_game_half_split_traits,
@@ -67,7 +69,7 @@ class TestTeamGameFinalNRealBoundaries:
         out = build_team_game_final_n_traits(pop, wp, wap, n=4)
         row = out.iloc[0]
         assert row["team_final_n_games"] == 4
-        assert row["team_game_window_applicable"] == True  # noqa: E712
+        assert row["team_game_window_status"] == TEAM_GAME_STATUS_APPLICABLE
 
     def test_17_game_season_final_4_never_exceeds_4_team_games(self):
         pop = _population((2021, "P1", "WR"))
@@ -116,7 +118,7 @@ class TestTeamGameFinalNInactiveZeroFill:
 
 
 class TestTeamGameWindowTradedPlayerExclusion:
-    def test_traded_player_gets_not_applicable(self):
+    def test_traded_player_gets_unavailable_traded_status(self):
         pop = _population((2023, "P1", "WR"))
         wap = _weekly_all_positions(
             [(2023, wk, "KC", "REG") for wk in range(1, 10)] + [(2023, wk, "SF", "REG") for wk in range(10, 19)]
@@ -126,16 +128,59 @@ class TestTeamGameWindowTradedPlayerExclusion:
         )
         out = build_team_game_final_n_traits(pop, wp, wap, n=4)
         row = out.iloc[0]
-        assert row["team_game_window_applicable"] == False  # noqa: E712
+        assert row["team_game_window_status"] == TEAM_GAME_STATUS_UNAVAILABLE_TRADED
         assert pd.isna(row["team_final_n_games"])
         assert pd.isna(row["team_final_n_games_ppg"])
+
+    def test_traded_player_still_gets_a_valid_active_game_window(self):
+        # Team-game windows exclude traded players; active-game windows
+        # never filter by team at all, so a traded player must remain
+        # fully available there (and to a dedicated trade-split
+        # analysis, not built in this module).
+        pop = _population((2023, "P1", "WR"))
+        wp = _weekly_player(
+            [(2023, "P1", wk, "KC", 5.0) for wk in range(1, 10)] + [(2023, "P1", wk, "SF", 5.0) for wk in range(10, 19)]
+        )
+        out = build_active_game_final_n_traits(pop, wp, n=4)
+        row = out.iloc[0]
+        assert row["active_final_n_games"] == 4
+        assert row["active_final_n_games_ppg"] == 5.0
 
     def test_single_team_player_gets_applicable(self):
         pop = _population((2023, "P1", "WR"))
         wap = _weekly_all_positions([(2023, wk, "KC", "REG") for wk in range(1, 19)])
         wp = _weekly_player([(2023, "P1", wk, "KC", 5.0) for wk in range(1, 19)])
         out = build_team_game_final_n_traits(pop, wp, wap, n=4)
-        assert out.iloc[0]["team_game_window_applicable"] == True  # noqa: E712
+        assert out.iloc[0]["team_game_window_status"] == TEAM_GAME_STATUS_APPLICABLE
+
+    def test_player_with_no_real_rows_gets_no_team_evidence_status(self):
+        pop = _population((2023, "P1", "WR"))
+        wap = _weekly_all_positions([(2023, wk, "KC", "REG") for wk in range(1, 19)])
+        # P1 never appears -- practice squad / unrostered. An empty
+        # weekly_player still needs the real required columns present.
+        wp = pd.DataFrame(columns=["season", "player_id", "week", "team", "fantasy_points_ppr"])
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
+        row = out.iloc[0]
+        assert row["team_game_window_status"] == "unavailable_no_team_evidence"
+        assert pd.isna(row["team_final_n_games"])
+
+    def test_rostered_but_fully_inactive_player_represented_with_zero_not_dropped(self):
+        # A player on the roster (single real team) but with ZERO real
+        # usage across the entire window must show up as a real,
+        # meaningful "applicable, zero opportunity" row -- never
+        # conflated with "unavailable" and never dropped.
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        # P1 has zero real rows in weekly_player, but IS listed as
+        # rostered via at least one non-final-window real row so a
+        # single team is identifiable.
+        wp = _weekly_player([(2015, "P1", AAA_2015_WEEKS[0], "AAA", 0.0)])
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
+        row = out.iloc[0]
+        assert row["team_game_window_status"] == TEAM_GAME_STATUS_APPLICABLE
+        assert row["team_final_n_games"] == 4
+        assert row["team_final_n_active_games"] == 0
+        assert not pd.isna(row["team_final_n_games"])  # present, not dropped
 
 
 class TestTeamGameFinalNFloorEnforcement:
@@ -251,7 +296,7 @@ class TestTeamGameHalfSplitRealBoundaries:
             [(2023, "P1", wk, "KC", 5.0) for wk in range(1, 10)] + [(2023, "P1", wk, "SF", 5.0) for wk in range(10, 19)]
         )
         out = build_team_game_half_split_traits(pop, wp, wap)
-        assert out.iloc[0]["team_game_window_applicable"] == False  # noqa: E712
+        assert out.iloc[0]["team_game_window_status"] == TEAM_GAME_STATUS_UNAVAILABLE_TRADED
 
 
 class TestOpportunityQualifiedAlwaysPending:
@@ -275,6 +320,23 @@ class TestOpportunityQualifiedAlwaysPending:
         pop, wp, wap = self._pop_and_data()
         out = build_team_game_half_split_traits(pop, wp, wap)
         assert (out["opportunity_qualified"] == OPPORTUNITY_STATUS_PENDING).all()
+
+
+class TestUnavailableOtherStatus:
+    def test_team_with_no_real_games_in_team_game_index_gets_other_status(self):
+        # P1's single real team ("ZZZ") never appears in
+        # weekly_all_positions at all -- a real inconsistency between
+        # the two inputs, not a traded player and not "no team
+        # evidence" (P1 clearly has real rows). Must be disclosed as
+        # its own status, not silently left "applicable" with a null
+        # result.
+        pop = _population((2023, "P1", "WR"))
+        wap = _weekly_all_positions([(2023, wk, "KC", "REG") for wk in range(1, 19)])
+        wp = _weekly_player([(2023, "P1", wk, "ZZZ", 5.0) for wk in range(1, 19)])
+        out = build_team_game_final_n_traits(pop, wp, wap, n=4)
+        row = out.iloc[0]
+        assert row["team_game_window_status"] == "unavailable_other"
+        assert pd.isna(row["team_final_n_games"])
 
 
 class TestRequiredColumnValidation:
