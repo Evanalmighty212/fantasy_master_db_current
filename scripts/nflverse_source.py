@@ -202,6 +202,55 @@ SNAP_COUNTS_CACHE_DIR = Path("data/raw/nflverse/annual")
 SNAP_COUNTS_EMPTY_SEASON = 2012
 SNAP_COUNTS_FIRST_REAL_SEASON = 2013
 
+# --- pbp_participation (Dataset 2 opportunity/usage foundation,
+# Source C, Stage 1) -- PLAY-level grain (one row per real play, NOT
+# per player-week like snap_counts/stats_player). Real columns
+# (2016-2022 and the legacy 2023 file): nflverse_game_id, old_game_id,
+# play_id, possession_team, offense_formation, offense_personnel,
+# defenders_in_box, defense_personnel, number_of_pass_rushers,
+# players_on_play, offense_players, defense_players, n_offense,
+# n_defense, ngs_air_yards, time_to_throw, was_pressure, route,
+# defense_man_zone_type, defense_coverage_type. `offense_players`/
+# `defense_players` are semicolon-delimited real `gsis_id` lists (NOT
+# pfr_id -- no crosswalk needed for this source, unlike snap_counts).
+# There is no `season`/`week`/`game_type` column -- both are encoded in
+# `nflverse_game_id` ("{season}_{week_token}_{away}_{home}", verified
+# directly, e.g. "2016_01_CAR_DEN"), and postseason rows are NOT
+# separately labeled -- a real week_token beyond that season's real
+# REG week-slot count (lib.dataset2.common.season_length(season) + 1,
+# the same real "+1 for the bye slot" fact already established for
+# Source A) is a real playoff game. Verified directly: 2016 (16-game
+# era) week tokens run 01-21 (17 REG-including-bye + 4 playoff
+# rounds); 2022 (17-game era) run 01-22 (18 + 4) -- confirms the same
+# +4-playoff-rounds pattern in both eras.
+PBP_PARTICIPATION_RELEASE_TAG = "pbp_participation"
+PBP_PARTICIPATION_ASSET_NAME_TEMPLATE = "pbp_participation_{season}.csv"
+PBP_PARTICIPATION_SCHEMA_VERSION_OLD = "nflverse_pbp_participation_v1_20col"
+PBP_PARTICIPATION_SCHEMA_VERSION_NEW = "nflverse_pbp_participation_v2_26col"
+PBP_PARTICIPATION_CACHE_DIR = Path("data/raw/nflverse/annual")
+
+# REAL, VERIFIED SCHEMA FORK AT 2023: nflverse published TWO real
+# files under the "2023" asset name -- `pbp_participation_2023.csv`
+# (49.9MB, the NEW 26-column schema, adding offense_names/
+# defense_names/offense_positions/defense_positions/offense_numbers/
+# defense_numbers on top of the original 20) and
+# `pbp_participation_old_2023.csv` (19.7MB, the ORIGINAL 20-column
+# schema matching 2016-2022 exactly). Real 2024/2025 file sizes
+# (~49-50MB) match the NEW format, confirming it is what the release
+# continues using going forward -- so `pbp_participation_2023.csv`
+# (the NEW, 26-column file) is CANONICAL for season 2023 in this
+# project, kept schema-consistent with 2024/2025 rather than with
+# 2016-2022. `pbp_participation_old_2023.csv` is NOT registered or
+# fetched by this module -- it is a legacy/transitional artifact, not
+# a second real season of data. lib/dataset2/participation_traits.py
+# supports BOTH real schema shapes (20-column, real for 2016-2022; and
+# 26-column, real for 2023-2025) and is tested against real examples
+# of each -- the 20-column shape does not go away, it's simply not
+# season 2023's canonical file.
+PBP_PARTICIPATION_OLD_2023_ASSET_NAME = "pbp_participation_old_2023.csv"
+PBP_PARTICIPATION_SCHEMA_FORK_SEASON = 2023
+PBP_PARTICIPATION_FIRST_REAL_SEASON = 2016
+
 
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -641,4 +690,92 @@ def fetch_snap_counts(season: int) -> pd.DataFrame:
     """Raw snap_counts_<season>.csv as-is -- no normalize step, same
     convention as fetch_depth_chart()/fetch_players()."""
     path = fetch_snap_counts_raw(season)
+    return pd.read_csv(path, low_memory=False)
+
+
+# --- pbp_participation (Dataset 2 opportunity/usage foundation,
+# Source C, Stage 1) ---
+
+
+def register_pbp_participation_manifest_entry(season: int, force: bool = False) -> dict:
+    """The ONLY function that writes or updates a pbp_participation
+    manifest entry -- mirrors register_snap_counts_manifest_entry()
+    exactly, keyed under manifest["pbp_participation"]["seasons"]. For
+    season 2023 specifically, always fetches the real NEW 26-column
+    file (`pbp_participation_2023.csv`) -- the canonical one, per this
+    module's own PBP_PARTICIPATION_SCHEMA_FORK_SEASON comment --
+    `pbp_participation_old_2023.csv` is never registered here."""
+    local_path = PBP_PARTICIPATION_CACHE_DIR / f"pbp_participation_{season}.csv"
+    asset_info = _lookup_asset_id_by_name(
+        PBP_PARTICIPATION_RELEASE_TAG, PBP_PARTICIPATION_ASSET_NAME_TEMPLATE.format(season=season)
+    )
+
+    if force or not local_path.exists():
+        _download_by_asset_id(asset_info["asset_id"], local_path)
+
+    schema_version = (
+        PBP_PARTICIPATION_SCHEMA_VERSION_NEW
+        if season >= PBP_PARTICIPATION_SCHEMA_FORK_SEASON
+        else PBP_PARTICIPATION_SCHEMA_VERSION_OLD
+    )
+
+    manifest = _load_manifest()
+    manifest.setdefault("pbp_participation", {"seasons": {}})
+    with open(local_path, "rb") as f:
+        row_count = sum(1 for _ in f) - 1  # minus header
+    manifest["pbp_participation"]["seasons"][str(season)] = {
+        "asset_id": asset_info["asset_id"],
+        "upstream_updated_at": asset_info["upstream_updated_at"],
+        "asset_url": f"{GITHUB_API_BASE}/releases/assets/{asset_info['asset_id']}",
+        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        "sha256": _sha256(local_path),
+        "schema_version": schema_version,
+        "row_count": row_count,
+    }
+    _save_manifest(manifest)
+    return manifest["pbp_participation"]["seasons"][str(season)]
+
+
+def fetch_pbp_participation_raw(season: int) -> Path:
+    """Downloads (or reuses a cached copy of) one season's raw
+    pbp_participation file BY ITS PINNED ASSET ID from the committed
+    manifest, then verifies it against the manifest's recorded sha256
+    before returning the local path. Never writes the manifest
+    itself."""
+    manifest = _load_manifest()
+    recorded = manifest.get("pbp_participation", {}).get("seasons", {}).get(str(season))
+    if recorded is None:
+        raise RuntimeError(
+            f"pbp_participation season {season} has no entry in {MANIFEST_PATH.name}. "
+            f"If this is a genuinely new season, call "
+            f"register_pbp_participation_manifest_entry({season}) deliberately to "
+            f"record its baseline asset id and hash before it can be used by "
+            f"the pipeline -- this is never done automatically."
+        )
+
+    local_path = PBP_PARTICIPATION_CACHE_DIR / f"pbp_participation_{season}.csv"
+    if not local_path.exists():
+        _download_by_asset_id(recorded["asset_id"], local_path)
+
+    file_hash = _sha256(local_path)
+    if recorded["sha256"] != file_hash:
+        raise RuntimeError(
+            f"INTEGRITY CHECK FAILED for pbp_participation season {season}: the "
+            f"file at {recorded['asset_url']} no longer matches the sha256 "
+            f"recorded in {MANIFEST_PATH.name} (recorded "
+            f"{recorded['sha256'][:12]}..., got {file_hash[:12]}...). Do not "
+            f"silently proceed. Investigate what changed, then deliberately "
+            f"call register_pbp_participation_manifest_entry({season}, force=True) "
+            f"to accept the new data as the new baseline."
+        )
+    return local_path
+
+
+def fetch_pbp_participation(season: int) -> pd.DataFrame:
+    """Raw pbp_participation_<season>.csv as-is -- no normalize step,
+    same convention as fetch_depth_chart()/fetch_snap_counts(). Callers
+    needing a schema-uniform view across the 2023 fork should use
+    lib.dataset2.participation_traits, which handles both real shapes
+    explicitly rather than silently assuming one."""
+    path = fetch_pbp_participation_raw(season)
     return pd.read_csv(path, low_memory=False)

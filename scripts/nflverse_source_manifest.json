@@ -183,6 +183,100 @@
       }
     }
   },
+  "pbp_participation": {
+    "seasons": {
+      "2016": {
+        "asset_id": 141398930,
+        "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/141398930",
+        "retrieved_at": "2026-07-29T00:09:35.216720+00:00",
+        "row_count": 48434,
+        "schema_version": "nflverse_pbp_participation_v1_20col",
+        "sha256": "f47ae39cbe44ca88aa69d5a8a4c134f9edb1f63e0c60c277cf98f9240ec37116",
+        "upstream_updated_at": "2023-12-19T05:50:03Z"
+      },
+      "2017": {
+        "asset_id": 141399377,
+        "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/141399377",
+        "retrieved_at": "2026-07-29T00:09:36.295153+00:00",
+        "row_count": 47998,
+        "schema_version": "nflverse_pbp_participation_v1_20col",
+        "sha256": "227e0e00dbb1507bae4cc167ce31be9b4c46d8d50c09c74c4e9d1a2b0e3885b5",
+        "upstream_updated_at": "2023-12-19T05:57:29Z"
+      },
+      "2018": {
+        "asset_id": 141399858,
+        "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/141399858",
+        "retrieved_at": "2026-07-29T00:09:37.666263+00:00",
+        "row_count": 47875,
+        "schema_version": "nflverse_pbp_participation_v1_20col",
+        "sha256": "b577ac402622dbecda8589bbc0b6ef1e08c1fece9916b6105ce4b29a675be905",
+        "upstream_updated_at": "2023-12-19T06:04:51Z"
+      },
+      "2019": {
+        "asset_id": 141400567,
+        "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/141400567",
+        "retrieved_at": "2026-07-29T00:09:38.818380+00:00",
+        "row_count": 48034,
+        "schema_version": "nflverse_pbp_participation_v1_20col",
+        "sha256": "1a6091df8e4fdb6f937c5ca5be555e4d5b65ea363a69c3d1a3b7dd9fdb0fbf0b",
+        "upstream_updated_at": "2023-12-19T06:12:02Z"
+      },
+      "2020": {
+        "asset_id": 141401404,
+        "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/141401404",
+        "retrieved_at": "2026-07-29T00:09:55.480199+00:00",
+        "row_count": 48513,
+        "schema_version": "nflverse_pbp_participation_v1_20col",
+        "sha256": "7e3e47021025067d2229716867523f1a42e995dff608bfafd55ed9ee385433fc",
+        "upstream_updated_at": "2023-12-19T06:19:27Z"
+      },
+      "2021": {
+        "asset_id": 141402206,
+        "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/141402206",
+        "retrieved_at": "2026-07-29T00:10:04.192787+00:00",
+        "row_count": 50714,
+        "schema_version": "nflverse_pbp_participation_v1_20col",
+        "sha256": "b58e79cd91ea078396c91f9c06452da0b9d650fa42203ee580e1df06e306e785",
+        "upstream_updated_at": "2023-12-19T06:27:12Z"
+      },
+      "2022": {
+        "asset_id": 141402925,
+        "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/141402925",
+        "retrieved_at": "2026-07-29T00:10:11.806174+00:00",
+        "row_count": 50150,
+        "schema_version": "nflverse_pbp_participation_v1_20col",
+        "sha256": "37eae0a8c388d0974c6df9a1f9a1d01f09f63a21440d3b03d7f208c1438c51e4",
+        "upstream_updated_at": "2023-12-19T06:34:53Z"
+      },
+      "2023": {
+        "asset_id": 289571108,
+        "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/289571108",
+        "retrieved_at": "2026-07-29T00:10:22.657365+00:00",
+        "row_count": 46168,
+        "schema_version": "nflverse_pbp_participation_v2_26col",
+        "sha256": "ad01aeb4045ee19a4f086ff38b52b14c8f427d3401e529c3078a4545921650a9",
+        "upstream_updated_at": "2025-09-04T10:25:30Z"
+      },
+      "2024": {
+        "asset_id": 289570937,
+        "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/289570937",
+        "retrieved_at": "2026-07-29T00:10:28.398046+00:00",
+        "row_count": 45919,
+        "schema_version": "nflverse_pbp_participation_v2_26col",
+        "sha256": "b1f436a98b2a7759eb4ed1181e072a35c2666f9aeb356a49c943d28d6be6b0b9",
+        "upstream_updated_at": "2025-09-04T10:24:49Z"
+      },
+      "2025": {
+        "asset_id": 353763509,
+        "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/353763509",
+        "retrieved_at": "2026-07-29T00:10:30.495984+00:00",
+        "row_count": 45184,
+        "schema_version": "nflverse_pbp_participation_v2_26col",
+        "sha256": "59069adfee7b0f464befba8a5e8be331e523633cc6a7ab403d37bcbcdfbe66ac",
+        "upstream_updated_at": "2026-02-10T18:54:08Z"
+      }
+    }
+  },
   "players": {
     "asset_id": 488277688,
     "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/488277688",

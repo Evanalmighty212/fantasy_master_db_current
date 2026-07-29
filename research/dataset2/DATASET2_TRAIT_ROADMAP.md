@@ -121,7 +121,7 @@ building this roadmap** (see "Verified data inventory" below):
 | SBV output (`stars_by_value_player_seasons.csv`) | `star_by_value_label`, `star_by_value_score`, status/provenance | 2006-2025, per-season |
 | `data/processed/sbv_expected_production_lookup.parquet` | `expected_production` (E_P) keyed by `(prediction_season, position, draft_round)`, plus `sample_size`/`sbv_version` | Same coverage as SBV scoring |
 | **nflverse `snap_counts` release** (GitHub `nflverse/nflverse-data`, confirmed live 2026-07 via the public releases API) | Per-player-week offensive/defensive/ST snap counts and snap share | **2012-2025**, confirmed by real asset-name inspection — NOT currently integrated into this pipeline (new fetch, but same established GitHub-release mechanism already used for players/schedules/depth_charts) |
-| **nflverse `pbp_participation` release** (same catalog) | Play-by-play personnel/participation, the real source for route participation | **2016-2025**, confirmed by real asset-name inspection — NOT integrated; a materially shorter real history than snap counts |
+| **nflverse `pbp_participation` release** (same catalog) | Play-by-play personnel/participation. **CORRECTED (§3e-correction, 2026-07, Source C Stage 1)**: this is NOT a full route-participation source — its `route` field identifies only the targeted receiver's route type per play, not a per-player route list. Real, narrower uses: possession-side personnel presence at play grain; targeted-route type on plays with a decided target | **2016-2025**, confirmed by real asset-name inspection — acquired and integrated (Source C Stage 1, 2026-07); see §6.6 |
 | **nflverse `injuries` release** (same catalog) | Weekly injury-report designations (real injury type/status, not just games-missed) | **2009-2025**, confirmed by real asset-name inspection — NOT integrated |
 | **nflverse `combine` release** (same catalog) | Combine drill results | Exists as a single file, not season-keyed per release tag; **real per-season depth NOT yet verified** (would need to open the file itself) |
 | **nflverse `contracts` release** (same catalog) | A single "historical_contracts" file | Exists; **real per-season/per-player depth NOT yet verified** |
@@ -231,6 +231,54 @@ materially lower burden below. `combine`/`contracts`/`ftn_charting`
 remain flagged unverified rather than assumed usable — the taxonomy's
 coverage-aware rule requires disclosing WHY coverage is uncertain, not
 just that it is.
+
+### 3e-correction. CORRECTION (2026-07, Source C Stage 1 real-data
+finding): `pbp_participation` does NOT resolve full route
+participation — this supersedes §3e's "the real source for ROUTE
+participation specifically" characterization above
+
+**This section does not delete or rewrite §3e above** — that was a
+real, honestly-dated assessment made from release-catalog metadata
+alone, before the file's actual contents were inspected. This is the
+correction that followed from doing so, kept as a separate, dated
+entry per this project's standing rule against silently rewriting
+prior decision history.
+
+**Real finding**: `pbp_participation`'s `route` column is a PLAY-level
+field, not a per-player field. It records the route TYPE of the
+targeted receiver only, on the ~42-45% of real plays with a decided
+target (verified: 2023 season, 19,616/46,168 real rows) — it says
+nothing about the routes run by the other 3-4 real receivers/backs on
+that play who weren't thrown to. There is no field in this source that
+identifies "player X ran a route on play Y" for a non-targeted player.
+A candidate fallback (count `offense_players` membership on a real
+pass play as "ran a route") was tested and rejected: real/TE backs who
+stay in to pass-block appear in that list too, which would
+systematically overcount route participation for exactly the positions
+(RB/TE) where this trait matters most. Full detail:
+`research/dataset2/PARTICIPATION_ROUTE_DEFINITION_PROPOSAL_2026_07.md`.
+
+**Status, stated explicitly, per family**:
+- **Full route-participation count (family #16's core claim, and the
+  route-dependent portions of #22/#86/#13)**: **UNAVAILABLE from
+  `pbp_participation` alone.** Recovering it would require a
+  **different source** (a dedicated per-player routes-run dataset, if
+  one exists in nflverse's catalog or elsewhere — not yet identified,
+  not yet searched for). This is a real sourcing gap, **not a "needs
+  more ETL work" burden note** — no amount of additional
+  transformation of `pbp_participation` produces this field, since the
+  underlying data was never collected at that grain in this release.
+- **Snap-share half of #16, and the snap-share sub-signal of #86**:
+  UNAFFECTED by this finding, real and available now via `snap_counts`
+  (Source B, built 2026-07).
+- **Two narrower, coverage-limited ideas, kept as separate hypotheses,
+  not substitutes for #16's full claim**:
+  1. Targeted-route TYPE profile — which routes a player runs when he
+     IS the target. Real, uses `route` correctly for its actual scope.
+  2. Route-specific target outcomes — efficiency conditioned on route
+     type, for targeted plays only. Same real scope limitation.
+  Neither has been implemented; both remain proposals pending approval
+  (see the route-definition proposal doc).
 
 ### 3f. Depth-chart 2025 schema break — RESOLVED, a defensible mapping exists and this project has already proven it once
 **Investigated directly (2026-07), per your instruction not to guess.**
@@ -725,18 +773,18 @@ Tier 1 is validated.*
 | # | Family | Source / burden | Coverage | Leakage risk | 2A/2B |
 |---|---|---|---|---|---|
 | 15 | Target-earning ability | Weekly file has `target_share`/`targets` already fetched, not retained — moderate pipeline work; man/zone-coverage sub-bullets depend on the unverified `ftn_charting` release, not on route participation | Retainable fields: full 2006-2025 once wired; man/zone splits: unverified | None if strictly lagged | Both |
-| 16 | Route participation | **Revised (§3e)**: nflverse `pbp_participation` (route data) and `snap_counts` (snap share) confirmed fetchable, same mechanism as players/schedules/depth_charts — moderate burden (new release tags to wire in, not a nonexistent source) | `pbp_participation` 2016-2025; `snap_counts` 2012-2025 — real, disclosed shorter history than the 2006-2025 master DB | None if lagged | Both |
+| 16 | Route participation | **REVISED AGAIN (§3e-correction, 2026-07, Source C Stage 1 real finding) — SPLIT STATUS, not a single burden level.** The full family (a real per-player routes-run count) is **UNAVAILABLE from nflverse `pbp_participation` alone** — `route` is a real PLAY-level field describing only the targeted receiver's route type, not a per-player list; confirmed by direct real-data testing, not assumed. Recovering true route participation would need a **different, not-yet-identified source** (a dedicated routes-run dataset, if one exists) — this is a real sourcing gap, **not merely pending additional ETL** on `pbp_participation`. The snap-SHARE half is unaffected and remains real and available via `snap_counts` (Source B, built). Two narrower, coverage-limited ideas survive as SEPARATE hypotheses, not substitutes for full route participation: (a) targeted-route TYPE profile (which routes a player runs when he IS the target — uses `route` correctly, for its real scope); (b) route-specific target outcomes (efficiency conditioned on route type, for targeted plays only). See `research/dataset2/PARTICIPATION_ROUTE_DEFINITION_PROPOSAL_2026_07.md`. | Snap-share half: `snap_counts` 2012-2025, real. Full route-count: **no known source**, coverage unknown. Targeted-route-type/outcome ideas: `pbp_participation` 2016-2025, real but narrow (~42-45% of plays have a decided target) | None if lagged | Both |
 | 17 | Air-yard profile | `receiving_air_yards`/`air_yards_share`/`racr`/`wopr` already fetched, not retained — moderate burden | Full 2006-2025 once wired (these are NOT NGS-only metrics in nflverse's box-score release, per the verified header) | None if lagged | Both |
 | 18 | Receiving efficiency | Core fields (`catch_rate`, `yards_per_target`, `yac_per_reception`) derivable from already-fetched columns once retained; man/zone-specific efficiency depends on #19/coverage-charting data (separate, more limited source) | Core: full once wired; coverage-specific: limited | None if lagged | Both |
 | 20 | Carry profile | `carries`, yardage, TD columns already fetched, not retained — moderate burden; red-zone/goal-line-specific carry shares need verification of what the `*_10`/`*_20` distance-bucket columns actually represent (see inventory note) | Core: full once wired; red-zone-specific: unverified | None if lagged | Both |
 | 21 | Rushing efficiency | Core (yards/carry, EPA) as above; advanced metrics (missed tackles forced, yards after contact, success rate, stuff rate) likely need NextGenStats-era data with materially shorter real history | Core: full once wired; advanced: likely 2016+ only, unverified exact start year | None if lagged | Both |
-| 22 | Passing-game role for RBs | Subset of #15/#16 applied to RB position — same prerequisites, same revised burden | Same as #15/#16 | None if lagged | Both |
+| 22 | Passing-game role for RBs | Subset of #15/#16 applied to RB position, **same split status as #16**: the snap-based/target-based portion (via #15's fields and `snap_counts`) is real and available; a true RB routes-run portion is UNAVAILABLE from `pbp_participation` alone, same real finding as #16, not merely pending ETL | Same as #15/#16 | None if lagged | Both |
 | 23 | Red-zone role | Depends on verifying the distance-bucket columns noted above, or a genuinely separate red-zone-specific data cut | Unverified | None if lagged | Both |
 | 24 | Touchdown regression | Core TD totals available now (already retained via fantasy points construction indirectly, though raw `*_tds` columns need explicit retention); "touchdowns above expectation" needs an expected-TD model this project doesn't have yet (a real, separate build, not just a sourcing gap) | TD totals: full; expectation model: not built | None if lagged | Both |
 | 50 | ADP movement | Cross-season ADP comparison already available (Tier-1-equivalent); WITHIN-offseason movement (e.g. "major late-camp rise") needs multiple ADP snapshots per season, which this project does not currently retain per-snapshot | Cross-season: full; intra-offseason: none currently | None if lagged | Both |
 | 51 | ADP disagreement | This project already has real historical multi-source ADP data (FFC/FFToday/MFL) per `docs/ADP_SOURCE_MATRIX.md`'s extensive record, but coverage differs by source and season (not uniform 2006-2025) — genuinely coverage-limited, not a new-sourcing question | Real but uneven across sources/eras — needs the exact per-source coverage table before use | None if all sources are genuinely preseason snapshots (verify per source, per existing spec's own rule) | Both |
 | 52 | Value relative to projections | Depends on having independent PROJECTIONS (not just ADP) as a historical record — unverified whether this project has ever retained third-party season projections historically, likely a real, separate gap | Unverified, likely limited/absent | None if lagged | Both |
-| 86 (split, part) | Volume fragility — the route/snap-share sub-signals ("low route participation," "low snap share," "low first-read share") | Same revised source as #16 (§3e) — moderate burden, not unresolved | Same as #16: `pbp_participation` 2016-2025, `snap_counts` 2012-2025 | None if lagged | 2B primarily |
+| 86 (split, part) | Volume fragility — the route/snap-share sub-signals ("low route participation," "low snap share," "low first-read share") | **Same split status as #16**: "low snap share" is real and buildable now from `snap_counts` (Source B). "Low route participation" specifically is UNAVAILABLE from `pbp_participation` alone (same real finding as #16) — a different source would be needed, this is not an ETL-burden question. "Low first-read share" was never claimed available from `pbp_participation` either and remains unverified/unsourced | Snap-share portion: `snap_counts` 2012-2025, real. Route-participation portion: no known source | None if lagged | 2B primarily |
 | 87 | Efficiency regression risk | Derivable from the same already-fetched-but-not-retained weekly columns as #18/#21/#24 (TD rate, YPC, YPT, catch rate, EPA/success rate) | Full once wired | None if lagged | 2B primarily |
 | 88 (split, part) | Workload and durability risk — the touch-count sub-signals ("prior 350+ touch season," "multiple 300+ touch seasons," "heavy playoff workload") | Derivable from the same already-fetched-but-not-retained carries/targets columns as #20 | Full once wired | None if lagged | 2B primarily |
 
@@ -754,7 +802,7 @@ several not-yet-validated base families.*
 | 3 | Breakout timing | Threshold-sensitivity rule: this is a dense parameterization of family #7/#8's core variables (best-finish-rank-ever, years-since-best-season) across many thresholds — build as ONE swept variable once #7/#8 are validated, not before |
 | 11 | Vacated opportunity | Real and valuable, but depends on #15/#20's target/carry-share fields being wired in first (built on top of them) |
 | 12 | Competition quality | Depends on depth-chart (#10) and draft-capital (#4) fields; a second-order combination, build after both are validated |
-| 13 | Role versatility | Same revised source as #16 (§3e), but combinatorial on top of it — still waits for #16 to be built and validated first, now a real (not unresolved) dependency |
+| 13 | Role versatility | Combinatorial on top of #16 — since #16's full route-count portion is now confirmed UNAVAILABLE from `pbp_participation` alone (§3e-correction), #13 can only build on #16's real snap-share portion (`snap_counts`) until/unless a route-count source is found; waits for that decision, not just for "#16 to be built" |
 | 14 | Return-role interpretation | Niche, small population; depends on special-teams data not yet verified as retained |
 | 45 | Teammate departures | Real, depends on #11 (vacated opportunity) being built first — a named-player refinement of the same underlying signal |
 | 46 | Teammate additions | Same as #45, opposite direction |
@@ -1600,14 +1648,103 @@ traits. Full report: `research/dataset2/SNAP_COUNTS_IDENTITY_AUDIT_2026_07.md`.
   exactly matches 2022's real `offense_snaps`).
 - **Full suite: 839/839 passing.**
 
-**Source C** (`pbp_participation`, real coverage 2016-2025, play-level,
-real 2023 schema fork found) — NOT yet built, per the approved
-sequencing (does not begin until Source A and B are reviewed — B is
-now built and awaiting review). Family #9's partial-window opportunity
-floors (final-N-games, starter-status, before/after injury or
-promotion/trade, half-split) and any route-participation/role
-derivation from snap data are explicitly NOT selected/derived yet, per
-instruction — stopping for review before either.
+**Source C, Stage 1 — APPROVED (2026-07) in a NARROWED FOUNDATION
+ROLE**, after two real-data revisions of the initial submission. Real
+acquisition: `pbp_participation` fetched and cached for all 10 real
+seasons (2016-2025) via `scripts/nflverse_source.py`'s
+`register_pbp_participation_manifest_entry()`/`fetch_pbp_participation()`
+(same asset-ID-pinned, sha256-verified mechanism as every other
+nflverse source this project uses); the real 2023 schema fork
+(20-column `_old_2023` vs. 26-column canonical `2023.csv`, confirmed
+by 2024/2025 file sizes) is handled explicitly, never assumed uniform.
+
+- **CORE FINDING**: complete route participation is **not recoverable
+  from this source** — see §3e-correction above and
+  `PARTICIPATION_ROUTE_DEFINITION_PROPOSAL_2026_07.md` (status: NOT
+  SUPPORTED). Do not implement or imply complete routes run, route
+  participation, routes per dropback, targets per route run, or
+  alignment shares from `pbp_participation`. Those remain unavailable
+  without a different source.
+- **What's built and kept**: `lib/dataset2/participation_traits.py` --
+  raw play-level acquisition with explicit schema-version handling
+  (season/week/postseason derived from `nflverse_game_id` alone, since
+  this source has no explicit season/week/game_type columns — verified
+  postseason rule reuses `season_length(season) + 1`, the same real
+  fact Source A established), and normalized player-play-role
+  participation (explodes the real semicolon-delimited
+  `offense_players`/`defense_players` lists, with tested handling for
+  every edge case required — malformed tokens, duplicate source IDs,
+  cross-role conflicts, empty/null lists — none silently dropped, one
+  row per player/play/role after defensive dedup). Plus
+  `lib/dataset2/participation_identity.py` (identity audit) and
+  `build_duplicate_source_id_report()` (duplicate-source-ID audit).
+- **What's REMOVED (2026-07, final decision)**:
+  `build_season_participation_summary()` and
+  `build_preseason_participation_features()` -- the season/preseason
+  possession-side aggregate layer. It duplicated Source B's precise,
+  verified `offense_snaps`/`defense_snaps`/`st_snaps` season aggregates
+  with WEAKER and potentially MISLEADING possession-side semantics (a
+  real WR return specialist, Mecole Hardman 2023, showed a nonzero
+  count from ST return work purely because the source's "offense"/
+  "defense" source-list names mean POSSESSION SIDE, not literal
+  football offense/defense). No reliable scrimmage-vs-special-teams
+  split exists to fix this (tested `offense_formation` nullness and
+  specialist-position presence against the real 2023 season; neither
+  cleanly separates play type — see the module docstring and the scope
+  assessment doc for the full real test). **Source B remains canonical
+  for actual offensive snap counts and offensive snap percentages.**
+  Do not expose Source C possession-side counts as a preseason
+  player-usage feature.
+- **Identity**: match rate is a clean 100.0% for all four fantasy
+  positions (QB/RB/WR/TE) the master DB tracks; the ~72% of real
+  participants who don't match are a real, confirmed SCOPE mismatch
+  (defensive/O-line/specialist players outside the master DB's tracked
+  positions), not a data defect — see the audit doc for the full real
+  breakdown, including 221 real "known player, off-year gap in the
+  master DB" cases kept distinguishable from true unknowns.
+- **Duplicate source IDs**: `build_duplicate_source_id_report()`
+  reports the real anomaly by season and role: 470 real affected
+  identities across 2016-2025 (467 in 2019, apparently a real,
+  localized nflverse data quirk; 2 in 2024; 1 in 2025) — zero malformed
+  tokens and zero cross-role conflicts found across the same full real
+  population. Defensive dedup (`source_occurrence_count`/
+  `had_duplicate_source_id`) is tested to prove duplicates cannot
+  inflate a player-play row count.
+- **Classification, explicit**: this is COVERAGE-LIMITED
+  INFRASTRUCTURE for later, narrowly scoped research, not a
+  general-purpose Dataset 2 trait pipeline the way Sources A/B are. No
+  approved first-wave Dataset 2 trait currently REQUIRES Source C --
+  that is a narrower, more accurate claim than "no trait can consume
+  it." Several later taxonomy hypotheses may plausibly use its real
+  personnel/formation/box-count/pass-rusher-count/targeted-route-type
+  fields (none exist in Source A or B): personnel and formation
+  context, with/without-player analysis, targeted-route-type outcomes,
+  defenders-in-box context, pass-rusher-count context. None of these is
+  implemented as a trait yet -- see
+  `research/dataset2/PARTICIPATION_SOURCE_SCOPE_ASSESSMENT_2026_07.md`
+  for the full assessment.
+- **Canonical full-suite command**: `python -m pytest tests/ -q
+  --import-mode=importlib` — bare `pytest -q` is NOT supported. The
+  underlying `lib`-package name collision between this project's `lib/`
+  and `research/dataset3/lib/` (confirmed pre-existing, unrelated to
+  this slice) is recorded as OPEN technical debt, not resolved here —
+  see `research/dataset2/PARTICIPATION_SCHEMA_AUDIT_2026_07.md`.
+- **Full suite: 884/884 passing** (839 before Source C + 31
+  `test_dataset2_participation_traits.py` + 10
+  `test_dataset2_participation_identity.py` + 4 guardrail auto-scale --
+  exact reconciliation in the schema audit doc).
+- **Route participation was investigated, not implemented**, per
+  instruction — see
+  `research/dataset2/PARTICIPATION_ROUTE_DEFINITION_PROPOSAL_2026_07.md`
+  (status: NOT SUPPORTED). Two narrower, coverage-limited ideas are
+  proposed as SEPARATE hypotheses, not substitutes for complete route
+  participation (targeted-route type profile; route-specific target
+  outcomes), awaiting approval before either is built.
+
+**Source C, Stage 2** (route participation, family #9 opportunity
+thresholds, alignment traits) — NOT begun, and not to be begun without
+a separate approval, per instruction. No new Source C-derived trait may
+be implemented without one either.
 
 ---
 
