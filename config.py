@@ -830,41 +830,74 @@ DATASET2_ADP_ROUND_BUCKETS = (
 # against how noisy small Dataset 2 cells actually turn out to be.
 DATASET2_ANALYSIS_MIN_CELL_SAMPLE_SIZE = 10
 
-# Family #9 (partial-season production splits) minimum-SAMPLE floors --
-# ORIGINALLY approved 2026-07 from real retained-count analysis against
-# weekly_results_ppr_2006_2025.csv (research/dataset2/DATASET2_TRAIT_ROADMAP.md
-# §6, family #9), back when "games" meant raw calendar-week games in a
-# half/final-N window. That concept no longer exists in the code --
-# lib/dataset2/partial_season_traits.py was rewritten (2026-07) to
-# define windows by real team-game sequence instead (see
-# research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md §0/§1);
-# a team-game window's own size is now always exactly N by
-# construction, so "games in the window" is never the real constraint
-# -- "games with real ACTIVE USAGE" is.
+# Family #9 (partial-season production splits) minimum-ACTIVE-GAMES
+# floors for a PER-ACTIVE-GAME RATE (e.g. points-per-active-game) to be
+# shown at all -- approved 2026-07 from real retained-count analysis
+# (research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md
+# §2b item 1). Explicitly, self-evidently named -- NOT the old generic
+# `..._MIN_GAMES_PRIMARY`/`..._SENSITIVITY` pair (removed 2026-07):
+# that pair was originally approved for a since-removed calendar-week
+# concept, then reused with its two values swapped for this real,
+# different question, which meant a reader had to already know the
+# swap happened to interpret "PRIMARY" correctly -- exactly the kind
+# of implicit-knowledge dependency this rename eliminates. There is no
+# older, differently-scoped version of these two constants to
+# reconcile with; this is their only real history.
 #
-# REVISED 2026-07 for that new meaning, per explicit approval (same
-# proposal doc, §2b item 1): PRIMARY(3) is the interpretability floor
-# -- the minimum real ACTIVE games for a per-active-game rate to be
-# shown at all (nulled below this). SENSITIVITY(4) is a stricter,
-# separately-exposed comparison flag, never silently substituted for
-# the primary result. Kept flat across final-4/6/8 (and first/second
-# half) rather than scaled up with window size -- real data confirmed
-# scaling to near-full attendance for larger windows would be overly
-# punishing (see the proposal doc's §2b "why NOT perfect attendance"
-# finding: requiring full attendance at final-6/8 retains only
-# 26-31% of the population, roughly half of what this flat floor
-# retains). NOTE the values are DELIBERATELY SWAPPED from the original
-# 2026-07 approval (which had PRIMARY=4/SENSITIVITY=3, for the
-# now-obsolete raw-calendar-games concept) -- this is not a silent
-# reinterpretation, it's a fresh, explicit approval of the opposite
-# assignment for a different, real underlying question.
-# Minimum-OPPORTUNITY (target/carry/snap-share) floor is DELIBERATELY
-# NOT set here -- still deferred, real efficiency-reliability and
-# meaningful-role analysis in progress (same proposal doc); do not add
-# a number here without that real data, per the same real-data-only
-# decision rule that produced the two floors below.
-DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY = 3
-DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY = 4
+# PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY (3) is the interpretability
+# floor -- the minimum real ACTIVE games (real usage, not the
+# always-full team-game window size) for the rate to be shown at all
+# (nulled below this). PARTIAL_WINDOW_MIN_ACTIVE_GAMES_SENSITIVITY (4)
+# is a stricter, separately-exposed comparison flag on top of an
+# already-shown rate -- never a second nulling gate, never silently
+# substituted for the primary result. Kept FLAT across final-4/6/8
+# (and first/second half) rather than scaled up with window size --
+# real data confirmed scaling to near-full attendance for larger
+# windows would be overly punishing (requiring full attendance at
+# final-6/8 retains only 26-31% of the population, roughly half of
+# what this flat floor retains).
+DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY = 3
+DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_SENSITIVITY = 4
+
+# Family #9 EFFICIENCY-metric sample-ELIGIBILITY volumes -- approved
+# 2026-07 from real split-half (odd/even real week) OBSERVED HISTORICAL
+# STABILITY analysis, deliberately NOT called a formal statistical-
+# reliability estimate (research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md
+# §2d): the odd/even split also captures real role, injury, QB, and
+# opponent changes across a season, not pure measurement noise, so a
+# rising split-half correlation partly reflects "the player's real
+# role became more stable," not only "the metric got statistically
+# more precise." These two levels mark where the real observed rate
+# stops being dominated by a handful of plays -- EXPLORATORY is a
+# minimum for the rate to be worth looking at at all; SENSITIVITY is a
+# stronger volume bar for a materially more stable historical read.
+# NEITHER LEVEL IS PROOF THE METRIC IS RELIABLE -- real split-half
+# correlation for these football rate stats stays modest even at the
+# SENSITIVITY volume (topping out around 0.2-0.5, never approaching
+# what would usually be called "highly reliable"). Continuous
+# opportunity/production counts are ALWAYS preserved regardless of
+# whether either level is met -- these flags gate a label
+# ("eligible for exploratory/sensitivity-level efficiency read"),
+# never the underlying raw numbers.
+# Keyed by (position, metric_name); metric_name distinguishes RB's two
+# real efficiency questions (rushing vs. receiving), which need
+# different real volumes and different (numerator, denominator)
+# columns -- see lib/dataset2/partial_season_traits.py's
+# EFFICIENCY_METRICS for that column mapping.
+DATASET2_EFFICIENCY_VOLUME_EXPLORATORY = {
+    ("QB", "passing"): 50,
+    ("RB", "rushing"): 15,
+    ("RB", "receiving"): 15,
+    ("WR", "receiving"): 15,
+    ("TE", "receiving"): 15,
+}
+DATASET2_EFFICIENCY_VOLUME_SENSITIVITY = {
+    ("QB", "passing"): 150,
+    ("RB", "rushing"): 60,
+    ("RB", "receiving"): 30,
+    ("WR", "receiving"): 40,
+    ("TE", "receiving"): 30,
+}
 
 # Family #10/#86/#88 depth-chart cluster: the STRUCTURAL (expected)
 # number of simultaneous starters per position under the base "3WR

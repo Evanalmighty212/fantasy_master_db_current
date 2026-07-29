@@ -83,7 +83,8 @@ MINIMUM-SAMPLE FLOOR, real but DIFFERENT MEANING per window type:
   team's real games). The real sample-size question here is instead
   "how many of those N real team games did the player actually have
   real usage in" -- `team_final_n_active_games` -- which is what the
-  PRIMARY (>=4)/SENSITIVITY (>=3) floor is checked against.
+  PRIMARY (>=3)/SENSITIVITY (>=4) floor is checked against (see
+  config.py's DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY/SENSITIVITY).
 - Active-game windows: `active_final_n_games` can be less than N (a
   player with only 2 real games all season can't produce a 4-game
   active window) -- the floor is checked against this count directly,
@@ -145,7 +146,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from config import DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY, DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY
+from config import DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY, DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_SENSITIVITY
 from lib.dataset2.common import build_team_game_index, validate_columns
 
 POPULATION_REQUIRED_COLUMNS = ("season", "player_id", "position")
@@ -213,16 +214,17 @@ def _apply_floor(active_games: pd.Series, rate: pd.Series):
     not just by convention. `qualified_sensitivity` (active_games >= 4)
     is a STRICTER, separately-exposed comparison flag on top of an
     already-shown rate -- never a second nulling gate (see
-    config.py's DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY/SENSITIVITY
-    for the full real rationale, including why PRIMARY=3 is the LOWER
-    of the two here, unlike this pair's original, now-superseded
-    meaning). `active_games` is the count of games with REAL usage --
-    for a team-game window this is `*_active_games`, NOT the
-    (always-full) window size. Used ONLY for a per-ACTIVE-game rate --
-    see `_compute_dual_rates()`, never applied to a per-team-game rate,
-    which is deliberately never floor-gated."""
-    qualified_primary = active_games >= DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY
-    qualified_sensitivity = active_games >= DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY
+    config.py's DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY/SENSITIVITY,
+    whose names are self-evident about which is the lower,
+    interpretability-gating value and which is the stricter comparison
+    -- no swapped-meaning history to know about). `active_games` is the
+    count of games with REAL usage -- for a team-game window this is
+    `*_active_games`, NOT the (always-full) window size. Used ONLY for
+    a per-ACTIVE-game rate -- see `_compute_dual_rates()`, never
+    applied to a per-team-game rate, which is deliberately never
+    floor-gated."""
+    qualified_primary = active_games >= DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY
+    qualified_sensitivity = active_games >= DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_SENSITIVITY
     rate_enforced = np.where(qualified_primary, rate, np.nan)
     return rate_enforced, qualified_primary, qualified_sensitivity
 

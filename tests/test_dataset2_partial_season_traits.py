@@ -20,7 +20,7 @@ import pandas as pd
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from config import DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY, DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY
+from config import DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY, DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_SENSITIVITY
 from lib.dataset2.partial_season_traits import (
     OPPORTUNITY_STATUS_PENDING,
     TEAM_GAME_STATUS_APPLICABLE,
@@ -211,7 +211,7 @@ class TestTeamGameFinalNFloorEnforcement:
         pop = _population((2015, "P1", "WR"))
         wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
         last4 = AAA_2015_WEEKS[-4:]
-        active_n = DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY
+        active_n = DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY
         wp = _weekly_player([(2015, "P1", wk, "AAA", 10.0) for wk in last4[:active_n]])
         out = build_team_game_final_n_traits(pop, wp, wap, n=4)
         row = out.iloc[0]
@@ -222,7 +222,7 @@ class TestTeamGameFinalNFloorEnforcement:
         pop = _population((2015, "P1", "WR"))
         wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
         last4 = AAA_2015_WEEKS[-4:]
-        below = DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY - 1
+        below = DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY - 1
         rows = [(2015, "P1", wk, "AAA", 10.0) for wk in last4[:below]] if below > 0 else []
         wp = _weekly_player(rows)
         out = build_team_game_final_n_traits(pop, wp, wap, n=4)
@@ -240,9 +240,9 @@ class TestTeamGameFinalNFloorEnforcement:
         pop = _population((2015, "P1", "WR"))
         wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
         last4 = AAA_2015_WEEKS[-4:]
-        assert DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY < DATASET2_PARTIAL_SEASON_MIN_GAMES_SENSITIVITY
+        assert DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY < DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_SENSITIVITY
         wp = _weekly_player(
-            [(2015, "P1", wk, "AAA", 10.0) for wk in last4[:DATASET2_PARTIAL_SEASON_MIN_GAMES_PRIMARY]]
+            [(2015, "P1", wk, "AAA", 10.0) for wk in last4[:DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY]]
         )
         out = build_team_game_final_n_traits(pop, wp, wap, n=4)
         row = out.iloc[0]
