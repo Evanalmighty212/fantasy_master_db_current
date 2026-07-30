@@ -1,14 +1,21 @@
 # Dataset 2 Canonical First-Wave Predictor Table — Proposal (2026-07)
 
-**Status: approved directionally.** The family #9 lag (§5) and grain
-(§1) findings this proposal surfaced have been resolved --
+**Status: artifact 1 (predictor table) built.** The family #9 lag (§5)
+and grain (§1) findings this proposal surfaced have been resolved --
 `lib/dataset2/partial_season_canonical.py` implements the lagged, wide
-family #9 preseason-feature layer, tested (see §5/§1's updated status
-notes and the Stop point). **The canonical predictor table itself
-(§13) is still not implemented** -- this document remains a proposal
-for that specific, larger piece, revised this round per real
-architectural feedback (§1a's three-artifact split, §3's outcome-
-availability reconciliation, §10's bust-field reservation policy).
+family #9 preseason-feature layer, tested. **The canonical PRESEASON
+PREDICTOR table (§1a artifact 1) is now implemented and run against
+the real full 2006-2025 population** --
+`lib/dataset2/canonical_predictor_table.py`,
+`scripts/build_dataset2_canonical_predictor_table.py`, real output:
+11,784 rows (11,175 real + 609 real future prediction_season=2026
+rows), 435 columns, zero duplicate keys, deterministic rebuild
+verified. The real SBV outcome-gap reconciliation (§3's four
+categories) was run independently via
+`scripts/audit_dataset2_outcome_gap.py` -- **NOT joined into the
+predictor artifact**. **Artifacts 2 (outcome table) and 3 (analysis
+view) are still not built** -- explicitly out of scope this round, see
+the Stop point.
 
 **Family #9 is complete and committed at `450a6cb`** (config-naming,
 efficiency sample-eligibility, and three-tier role classification, all
@@ -724,20 +731,31 @@ written yet — proposed scope)
 
 ---
 
-## Stop point
+## Stop point (updated — canonical predictor table round)
 
-**Committed this round**: this revised proposal document (planning
-artifact only). **Implemented and tested this round, to be committed
-separately per instruction**: `lib/dataset2/partial_season_canonical.py`
-and `tests/test_dataset2_partial_season_canonical.py` — the family #9
-canonicalization PREREQUISITE (§1/§5's grain and lag findings,
-resolved). Full suite passing (978/978,
-`python -m pytest tests/ -q --import-mode=importlib`).
+**Committed in an earlier round**: this proposal document, and
+`lib/dataset2/partial_season_canonical.py` /
+`tests/test_dataset2_partial_season_canonical.py` (family #9's grain
+pivot and lag layer).
 
-**NOT implemented, per instruction — stopping here**: the canonical
-predictor table itself (§13 items 2–7: the outcome table, the
-predictor table proper, the analysis view, and the tests/persistence
-decisions that depend on them). Awaiting review of §1a's three-
-artifact split, §3's outcome-availability categories, and §10's
-narrowed bust-field reservation policy before any of that code is
-written.
+**Built and run this round**: `lib/dataset2/canonical_predictor_table.py`
+(artifact 1 — the canonical PRESEASON PREDICTOR table),
+`scripts/build_dataset2_canonical_predictor_table.py` (real-data
+driver), `scripts/audit_dataset2_outcome_gap.py` (the independent SBV
+outcome-gap reconciliation, never joined into the predictor artifact),
+and `tests/test_dataset2_canonical_predictor_table.py`. A real, found
+bug (`lib/dataset2/common.py::kickoff_lookup_table()` crashing on a
+genuinely empty schedule, exactly this environment's real condition)
+was fixed. A second real bug, found only by running against the FULL
+real population (no single-season synthetic fixture could have caught
+it) — the future-prediction-season spine extension was creating a
+phantom row for every retired player's own last season, not just the
+dataset's real 2025→2026 boundary — was found and fixed, with a
+regression test. Real output: 11,784 rows, 435 columns, 2006–2026
+prediction-season coverage, zero duplicate keys, deterministic
+rebuild verified. Full suite passing (1002/1002).
+
+**NOT implemented, per instruction — stopping here**: artifacts 2
+(outcome table) and 3 (analysis view). The outcome-gap audit is a
+standalone research artifact for whoever builds artifact 2 next, not
+a step toward joining it into artifact 1.

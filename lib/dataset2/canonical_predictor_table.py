@@ -1,0 +1,709 @@
+"""
+lib/dataset2/canonical_predictor_table.py
+
+Dataset 2 canonical PRESEASON PREDICTOR table -- artifact 1 of the
+three-artifact architecture approved 2026-07
+(research/dataset2/CANONICAL_TABLE_PROPOSAL_2026_07.md §1a). Builds
+ONLY the predictor table -- no outcome data (`star_by_value_*`,
+`bust_*`) is read, imported, or joined anywhere in this module, per
+that proposal's leakage boundary (§10). The outcome table and the
+analysis view that joins the two are separate, not-yet-built
+artifacts.
+
+GRAIN: one row per (`prediction_season`, `player_id`) -- see
+`build_canonical_predictor_table()`'s own docstring for exactly how
+the spine is assembled (the real master population's own rows, UNION
+family #9's own real "future" prediction-season rows).
+
+WHAT'S INCLUDED, per instruction -- only implemented, approved,
+preseason-facing traits, no null placeholders for anything not yet
+built:
+- Families #1 (NFL experience) and #1's position-relative z-score
+- Family #4 (NFL draft capital)
+- Family #6, body-size portion (height/weight/BMI)
+- Family #7 (prior-season finish: overall, positional, PPG)
+- Family #8 (multi-year PPG trend, 2yr/3yr slope)
+- Family #39 (prior-season games played / availability)
+- Family #44 (player changed teams)
+- Source A prior-season usage (targets/carries/receiving_yards/
+  receiving_air_yards/passing_epa/rushing_epa/receiving_epa/
+  target_share/air_yards_share/wopr) -- no single family number, a
+  cross-cutting `srcA_` prefix is used (see NAMING below)
+- Source B prior-season OFFENSIVE snaps and offense_pct ONLY -- per
+  explicit instruction, narrower than snap_traits.py's full real
+  output (which also has defense_snaps/st_snaps/games_active,
+  available but deliberately excluded from this table this round, not
+  because they're unimplemented)
+- Family #9's full lagged, wide feature set (all window_ns, all
+  position/metric/basis combinations, via
+  lib.dataset2.partial_season_canonical)
+- Family #10 (depth-chart status) -- included as a direct, real
+  prerequisite of family #86 below, PRE-2025 SCHEMA ONLY (see AGE/2025
+  EXCLUSION below)
+- Family #86 (volume-fragility split, the portion implemented on top
+  of family #10)
+- Family #88, durability portion (`body_size_position_z` only --
+  `workload_qualified` is EXCLUDED, see DEFERRED FAMILIES below)
+
+AGE (FAMILY #2) IS EXCLUDED THIS ROUND -- its real prerequisite
+(`schedules.csv`, needed for real per-team Week-1 kickoff dates) is
+STILL not cached in this environment (confirmed absent again this
+round, same real gap the 2026-07 integration audit and the canonical-
+table proposal both already disclosed). `age_at_week1_years`,
+`age_x_experience`, and `age_position_z` would be 100% null if
+included -- per instruction, this module does NOT create a null
+placeholder column for an unmet prerequisite. `experience_years`
+(family #1) and `experience_position_z` do NOT depend on schedule data
+and ARE included. See DEFERRED_FAMILIES.
+
+FAMILY #10's 2025 real depth-chart schema branch is likewise excluded
+for the same reason (its own preseason-snapshot selection needs real
+Week-1 kickoff dates) -- family #10/#86 use ONLY the real 2006-2024
+pre-2025-schema depth-chart files; 2025 rows get real, structural
+nulls for every depth-chart-derived column, documented as a source-
+coverage boundary (§ MISSINGNESS below), not folded into
+DEFERRED_FAMILIES (the family itself IS included, just with a real,
+dated coverage gap for its most recent season -- see
+`family_coverage_notes` in the column registry).
+
+DEFERRED FAMILIES -- approved but not includable this round, listed
+with a real reason, never approximated:
+- Family #2 (age) -- schedules.csv prerequisite not met (see above).
+- Source C / family #12+ (participation-derived predictors) --
+  lib.dataset2.participation_traits.py only produces RAW PLAY and
+  NORMALIZED PLAYER-PLAY grain output; no player-SEASON aggregate
+  exists to lag into a preseason predictor at all (confirmed by
+  reading that module directly this round -- its season/preseason
+  aggregate layer was deliberately removed in an earlier round, see
+  that module's own docstring).
+- Family #88's workload proxy (`workload_qualified`) -- always the
+  literal placeholder string `"pending"` in
+  lib.dataset2.fragility_traits.py's own output; not a real trait
+  value, so excluded rather than carried through as a column that
+  would always read the same non-informative string for every row.
+- Dataset 2B (bust) outcome fields -- not a predictor family at all
+  (belongs in the separate outcome table, artifact 2), reserved by
+  name only per the proposal's §10, not built here.
+
+NAMING (per proposal §7): `{family_or_source_prefix}_{field}`.
+Lag-derived columns (raw source season = prediction_season - 1)
+carry `_prior_` in the name (e.g. `fam7_prior_overall_finish`,
+`srcA_prior_season_targets`); columns that are preseason-safe BY
+CONSTRUCTION (age/experience/draft capital/body-size/depth-chart --
+their own `season` already IS the prediction season) carry no
+`_prior_` segment. Family #9's own columns use its own established
+`fam9_{team,active}_final_{n}_...` scheme with explicit
+`observation_season`/`prediction_season` id columns instead of a
+per-column prefix (see partial_season_canonical.py's docstring for
+why). `srcA_`/`srcB_` are used for Source A/B base variables since
+they aren't owned by one single family number.
+
+MISSINGNESS: preserved exactly per source module's own semantics (see
+each helper's docstring below) -- real zero, nullable-boolean `<NA>`,
+non-applicable status, source-not-yet-covered, and no-prior-history
+are never collapsed into each other. Every boolean-shaped canonical
+column is cast to pandas nullable `"boolean"` dtype at assembly time
+(never left as a raw float/object encoding that could silently read a
+real `<NA>` as `False`).
+
+DETERMINISM: `build_canonical_predictor_table()` returns rows sorted
+by (`prediction_season`, `player_id`) and columns in a FIXED,
+declared order (never dict/set iteration order) -- rebuilding from
+identical inputs produces byte-identical CSV output (see
+scripts/build_dataset2_canonical_predictor_table.py's own round-trip
+check).
+
+TEST SCOPE: tests/test_dataset2_canonical_predictor_table.py proves
+grain (exactly one row per key, no collisions, no `_x`/`_y` merge
+artifacts), leakage (no same-season value ever appears where a lagged
+one is expected), and the missingness/normalization rules against
+synthetic fixtures. Real-data integration numbers (row/column counts,
+missingness breakdown, deferred-family inventory) are produced by
+scripts/build_dataset2_canonical_predictor_table.py against the real
+2006-2025 population, not by this test file.
+"""
+
+import sys
+from pathlib import Path
+
+import pandas as pd
+
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+from lib.dataset2.common import validate_columns
+from lib.dataset2.depth_chart_traits import build_depth_chart_traits
+from lib.dataset2.experience_age_draft import build_experience_age_draft_traits
+from lib.dataset2.fragility_traits import build_durability_risk_traits, build_volume_fragility_traits
+from lib.dataset2.partial_season_canonical import (
+    DEFAULT_WINDOW_NS,
+    build_family9_observation_wide,
+    build_family9_preseason_features,
+)
+from lib.dataset2.prior_finish_traits import build_prior_finish_traits
+from lib.dataset2.prior_season_traits import build_prior_season_traits
+from lib.dataset2.snap_traits import build_preseason_snap_features, build_raw_player_game_snaps, build_season_snap_usage
+from lib.dataset2.usage_traits import build_preseason_usage_features, build_raw_season_usage
+
+MASTER_POPULATION_REQUIRED_COLUMNS = (
+    "season",
+    "player_id",
+    "position",
+    "team",
+    "games_played",
+    "ppg_ppr",
+    "overall_finish_ppr",
+    "position_finish_ppr",
+)
+
+PLAYERS_REQUIRED_COLUMNS = ("gsis_id", "pfr_id", "birth_date", "rookie_season", "height", "weight", "draft_year", "draft_round", "draft_pick", "draft_team")
+
+SCHEMA2025_EMPTY_COLUMNS = ("dt", "team", "gsis_id", "pos_grp", "pos_abb", "pos_rank")
+SCHEDULE_EMPTY_COLUMNS = ("season", "game_type", "week", "gameday", "home_team", "away_team")
+
+# Approved, implemented families this table cannot include this round
+# -- a real reason each, never silently omitted. See module docstring.
+DEFERRED_FAMILIES = (
+    {
+        "family_number": "2",
+        "family_name": "Age curve (age_at_week1_years, age_x_experience, age_position_z)",
+        "reason": "Real prerequisite (schedules.csv, needed for real per-team Week-1 "
+        "kickoff dates) is not cached in this environment -- confirmed absent again "
+        "this round. Including these columns would mean 100% null, which this table "
+        "does not do for an unmet prerequisite.",
+    },
+    {
+        "family_number": "12+ (Source C / participation)",
+        "family_name": "Route/participation-derived predictors",
+        "reason": "lib.dataset2.participation_traits.py only produces raw play-level and "
+        "normalized player-play-level output -- no player-season aggregate exists to "
+        "lag into a preseason predictor. Confirmed by reading that module directly.",
+    },
+    {
+        "family_number": "88 (workload sub-signal)",
+        "family_name": "Workload/durability risk, opportunity-based portion (workload_qualified)",
+        "reason": "lib.dataset2.fragility_traits.py's own output is always the literal "
+        "placeholder string \"pending\" -- not a real trait value yet, so excluded "
+        "rather than carried through as a column that never varies.",
+    },
+)
+
+# Source B this round is deliberately narrowed to offensive snaps and
+# offense_pct only, per explicit instruction -- snap_traits.py's real
+# defense_snaps/st_snaps/games_active fields ARE implemented and
+# available, just not requested for this table.
+_SRC_B_FIELDS = ("offense_snaps", "offense_pct")
+
+
+def _cast_boolean_columns(df: pd.DataFrame, columns) -> pd.DataFrame:
+    """Cast every column in `columns` to pandas' nullable "boolean"
+    dtype -- never leaves a real <NA> readable as False. Safe to call
+    on a column that's already nullable-boolean (no-op)."""
+    for col in columns:
+        df[col] = df[col].astype("boolean")
+    return df
+
+
+def _registry_row(canonical_column, family_number, family_name, source, earliest, latest, dtype, missingness, observation_type, raw_column=None):
+    return {
+        "canonical_column": canonical_column,
+        "family_number": family_number,
+        "family_name": family_name,
+        "source": source,
+        "historical_coverage_earliest": earliest,
+        "historical_coverage_latest": latest,
+        "dtype": dtype,
+        "missingness_semantics": missingness,
+        "observation_type": observation_type,
+        "source_raw_column": raw_column or canonical_column,
+    }
+
+
+def _build_fam1_4_6_layer(population: pd.DataFrame, players_df: pd.DataFrame, min_season: int, max_season: int):
+    """Families #1 (experience, position-relative z-score), #4 (draft
+    capital), #6 body-size portion -- preseason-safe BY CONSTRUCTION
+    (own `season` already is prediction_season, no lag). Age columns
+    (family #2) are computed internally by
+    build_experience_age_draft_traits() but DROPPED here -- see module
+    docstring's AGE EXCLUSION."""
+    empty_schedule = pd.DataFrame(columns=SCHEDULE_EMPTY_COLUMNS)
+    raw = build_experience_age_draft_traits(population, players_df, empty_schedule)
+
+    rename = {
+        "experience_years": "fam1_experience_years",
+        "experience_position_z": "fam1_experience_position_z",
+        "nfl_draft_year": "fam4_nfl_draft_year",
+        "nfl_draft_round": "fam4_nfl_draft_round",
+        "nfl_draft_pick": "fam4_nfl_draft_pick",
+        "nfl_draft_team": "fam4_nfl_draft_team",
+        "height_inches": "fam6_height_inches",
+        "weight_lbs": "fam6_weight_lbs",
+        "body_size_bmi": "fam6_body_size_bmi",
+    }
+    out = raw[["season", "player_id"] + list(rename.keys())].rename(columns=rename)
+
+    registry = [
+        _registry_row(
+            rename["experience_years"], "1", "NFL experience curve", "players.csv",
+            min_season, max_season, "Int64/float64",
+            "No players.csv match -> null", "Same as prediction_season", "experience_years",
+        ),
+        _registry_row(
+            rename["experience_position_z"], "1", "NFL experience curve (position z-score)", "players.csv",
+            min_season, max_season, "float64",
+            "No players.csv match, or single-row position group -> null",
+            "Same as prediction_season", "experience_position_z",
+        ),
+    ]
+    for field, canon in (("draft_year", "fam4_nfl_draft_year"), ("draft_round", "fam4_nfl_draft_round"), ("draft_pick", "fam4_nfl_draft_pick"), ("draft_team", "fam4_nfl_draft_team")):
+        registry.append(
+            _registry_row(
+                canon, "4", "NFL draft capital", "players.csv", min_season, max_season,
+                "float64/object", "Undrafted or no players.csv match -> null (not currently "
+                "distinguished from each other -- a real open item)",
+                "Same as prediction_season", field,
+            )
+        )
+    for field, canon in (("height_inches", "fam6_height_inches"), ("weight_lbs", "fam6_weight_lbs"), ("body_size_bmi", "fam6_body_size_bmi")):
+        registry.append(
+            _registry_row(
+                canon, "6", "Body-size profile", "players.csv", min_season, max_season,
+                "float64", "No players.csv match -> null", "Same as prediction_season", field,
+            )
+        )
+    return out, registry
+
+
+def _build_fam7_layer(population: pd.DataFrame, min_season: int, max_season: int):
+    raw = build_prior_finish_traits(population)
+    rename = {
+        "prior_overall_finish": "fam7_prior_overall_finish",
+        "prior_positional_finish": "fam7_prior_positional_finish",
+        "prior_ppg": "fam7_prior_ppg",
+    }
+    out = raw[["season", "player_id"] + list(rename.keys())].rename(columns=rename)
+    registry = [
+        _registry_row(
+            canon, "7", "Previous-season finish", "master DB self-join",
+            min_season + 1, max_season, "float64", "No season N-1 row -> null (rookie or gap year)",
+            "prediction_season - 1", raw_col,
+        )
+        for raw_col, canon in rename.items()
+    ]
+    return out, registry
+
+
+def _build_fam8_39_44_layer(population: pd.DataFrame, min_season: int, max_season: int):
+    raw = build_prior_season_traits(population)
+    rename = {
+        "ppg_trend_2yr_slope": "fam8_prior_ppg_trend_2yr_slope",
+        "ppg_trend_3yr_slope": "fam8_prior_ppg_trend_3yr_slope",
+        "prior_season_games_played": "fam39_prior_season_games_played",
+        "changed_team": "fam44_prior_changed_team",
+    }
+    out = raw[["season", "player_id"] + list(rename.keys())].rename(columns=rename)
+    out = _cast_boolean_columns(out, ["fam44_prior_changed_team"])
+    registry = [
+        _registry_row(
+            "fam8_prior_ppg_trend_2yr_slope", "8", "Multi-year production trend", "master DB self-join",
+            min_season + 1, max_season, "float64", "<2 non-null lag points -> null (rookie or gap year)",
+            "prediction_season - 1 and - 2", "ppg_trend_2yr_slope",
+        ),
+        _registry_row(
+            "fam8_prior_ppg_trend_3yr_slope", "8", "Multi-year production trend", "master DB self-join",
+            min_season + 1, max_season, "float64", "<2 non-null lag points -> null (rookie or gap year)",
+            "prediction_season - 1, - 2, and - 3", "ppg_trend_3yr_slope",
+        ),
+        _registry_row(
+            "fam39_prior_season_games_played", "39", "Prior-season availability", "master DB self-join",
+            min_season + 1, max_season, "float64", "No season N-1 row -> null (rookie or gap year)",
+            "prediction_season - 1", "prior_season_games_played",
+        ),
+        _registry_row(
+            "fam44_prior_changed_team", "44", "Player changed teams", "master DB self-join",
+            min_season + 1, max_season, "boolean (nullable)", "No season N-1 row -> null, never False (rookie)",
+            "prediction_season vs. prediction_season - 1", "changed_team",
+        ),
+    ]
+    return out, registry
+
+
+def _build_srcA_layer(population: pd.DataFrame, weekly_all_season_types: pd.DataFrame, min_season: int, max_season: int):
+    """Source A prior-season usage, full real field set -- no single
+    family number owns these (families #15/#17/#18/#20/#22 all draw
+    from this same base), hence the cross-cutting `srcA_` prefix (see
+    module docstring's NAMING section)."""
+    raw_season = build_raw_season_usage(population, weekly_all_season_types)
+    preseason = build_preseason_usage_features(raw_season)
+    fields = ("targets", "carries", "receiving_yards", "receiving_air_yards", "passing_epa", "rushing_epa", "receiving_epa", "target_share", "air_yards_share", "wopr")
+    rename = {f"prior_season_{f}": f"srcA_prior_season_{f}" for f in fields}
+    out = preseason[["season", "player_id"] + list(rename.keys())].rename(columns=rename)
+    registry = [
+        _registry_row(
+            canon, "15/17/18/20/22 (Source A base variables, cross-cutting)", "Source A prior-season usage",
+            "Source A weekly (REG only)", min_season + 1, max_season, "float64",
+            "No season N-1 real row -> null; racr deliberately never output (deferred, reconstruct-or-defer rule)",
+            "prediction_season - 1", raw_col,
+        )
+        for raw_col, canon in rename.items()
+    ]
+    return out, registry
+
+
+def _build_srcB_layer(population: pd.DataFrame, snap_counts_all: pd.DataFrame, players_df: pd.DataFrame, min_season: int, max_season: int):
+    """Source B prior-season OFFENSIVE snaps and offense_pct ONLY --
+    narrower than snap_traits.py's real full output, per explicit
+    instruction. See module docstring."""
+    raw_games = build_raw_player_game_snaps(snap_counts_all, players_df)
+    season_usage = build_season_snap_usage(population, raw_games)
+    preseason = build_preseason_snap_features(season_usage)
+    rename = {f"prior_season_{f}": f"srcB_prior_season_{f}" for f in _SRC_B_FIELDS}
+    out = preseason[["season", "player_id"] + list(rename.keys())].rename(columns=rename)
+    registry = [
+        _registry_row(
+            canon, "N/A (Source B base variable, cross-cutting)", "Source B prior-season offensive snap usage",
+            "Source B snap_counts (REG only)", 2014, max_season, "float64",
+            "Pre-2013 season N-1, or unmatched pfr_id that season -> null",
+            "prediction_season - 1", raw_col,
+        )
+        for raw_col, canon in rename.items()
+    ]
+    return out, raw_games, registry
+
+
+def _build_fam10_86_layer(population: pd.DataFrame, depth_chart_pre2025_df: pd.DataFrame, min_season: int, max_season: int):
+    """Family #10 (depth-chart status, PRE-2025 schema only -- see
+    module docstring's AGE/2025 EXCLUSION) and family #86 (volume
+    fragility, built directly on top of #10's own output)."""
+    empty_schedule = pd.DataFrame(columns=SCHEDULE_EMPTY_COLUMNS)
+    empty_2025 = pd.DataFrame(columns=SCHEMA2025_EMPTY_COLUMNS)
+    dc = build_depth_chart_traits(population, depth_chart_pre2025_df, empty_2025, empty_schedule)
+
+    fam10_rename = {
+        "depth_chart_team": "fam10_depth_chart_team",
+        "depth_chart_native_rank": "fam10_depth_chart_native_rank",
+        "depth_chart_status": "fam10_depth_chart_status",
+        "depth_rank_tied": "fam10_depth_rank_tied",
+        "starter_group_size": "fam10_starter_group_size",
+        "position_starter_count": "fam10_position_starter_count",
+        "depth_chart_schema_era": "fam10_depth_chart_schema_era",
+    }
+    fam10_out = dc[["season", "player_id"] + list(fam10_rename.keys())].rename(columns=fam10_rename)
+    fam10_out = _cast_boolean_columns(fam10_out, ["fam10_depth_rank_tied"])
+
+    frag = build_volume_fragility_traits(dc)
+    fam86_rename = {
+        "multiple_rank1_players": "fam86_multiple_rank1_players",
+        "qb_starter_uncertainty": "fam86_qb_starter_uncertainty",
+        "rb_committee_indicator": "fam86_rb_committee_indicator",
+        "te_co_starter_indicator": "fam86_te_co_starter_indicator",
+        "wr_starter_group_size": "fam86_wr_starter_group_size",
+        "wr_starter_group_member": "fam86_wr_starter_group_member",
+        "wr_league_starter_group_size_norm": "fam86_wr_league_starter_group_size_norm",
+        "wr_starter_group_size_vs_league_norm": "fam86_wr_starter_group_size_vs_league_norm",
+        "team_qb_uncertainty": "fam86_team_qb_uncertainty",
+    }
+    fam86_out = frag[["season", "player_id"] + list(fam86_rename.keys())].rename(columns=fam86_rename)
+    fam86_bool_cols = [
+        "fam86_multiple_rank1_players", "fam86_qb_starter_uncertainty", "fam86_rb_committee_indicator",
+        "fam86_te_co_starter_indicator", "fam86_wr_starter_group_member", "fam86_team_qb_uncertainty",
+    ]
+    fam86_out = _cast_boolean_columns(fam86_out, fam86_bool_cols)
+
+    coverage_note = (
+        "2006-2024 real (pre-2025 schema); 2025 structurally null this round -- "
+        "same schedules.csv prerequisite gap as family #2, see module docstring"
+    )
+    registry = [
+        _registry_row(
+            "fam10_depth_chart_team", "10", "Projected depth-chart position", "nflverse depth_charts",
+            min_season, 2024, "object", "No matching preseason snapshot -> null; " + coverage_note,
+            "Same as prediction_season", "depth_chart_team",
+        ),
+        _registry_row(
+            "fam10_depth_chart_native_rank", "10", "Projected depth-chart position", "nflverse depth_charts",
+            min_season, 2024, "float64", "No matching snapshot -> null; " + coverage_note,
+            "Same as prediction_season", "depth_chart_native_rank",
+        ),
+        _registry_row(
+            "fam10_depth_chart_status", "10", "Projected depth-chart position", "nflverse depth_charts",
+            min_season, 2024, "object", "No matching snapshot -> null (never guessed \"deeper\"); " + coverage_note,
+            "Same as prediction_season", "depth_chart_status",
+        ),
+        _registry_row(
+            "fam10_depth_rank_tied", "10", "Projected depth-chart position", "nflverse depth_charts",
+            min_season, 2024, "boolean (nullable)", "No matching snapshot -> null; always False for 2025-schema rows by construction (none present this round); " + coverage_note,
+            "Same as prediction_season", "depth_rank_tied",
+        ),
+        _registry_row(
+            "fam10_starter_group_size", "10", "Projected depth-chart position", "nflverse depth_charts",
+            min_season, 2024, "float64", "No matching snapshot -> null; " + coverage_note,
+            "Same as prediction_season", "starter_group_size",
+        ),
+        _registry_row(
+            "fam10_position_starter_count", "10", "Projected depth-chart position", "config.py (fixed reference)",
+            min_season, max_season, "float64", "Position not in the fixed QB/RB/WR/TE reference map -> null",
+            "N/A (fixed structural constant)", "position_starter_count",
+        ),
+        _registry_row(
+            "fam10_depth_chart_schema_era", "10", "Projected depth-chart position", "nflverse depth_charts",
+            min_season, 2024, "object", "No matching snapshot -> null; " + coverage_note,
+            "Same as prediction_season", "depth_chart_schema_era",
+        ),
+    ]
+    for field, canon, pos_note in (
+        ("multiple_rank1_players", "fam86_multiple_rank1_players", "All positions"),
+        ("qb_starter_uncertainty", "fam86_qb_starter_uncertainty", "QB only, null elsewhere"),
+        ("rb_committee_indicator", "fam86_rb_committee_indicator", "RB only, null elsewhere"),
+        ("te_co_starter_indicator", "fam86_te_co_starter_indicator", "TE only, null elsewhere"),
+        ("team_qb_uncertainty", "fam86_team_qb_uncertainty", "All positions, broadcast team-wide"),
+    ):
+        registry.append(
+            _registry_row(
+                canon, "86 (split, part)", "Volume fragility / competition", "depth_chart_traits.py output",
+                min_season, 2024, "boolean (nullable)",
+                f"No depth-chart data -> null; position-inapplicable -> null by design. {pos_note}; " + coverage_note,
+                "Same as prediction_season", field,
+            )
+        )
+    for field, canon, dtype in (
+        ("wr_starter_group_size", "fam86_wr_starter_group_size", "float64"),
+        ("wr_starter_group_member", "fam86_wr_starter_group_member", "boolean (nullable)"),
+        ("wr_league_starter_group_size_norm", "fam86_wr_league_starter_group_size_norm", "float64"),
+        ("wr_starter_group_size_vs_league_norm", "fam86_wr_starter_group_size_vs_league_norm", "float64"),
+    ):
+        registry.append(
+            _registry_row(
+                canon, "86 (split, part)", "Volume fragility (WR personnel-structure facts)", "depth_chart_traits.py output",
+                min_season, 2024, dtype, "WR only, null elsewhere; no depth-chart data -> null; " + coverage_note,
+                "Same as prediction_season", field,
+            )
+        )
+    return fam10_out, fam86_out, registry
+
+
+def _build_fam88_layer(experience_age_draft_raw: pd.DataFrame, min_season: int, max_season: int):
+    """Family #88, durability portion only -- `body_size_position_z`.
+    `workload_qualified` deliberately excluded, see DEFERRED_FAMILIES."""
+    raw = build_durability_risk_traits(experience_age_draft_raw)
+    out = raw[["season", "player_id", "body_size_position_z"]].rename(
+        columns={"body_size_position_z": "fam88_body_size_position_z"}
+    )
+    registry = [
+        _registry_row(
+            "fam88_body_size_position_z", "88 (split, part)", "Workload/durability risk (age/frame portion)",
+            "experience_age_draft.py output", min_season, max_season, "float64",
+            "No BMI (no players.csv match) -> null", "Same as prediction_season", "body_size_position_z",
+        )
+    ]
+    return out, registry
+
+
+def build_canonical_predictor_table(
+    master_population: pd.DataFrame,
+    players_df: pd.DataFrame,
+    weekly_all_season_types: pd.DataFrame,
+    weekly_reg_only: pd.DataFrame,
+    snap_counts_all: pd.DataFrame,
+    depth_chart_pre2025_df: pd.DataFrame,
+    window_ns=DEFAULT_WINDOW_NS,
+):
+    """
+    Builds the canonical PRESEASON PREDICTOR table -- one row per
+    (`prediction_season`, `player_id`).
+
+    SPINE: the real master population's own (`season`, `player_id`)
+    keys (renamed `prediction_season`), UNIONED with any additional
+    (`prediction_season`, `player_id`) keys family #9's own
+    `build_family9_preseason_features()` produces that the master
+    population does not already have -- this is how a real "future"
+    prediction_season row (the most recent real observation season +
+    1) is retained even though the master population itself only
+    covers real, played seasons. For those extra rows, every OTHER
+    family's columns are correctly null (no matching population row
+    to compute them from -- there is nothing else knowable about a
+    genuinely future season except what family #9's own lag already
+    captured), NOT a fabricated/guessed value.
+
+    `master_population` must have MASTER_POPULATION_REQUIRED_COLUMNS.
+    `weekly_all_season_types` is the FULL real Source A weekly file
+    (REG + POST rows both present -- usage_traits.py filters REG
+    internally). `weekly_reg_only` is the SAME real source PRE-FILTERED
+    to `season_type == "REG"` -- required separately because
+    partial_season_traits.py's active-game builders have no
+    `season_type` column in their own required-columns contract and do
+    not filter it themselves (confirmed by reading that module's code
+    this round); passing the unfiltered file to it risks a real
+    postseason game silently entering what's meant to be a regular-
+    season split.
+
+    Returns (predictor_table, column_registry, deferred_families):
+    `predictor_table` sorted by (prediction_season, player_id) with a
+    fixed column order (determinism, see module docstring);
+    `column_registry` a DataFrame data dictionary (one row per
+    canonical column); `deferred_families` = DEFERRED_FAMILIES as a
+    DataFrame.
+    """
+    validate_columns(master_population, MASTER_POPULATION_REQUIRED_COLUMNS, "master_population")
+    validate_columns(players_df, PLAYERS_REQUIRED_COLUMNS, "players_df")
+
+    population = master_population[list(MASTER_POPULATION_REQUIRED_COLUMNS)].drop_duplicates(
+        subset=["season", "player_id"]
+    ).reset_index(drop=True)
+    min_season = int(population["season"].min())
+    max_season = int(population["season"].max())
+
+    registry_rows = []
+
+    fam1_4_6, reg = _build_fam1_4_6_layer(population, players_df, min_season, max_season)
+    registry_rows += reg
+    fam7, reg = _build_fam7_layer(population, min_season, max_season)
+    registry_rows += reg
+    fam8_39_44, reg = _build_fam8_39_44_layer(population, min_season, max_season)
+    registry_rows += reg
+    srcA, reg = _build_srcA_layer(population, weekly_all_season_types, min_season, max_season)
+    registry_rows += reg
+    srcB, raw_matched_snaps, reg = _build_srcB_layer(population, snap_counts_all, players_df, min_season, max_season)
+    registry_rows += reg
+    fam10, fam86, reg = _build_fam10_86_layer(population, depth_chart_pre2025_df, min_season, max_season)
+    registry_rows += reg
+
+    empty_schedule = pd.DataFrame(columns=SCHEDULE_EMPTY_COLUMNS)
+    exp_age_draft_raw = build_experience_age_draft_traits(population, players_df, empty_schedule)
+    fam88, reg = _build_fam88_layer(exp_age_draft_raw, min_season, max_season)
+    registry_rows += reg
+
+    # Family #9's own raw_snaps expects matched, renamed rows -- reuse
+    # the SAME real matched frame Source B's own preseason layer
+    # already built, rather than re-crosswalking a second time.
+    fam9_raw_snaps = raw_matched_snaps[raw_matched_snaps["gsis_id"].notna()][
+        ["season", "week", "team", "gsis_id", "offense_snaps"]
+    ].rename(columns={"gsis_id": "player_id"})
+
+    fam9_observation, fam9_mapping = build_family9_observation_wide(
+        population, weekly_reg_only, weekly_all_season_types, fam9_raw_snaps, window_ns=window_ns
+    )
+    fam9_preseason = build_family9_preseason_features(fam9_observation)
+    fam9_registry = [
+        _registry_row(
+            row["canonical_column"], "9", "Partial-season production splits (lagged, wide)",
+            "Source A/B weekly, via lib.dataset2.partial_season_canonical", min_season + 1, max_season + 1,
+            "float64/boolean/object (see column name)",
+            "See partial_season_canonical.py's own docstring (applicable-zero preserved, "
+            "team-game-basis <NA> masking, active-game-basis real zeroes)",
+            "prediction_season = observation_season + 1", row["raw_column"],
+        )
+        for _, row in fam9_mapping.iterrows()
+    ]
+    registry_rows += fam9_registry
+    registry_rows.append(
+        _registry_row(
+            "fam9_prediction_season_outcome_unavailable", "9 (canonicalization metadata)",
+            "Partial-season production splits", "partial_season_canonical.py", min_season + 1, max_season + 1,
+            "boolean", "Never null -- True exactly when prediction_season exceeds the max real observation_season",
+            "N/A (build metadata)", "fam9_prediction_season_outcome_unavailable",
+        )
+    )
+
+    # --- Spine: master population's own keys, UNIONED with family #9's real future rows ---
+    #
+    # Real bug found and fixed this round, running against the full
+    # real 2006-2025 population (never triggered by any single-season
+    # synthetic fixture): naively adding EVERY family #9 key not
+    # already in the spine also added a PHANTOM "if they had played
+    # next season" row for every player whose OWN final active season
+    # predates the dataset's real max -- e.g. a player who retired
+    # after 2015 got a real prediction_season=2016 row with real fam9
+    # data, even though 2016 will never have a real outcome for them
+    # (they were retired, not "outcome not yet available"). The
+    # intended case (per instruction: "the final historical
+    # observation season may produce a future prediction-season
+    # feature row") is specifically about the DATASET's own overall
+    # most recent real season, not every individual player's personal
+    # last season -- restricting the extra-key rule to
+    # `prediction_season > population's own real max season` keeps
+    # exactly the intended case (real count: 609 real 2026 rows against
+    # the full real population) and drops the ~2,700 real phantom
+    # retired-player rows the naive version produced.
+    spine = population[["season", "player_id", "position"]].rename(columns={"season": "prediction_season"})
+    fam9_keys = fam9_preseason[["prediction_season", "player_id", "position"]]
+    extra_keys = fam9_keys.merge(
+        spine[["prediction_season", "player_id"]], on=["prediction_season", "player_id"], how="left", indicator=True
+    )
+    extra_keys = extra_keys[
+        (extra_keys["_merge"] == "left_only") & (extra_keys["prediction_season"] > max_season)
+    ][["prediction_season", "player_id", "position"]]
+    spine = pd.concat([spine, extra_keys], ignore_index=True).drop_duplicates(subset=["prediction_season", "player_id"])
+
+    out = spine.copy()
+    for frame in (fam1_4_6, fam7, fam8_39_44, srcA, srcB, fam10, fam86, fam88):
+        frame = frame.rename(columns={"season": "prediction_season"})
+        incoming = set(frame.columns) - {"prediction_season", "player_id"}
+        collisions = incoming & (set(out.columns) - {"prediction_season", "player_id", "position"})
+        if collisions:
+            raise RuntimeError(f"Canonical column-name collision(s): {sorted(collisions)}")
+        out = out.merge(frame, on=["prediction_season", "player_id"], how="left")
+
+    fam9_cols = [c for c in fam9_preseason.columns if c not in ("observation_season", "player_id", "prediction_season", "position")]
+    collisions = set(fam9_cols) & set(out.columns)
+    if collisions:
+        raise RuntimeError(f"Canonical column-name collision(s) with family #9: {sorted(collisions)}")
+    out = out.merge(
+        fam9_preseason[["prediction_season", "player_id", "observation_season"] + fam9_cols],
+        on=["prediction_season", "player_id"],
+        how="left",
+    )
+
+    if len(out.columns) != len(set(out.columns)):
+        dupes = out.columns[out.columns.duplicated()].tolist()
+        raise RuntimeError(f"Canonical column-name collision(s) detected in final table: {dupes}")
+
+    column_order = (
+        ["prediction_season", "player_id", "position", "observation_season"]
+        + [c for c in fam1_4_6.columns if c not in ("season", "player_id")]
+        + [c for c in fam7.columns if c not in ("season", "player_id")]
+        + [c for c in fam8_39_44.columns if c not in ("season", "player_id")]
+        + [c for c in srcA.columns if c not in ("season", "player_id")]
+        + [c for c in srcB.columns if c not in ("season", "player_id")]
+        + [c for c in fam10.columns if c not in ("season", "player_id")]
+        + [c for c in fam86.columns if c not in ("season", "player_id")]
+        + [c for c in fam88.columns if c not in ("season", "player_id")]
+        + fam9_cols
+    )
+    out = out[["prediction_season", "player_id", "position", "observation_season"] + [c for c in column_order if c not in ("prediction_season", "player_id", "position", "observation_season")]]
+    out = out.sort_values(["prediction_season", "player_id"]).reset_index(drop=True)
+
+    registry_rows.insert(
+        0,
+        _registry_row(
+            "prediction_season", "N/A (spine)", "Table identity", "master population / family #9 union",
+            min_season + 1, max_season + 1, "int64", "Never null (spine key)", "N/A (identity)", "season",
+        ),
+    )
+    registry_rows.insert(
+        1,
+        _registry_row(
+            "player_id", "N/A (spine)", "Table identity", "master population / family #9 union",
+            min_season, max_season + 1, "object", "Never null (spine key)", "N/A (identity)", "player_id",
+        ),
+    )
+    registry_rows.insert(
+        2,
+        _registry_row(
+            "position", "N/A (spine)", "Table identity", "master population / family #9 union",
+            min_season, max_season + 1, "object", "Never null (spine key)", "N/A (identity)", "position",
+        ),
+    )
+    registry_rows.insert(
+        3,
+        _registry_row(
+            "observation_season", "N/A (spine)", "Table identity",
+            "family #9's own observation season (see partial_season_canonical.py)",
+            min_season, max_season, "int64",
+            "Always prediction_season - 1 when present; null for any row with no real family #9 "
+            "observation data",
+            "N/A (identity)", "observation_season",
+        ),
+    )
+
+    column_registry = pd.DataFrame(registry_rows)
+    deferred_families = pd.DataFrame(DEFERRED_FAMILIES)
+    return out, column_registry, deferred_families

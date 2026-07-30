@@ -87,7 +87,19 @@ def kickoff_lookup_table(schedule_df: pd.DataFrame, seasons) -> pd.DataFrame:
     """season/team/kickoff_date rows for every season in `seasons`,
     built by calling week1_kickoff_by_team() once per season (not once
     per population row -- that would recompute the same per-season
-    dict thousands of times)."""
+    dict thousands of times). Real, found bug fixed 2026-07: when
+    `schedule_df` has zero real matching rows for every season
+    requested (e.g. a genuinely empty `schedule_df` -- a real,
+    disclosed environment gap, see
+    research/dataset2/CANONICAL_TABLE_PROPOSAL_2026_07.md), the old
+    empty-case `pd.DataFrame(columns=[...])` left `_kickoff_date` as
+    object dtype with zero rows; merging that onto a real, non-empty
+    population produced a NaN column that was NOT datetime64, and
+    `experience_age_draft.py`'s own `_kickoff_date - birth_date`
+    subtraction crashed with a real TypeError instead of producing the
+    correct, real all-null `age_at_week1_years` result. Explicit dtypes
+    below fix this without changing any real, non-empty-schedule
+    behavior."""
     frames = []
     for season in sorted(set(seasons)):
         kickoff = week1_kickoff_by_team(schedule_df, season)
@@ -96,7 +108,13 @@ def kickoff_lookup_table(schedule_df: pd.DataFrame, seasons) -> pd.DataFrame:
                 pd.DataFrame({"season": season, "team": list(kickoff.keys()), "_kickoff_date": list(kickoff.values())})
             )
     if not frames:
-        return pd.DataFrame(columns=["season", "team", "_kickoff_date"])
+        return pd.DataFrame(
+            {
+                "season": pd.Series(dtype="int64"),
+                "team": pd.Series(dtype="object"),
+                "_kickoff_date": pd.Series(dtype="datetime64[ns]"),
+            }
+        )
     return pd.concat(frames, ignore_index=True)
 
 
