@@ -899,6 +899,77 @@ DATASET2_EFFICIENCY_VOLUME_SENSITIVITY = {
     ("TE", "receiving"): 30,
 }
 
+# Family #9 MEANINGFUL-ROLE classification thresholds -- approved
+# 2026-07 (research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md
+# §2e) as PREDEFINED DATASET 2 RESEARCH CLASSIFICATIONS, explicitly NOT
+# a claim that real football opportunity changes discontinuously at
+# the exact cutoff -- a player at 1.9 carries/team-game is not
+# meaningfully different from one at 2.0. Three tiers, each value the
+# minimum per-game (or share) rate required:
+#   role_present     -- recurring but potentially peripheral involvement
+#   meaningful_role   -- enough opportunity to plausibly matter for
+#                        fantasy production
+#   strong_lead_role  -- starter-level or high-value involvement
+# Each dict entry is a (role_present, meaningful_role, strong_lead_role)
+# tuple, values strictly increasing (checked at test time -- see
+# TestRoleConfigConsistency in tests/test_dataset2_partial_season_traits.py).
+# TEAM-GAME and ACTIVE-GAME are DELIBERATELY SEPARATE dicts, never
+# merged into one classification -- per-team-game reflects sustained
+# opportunity PLUS availability (a committee back or an
+# injury-interrupted season reads lower here even in a real starter's
+# season); per-active-game reflects usage ONLY when the player was
+# actually on the field. A player can qualify strong_lead_role on one
+# basis while failing role_present on the other -- that divergence is
+# itself a real, disclosed finding (e.g. a recently-promoted or
+# fragile-availability player), never resolved by picking one basis as
+# authoritative. QB has no team-game entry -- a starting QB's
+# team-game and active-game attempt rates track closely by
+# construction (a real starter rarely has a zero-attempt active week),
+# so a second QB row was judged unnecessary complexity, consistent
+# with the project's earlier "avoid unnecessary QB threshold
+# complexity" decision for family #9's sample floor.
+# Keyed by (position, metric_name), same keys as EFFICIENCY_METRICS/
+# DATASET2_EFFICIENCY_VOLUME_* -- metric_name distinguishes RB's two
+# real role questions (rushing vs. receiving).
+DATASET2_ROLE_THRESHOLDS_TEAM_GAME = {
+    ("RB", "rushing"): (2, 5, 10),
+    ("RB", "receiving"): (1, 2, 3),
+    ("WR", "receiving"): (2, 4, 6),
+    ("TE", "receiving"): (1.5, 3, 5),
+}
+DATASET2_ROLE_THRESHOLDS_ACTIVE_GAME = {
+    ("QB", "passing"): (20, 25, 30),
+    ("RB", "rushing"): (3, 7, 12),
+    ("RB", "receiving"): (1, 2, 3),
+    ("WR", "receiving"): (3, 5, 7),
+    ("TE", "receiving"): (2, 4, 6),
+}
+
+# Family #9 offensive-SNAP-SHARE role thresholds -- same three-tier
+# classification and same "predefined research classification, not a
+# discontinuity claim" caveat as above, applied to `offense_snap_share`
+# (Source B, real 2013+ coverage only) rather than a Source A
+# opportunity count. TEAM-GAME basis only (no active-game snap-share
+# variant proposed or built). NOTE, per instruction: for WR
+# specifically, snap share establishes real PARTICIPATION but does NOT
+# necessarily identify receiving HIERARCHY -- a WR can play a real
+# strong-lead share of offensive snaps while a teammate absorbs the
+# real target volume (blocking-heavy or decoy usage). Snap share and
+# the separate WR receiving-role targets thresholds above must be read
+# together, never as substitutes for each other -- see
+# lib/dataset2/partial_season_traits.py's module docstring and the
+# proposal doc §2e for the real, disclosed composition evidence behind
+# this (WR strong/lead ADP composition spreads more evenly across snap
+# share than RB's does, confirming snap share alone tracks the true
+# WR1 less sharply than it tracks the workhorse RB).
+# Keyed by position (QB/RB/WR/TE).
+DATASET2_ROLE_THRESHOLDS_SNAP_SHARE = {
+    "QB": (0.30, 0.60, 0.80),
+    "RB": (0.20, 0.45, 0.60),
+    "WR": (0.30, 0.55, 0.70),
+    "TE": (0.30, 0.50, 0.65),
+}
+
 # Family #10/#86/#88 depth-chart cluster: the STRUCTURAL (expected)
 # number of simultaneous starters per position under the base "3WR
 # 1TE" offensive personnel package -- approved 2026-07

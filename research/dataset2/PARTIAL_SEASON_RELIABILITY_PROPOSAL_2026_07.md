@@ -14,17 +14,25 @@ self-evident names (`DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY`
 / `_SENSITIVITY`, no "swap" semantics required to read them) and
 committed in `667f633`. §2d's efficiency **sample-eligibility** flags
 (explicitly not called "reliability" — see the terminology correction
-in §2d) are **approved and committed** in
+in §2d) are **approved and committed** (`7f2b8bf`) in
 `build_team_game_efficiency_traits()`/`build_active_game_efficiency_traits()`
 in `lib/dataset2/partial_season_traits.py`, with the exact
 exploratory/higher-volume thresholds given in this round's approval,
-and tested (42/42 in this file). §2e's meaningful-role matrix is
-**being reworked** — an initial single-tier primary/sensitivity pass
-was reviewed and rejected as mislabeled (most "primary" values
-identify recurring involvement, not a meaningful fantasy role) and is
-being replaced with a three-concept structure (role present /
-meaningful role / strong-lead role) and revised candidate thresholds
-— proposal only, nothing wired into code.
+and tested (42/42 in this file). §2e's meaningful-role matrix was
+reworked into a **three-concept structure** — role present /
+meaningful role / strong-lead role — per instruction, after the
+initial single-tier primary/sensitivity pass was rejected as
+mislabeled. The revised matrix (candidate thresholds, real retained
+counts, era/ADP composition, real player examples per §2e) is
+**approved and implemented** in
+`build_team_game_role_traits()`/`build_active_game_role_traits()`/
+`build_team_game_snap_share_role_traits()`
+(`lib/dataset2/partial_season_traits.py`), thresholds in `config.py`'s
+`DATASET2_ROLE_THRESHOLDS_TEAM_GAME`/`_ACTIVE_GAME`/`_SNAP_SHARE`, and
+tested. Team-game and active-game classifications stay separate for
+every metric with both; no metric's flags are combined into a single
+overall role label. See §2e's closing section for the full disclosure
+of what these flags do and don't claim.
 
 ---
 
@@ -672,10 +680,268 @@ primary/sensitivity pair per role type) was reviewed and **rejected as
 labeled** — most of the proposed "primary" thresholds identify
 recurring involvement, not a fantasy-meaningful role, and several
 "sensitivity" levels (RB rushing especially) were judged still too
-low to represent a strong/lead role. This is being reworked into a
-three-concept structure (role present / meaningful role / strong-lead
-role) with revised candidate ranges per position and metric. See the
-active proposal work for the current state — not yet finalized here.
+low to represent a strong/lead role. Reworked below into three
+concepts, per instruction. **The revised three-tier matrix below is
+APPROVED AND IMPLEMENTED** (`build_team_game_role_traits()`,
+`build_active_game_role_traits()`, `build_team_game_snap_share_role_traits()`
+in `lib/dataset2/partial_season_traits.py`; `config.py`'s
+`DATASET2_ROLE_THRESHOLDS_TEAM_GAME`/`_ACTIVE_GAME`/`_SNAP_SHARE`) with
+the exact thresholds shown per position/metric below.
+
+### Three-tier role classification — APPROVED AND IMPLEMENTED
+
+1. **Role present** — recurring but potentially peripheral involvement
+   (the old "primary" candidates, retained largely as-is where not
+   otherwise noted).
+2. **Meaningful role** — enough opportunity to plausibly matter for
+   fantasy production.
+3. **Strong/lead role** — starter-level or high-value involvement.
+
+Per-team-game and per-active-game stay **separate, non-merged**
+measures throughout, per instruction. Retained counts are shown across
+final-4/6/8; composition is era/ADP-bucket counts among qualifiers at
+final-4 (ADP-bucket counts undercount the qualifying population since
+most player-seasons in this dataset have no real market ADP —
+undrafted/deep-league players are common at the lower tiers); examples
+are real player-seasons across the full 2006-2025 population within a
+narrow band on each side of the cutoff (not limited to 2023, to give a
+fuller and more recognizable set of names — sourced the same way as
+the earlier round's 2023-only examples).
+
+**QB passing role**
+
+| Basis | Role present | Meaningful | Strong/lead |
+|---|---|---|---|
+| attempts/active-game | **≥ 20** | **≥ 25** | **≥ 30** |
+
+- Retained (base 1,525 QB active-game rows): final-4 970 (63.6%) /
+  793 (52.0%) / 531 (34.8%); final-6 978 (64.1%) / 819 (53.7%) / 539
+  (35.3%); final-8 984 (64.5%) / 832 (54.6%) / 540 (35.4%). Stable
+  across window length.
+- Composition, final-4: role-present era 2011-2020/2021+/pre-2011 =
+  474/251/245, ADP (of the minority with a real market ADP) R6-10 186,
+  R11+ 157, R3-5 74, R1-2 31. Strong/lead era 297/125/109, ADP R6-10
+  125, R11+ 90, R3-5 53, R1-2 22 — composition shifts only modestly
+  tier to tier; no tier is disproportionately early-round or
+  late-round.
+- Examples: role-present cutoff (20) — just below, **Andy Dalton**
+  (2022, 19.75), **Gus Frerotte** (2007, 19.75); just above, **Tyler
+  Huntley** (2022, 20.0), **J.T. O'Sullivan** (2008, 20.0). Meaningful
+  cutoff (25) — just below, **Colt McCoy** (2021, 24.75); just above,
+  **Jake Plummer** (2006, 25.0), **Deshaun Watson** (2024, 25.0).
+  Strong/lead cutoff (30) — just below, **Robert Griffin III** (2013,
+  29.75), **Aaron Rodgers** (2022, 29.75); just above, **Kerry
+  Collins** (2006, 30.0), **Blaine Gabbert** (2012, 30.0). The
+  strong/lead tier includes real spot-starter/backup seasons alongside
+  clear starters (Gabbert, Collins) — a reminder that a 4-game snapshot
+  of attempts/active-game measures same-season role, not career
+  quality.
+
+**RB rushing role**
+
+| Basis | Role present | Meaningful | Strong/lead |
+|---|---|---|---|
+| carries/team-game | **≥ 2.0** | **≥ 5.0** | **≥ 10.0** |
+| carries/active-game | **≥ 3.0** | **≥ 7.0** | **≥ 12.0** |
+
+- Team-game retained (base 2,787): final-4 1,494 (53.6%) / 1,033
+  (37.1%) / 593 (21.3%); final-6 1,507 (54.1%) / 1,028 (36.9%) / 578
+  (20.7%); final-8 1,512 (54.3%) / 1,027 (36.8%) / 585 (21.0%).
+- Active-game retained (base 2,908): final-4 1,854 (63.8%) / 1,176
+  (40.4%) / 646 (22.2%); final-6 1,874 (64.4%) / 1,163 (40.0%) / 655
+  (22.5%); final-8 1,882 (64.7%) / 1,152 (39.6%) / 650 (22.4%).
+- Composition, team-game final-4: role-present era 751/387/356
+  (2011-2020/2021+/pre-2011), ADP R6-10 276, R1-2 196, R3-5 191, R11+
+  183. Strong/lead era 295/140/158, ADP **R1-2 161** (now the largest
+  ADP group, up from 4th at role-present) — a real, meaningful
+  composition shift: the strong/lead tier concentrates real early-round
+  draft capital much more than role-present does, exactly the pattern
+  you'd expect from a genuine lead-back cutoff.
+- Examples, team-game basis: role-present cutoff (2.0) — just below,
+  **D'Onta Foreman** (2018, 1.75); just above, **Cordarrelle Patterson**
+  (2013, 2.0), **Leon Washington** (2014, 2.0). Meaningful cutoff (5.0)
+  — just below, **Doug Martin** (2017, 4.75), **Jerick McKinnon**
+  (2022, 4.75); just above, **Dion Lewis** (2018, 5.0). Strong/lead
+  cutoff (10.0) — just below, **Tevin Coleman** (2016, 9.75), **Michael
+  Carter** (2025, 9.75); just above, **Joe Mixon** (2024, 10.0),
+  **De'Von Achane** (2023, 10.0) — real, recognizable lead backs
+  landing right at the strong/lead line.
+- Examples, active-game basis: meaningful cutoff (7.0) — just below,
+  **LaMichael James** (2012, 6.75); just above, **Devontae Booker**
+  (2016, 7.0), **Mike Davis** (2015, 7.0). Strong/lead cutoff (12.0) —
+  just below, **Justin Forsett** (2015, 11.75); just above, **Josh
+  Jacobs** (2025, 12.0), **Dion Lewis** (2016, 12.0).
+- The team-game vs. active-game split remains real and expected (§2e
+  above): a committee back or one returning from injury reads lower on
+  the team-game basis than the active-game basis, since the team-game
+  denominator counts weeks he didn't play.
+
+**RB receiving role**
+
+| Basis | Role present | Meaningful | Strong/lead |
+|---|---|---|---|
+| targets/team-game | **≥ 1.0** | **≥ 2.0** | **≥ 3.0** |
+| targets/active-game | **≥ 1.0** | **≥ 2.0** | **≥ 3.0** |
+
+- Team-game retained (base 2,787): final-4 1,074 (38.5%) / 646 (23.2%)
+  / 384 (13.8%); final-6 1,075 (38.6%) / 644 (23.1%) / 370 (13.3%);
+  final-8 1,074 (38.5%) / 649 (23.3%) / 366 (13.1%).
+- Active-game retained (base 2,908): final-4 1,591 (54.7%) / 973
+  (33.5%) / 571 (19.6%); final-6 1,583 (54.4%) / 959 (33.0%) / 562
+  (19.3%); final-8 1,582 (54.4%) / 965 (33.2%) / 565 (19.4%).
+- Composition, team-game final-4: role-present ADP R6-10 201, R1-2
+  161, R3-5 152, R11+ 122; strong/lead ADP **R1-2 99** becomes the
+  largest group (was 2nd at role-present) — real, if less pronounced
+  than the rushing-role shift, since receiving work concentrates in a
+  real subset of early-round pass-catching backs.
+- Examples, team-game basis: role-present cutoff (1.0) — just below,
+  **Royce Freeman** (2020, 0.75), **Josh Jacobs** (2019, 0.75); just
+  above, **Joe Mixon** (2017, 1.0), **Frank Gore** (2019, 1.0).
+  Meaningful cutoff (2.0) — just below, **Cedric Benson** (2009, 1.75);
+  just above, **Khalil Herbert** (2023, 2.0). Strong/lead cutoff (3.0)
+  — just below, **Alfred Blue** (2018, 2.75); just above, **Chester
+  Taylor** (2009, 3.0), **Jerick McKinnon** (2015, 3.0).
+- These per-game numbers stay modest even at strong/lead (3.0
+  targets/game ≈ 12 targets over a 4-game window) — real, and
+  consistent with RBs rarely leading receiving volume the way WR/TE do;
+  a 3.0-target/game back is nonetheless a real, meaningfully-involved
+  pass-catching option, not a marginal one.
+
+**WR receiving role**
+
+| Basis | Role present | Meaningful | Strong/lead |
+|---|---|---|---|
+| targets/team-game | **≥ 2.0** | **≥ 4.0** | **≥ 6.0** |
+| targets/active-game | **≥ 3.0** | **≥ 5.0** | **≥ 7.0** |
+
+- Team-game retained (base 4,174): final-4 1,751 (42.0%) / 1,178
+  (28.2%) / 642 (15.4%); final-6 1,764 (42.3%) / 1,163 (27.9%) / 639
+  (15.3%); final-8 1,780 (42.6%) / 1,156 (27.7%) / 634 (15.2%).
+- Active-game retained (base 4,338): final-4 2,025 (46.7%) / 1,242
+  (28.6%) / 620 (14.3%); final-6 2,017 (46.5%) / 1,233 (28.4%) / 617
+  (14.2%); final-8 2,012 (46.4%) / 1,221 (28.1%) / 596 (13.7%).
+- Composition, team-game final-4: role-present ADP R6-10 301, R3-5
+  219, R11+ 211, R1-2 132; strong/lead ADP shifts toward **R3-5 150**
+  becoming the largest group, R1-2 rising to 107 (from last place) —
+  a real, meaningful early-round concentration at the top tier.
+- Examples, team-game basis: role-present cutoff (2.0) — just below,
+  **Marquise Goodwin** (2021, 1.75); just above, **Ted Ginn** (2018,
+  2.0). Meaningful cutoff (4.0) — just below, **Torry Holt** (2009,
+  3.75), **Dez Bryant** (2015, 3.75); just above, **Kenny Britt**
+  (2015, 4.0). Strong/lead cutoff (6.0) — just below, **Kelvin
+  Benjamin** (2016, 5.75), **Anquan Boldin** (2016, 5.75); just above,
+  **Donald Driver** (2009, 6.0), **Allen Hurns** (2015, 6.0).
+- Examples, active-game basis: meaningful cutoff (5.0) — just below,
+  **Adam Thielen** (2018, 4.75), **JuJu Smith-Schuster** (2019, 4.75);
+  just above, **Isaac Bruce** (2009, 5.0). Strong/lead cutoff (7.0) —
+  just below, **John Brown** (2014, 6.75); just above, **Reggie
+  Wayne** (2009, 7.0), **Doug Baldwin** (2014, 7.0) — real, clearly
+  lead-WR seasons landing right at the strong/lead line, a good sign
+  the cutoff is tracking a real distinction.
+
+**TE receiving role**
+
+| Basis | Role present | Meaningful | Strong/lead |
+|---|---|---|---|
+| targets/team-game | **≥ 1.5** | **≥ 3.0** | **≥ 5.0** |
+| targets/active-game | **≥ 2.0** | **≥ 4.0** | **≥ 6.0** |
+
+- Team-game retained (base 2,363): final-4 856 (36.2%) / 501 (21.2%)
+  / 242 (10.2%); final-6 851 (36.0%) / 490 (20.7%) / 236 (10.0%);
+  final-8 854 (36.1%) / 493 (20.9%) / 224 (9.5%).
+- Active-game retained (base 2,403): final-4 1,037 (43.2%) / 493
+  (20.5%) / 213 (8.9%); final-6 1,032 (42.9%) / 491 (20.4%) / 205
+  (8.5%); final-8 1,031 (42.9%) / 491 (20.4%) / 202 (8.4%).
+- Composition, team-game final-4: role-present ADP R11+ 105, R6-10
+  103, R3-5 49, R1-2 11; strong/lead ADP R6-10 59, R11+ 45, R3-5 33,
+  R1-2 8 — TE draft capital stays concentrated in the mid-to-late
+  rounds across all tiers, a real, disclosed reflection of how TEs are
+  drafted in this era mix (few real early-round TE seasons in the
+  underlying population to begin with).
+- Examples, team-game basis: role-present cutoff (1.5) — just below,
+  **Cameron Brate** (2022, 1.25); just above, **Dwayne Allen** (2015,
+  1.5). Meaningful cutoff (3.0) — just below, **Greg Olsen** (2019,
+  2.75); just above, **Cade Otton** (2023, 3.0). Strong/lead cutoff
+  (5.0) — just below, **O.J. Howard** (2019, 4.75), **Dalton Kincaid**
+  (2023, 4.75); just above, **David Njoku** (2018, 5.0), **Hayden
+  Hurst** (2020, 5.0).
+- Examples, active-game basis: meaningful cutoff (4.0) — just below,
+  **Austin Hooper** (2018, 3.75); just above, **Jace Amaro** (2016,
+  4.0). Strong/lead cutoff (6.0) — just below, **Hunter Henry** (2017,
+  5.75); just above, **Greg Olsen** (2009, 6.0), **Noah Fant** (2024,
+  6.0).
+
+**Offensive snap role** (team-game basis, `offense_snap_share`,
+Source B 2013+ coverage only)
+
+| Position | Role present | Meaningful | Strong/lead |
+|---|---|---|---|
+| QB | **≥ 0.30** | **≥ 0.60** | **≥ 0.80** |
+| RB | **≥ 0.20** | **≥ 0.45** | **≥ 0.60** |
+| WR | **≥ 0.30** | **≥ 0.55** | **≥ 0.70** |
+| TE | **≥ 0.30** | **≥ 0.50** | **≥ 0.65** |
+
+- Retained, QB (base 758/827/880 final-4/6/8): role-present 76.6% /
+  75.1% / 74.8%; meaningful 67.4% / 65.8% / 64.3%; strong/lead 57.9% /
+  56.2% / 55.5%.
+- Retained, RB (base 1,508/1,584/1,671): role-present 62.2% / 60.9% /
+  58.9%; meaningful 28.8% / 28.3% / 26.6%; strong/lead 13.4% / 12.4% /
+  12.3%.
+- Retained, WR (base 2,315/2,460/2,550): role-present 66.6% / 64.7% /
+  63.8%; meaningful 47.9% / 45.7% / 44.5%; strong/lead 32.6% / 32.2% /
+  30.6%.
+- Retained, TE (base 1,367/1,433/1,470): role-present 64.7% / 63.4% /
+  63.4%; meaningful 38.3% / 38.1% / 37.3%; strong/lead 23.8% / 22.1% /
+  22.2%.
+- Composition, final-4: RB strong/lead ADP shifts sharply toward **R1-2
+  82** (largest group, from 3rd at role-present) — the clearest
+  composition shift of any position, matching a real lead-back
+  identification. WR strong/lead ADP spreads more evenly (R6-10 161,
+  R3-5 137) — snap share alone doesn't isolate the true WR1 as sharply
+  as it does the workhorse RB, a real, disclosed finding rather than a
+  flaw (WR usage is more target-share-driven than snap-share-driven at
+  the top).
+- Examples: QB strong/lead (0.80) — just below, **Mike Glennon**
+  (2020, 0.796); just above, **Drew Lock** (2021, 0.801), **Sam
+  Howell** (2023, 0.801). RB strong/lead (0.60) — just below, **Miles
+  Sanders** (2019, 0.599); just above, **Austin Ekeler** (2021, 0.600),
+  **Rex Burkhead** (2016, 0.600). WR strong/lead (0.70) — just below,
+  **DeVonta Smith** (2021, 0.699), **Alshon Jeffery** (2015, 0.699);
+  just above, **Randall Cobb** (2016, 0.700), **Tyler Boyd** (2016,
+  0.700). TE strong/lead (0.65) — just below, **Evan Engram** (2018,
+  0.648); just above, **Pat Freiermuth** (2021, 0.650), **Dawson
+  Knox** (2019, 0.651).
+- Retained shares decline gradually across final-4/6/8 rather than
+  collapsing, the same rate-based stability seen throughout this
+  section — expected, not a new finding.
+
+**APPROVED AND IMPLEMENTED 2026-07**: every threshold above is now
+built as a real, tested role-tier classification --
+`build_team_game_role_traits()`/`build_active_game_role_traits()`
+(QB/RB/WR/TE opportunity-per-game metrics) and
+`build_team_game_snap_share_role_traits()` (position-specific snap
+share) in `lib/dataset2/partial_season_traits.py`, thresholds sourced
+from `config.py`'s `DATASET2_ROLE_THRESHOLDS_TEAM_GAME`/`_ACTIVE_GAME`/
+`_SNAP_SHARE`. Per instruction: (1) these are PREDEFINED DATASET 2
+RESEARCH CLASSIFICATIONS, not a claim that real opportunity changes
+discontinuously at the exact cutoff -- downstream analysis should read
+the continuous rate alongside the tier flags, with sensitivity checks
+around a cutoff where it matters; (2) team-game and active-game
+classifications stay fully separate, never merged, for every metric
+that has both bases; (3) no metric's tier flags are combined with any
+other metric's into one overall `meaningful_role`/`strong_role` label
+-- a player's snap-share role, rushing role, and receiving role are
+independently readable, and a divergence between them (e.g. a strong
+active-game role without sustained team-game availability) is a real,
+preserved finding, not resolved or averaged away; (4) for WR
+specifically, `offense_snap_share` establishes real participation but
+does not identify receiving hierarchy -- read alongside the separate
+WR receiving-role targets thresholds, never as a substitute (see
+module docstring). Any future COMPOSITE concept (e.g. a "three-down
+RB" label combining rushing + receiving + snap-share roles) is a
+deliberate, separate interaction hypothesis to test on its own merits
+-- not an automatic consequence of this implementation, and not
+attempted here.
 
 ---
 
@@ -751,26 +1017,32 @@ per-team-game/per-active-game rate split and the flat 3-primary/4-
 sensitivity active-game interpretability floor (an earlier round);
 the active-game floor constant rename to explicit,
 non-"swap"-dependent names (`667f633`); §2d's efficiency
-sample-eligibility flags — `build_team_game_efficiency_traits()` and
-`build_active_game_efficiency_traits()` in
+sample-eligibility flags (`7f2b8bf`) — `build_team_game_efficiency_traits()`
+and `build_active_game_efficiency_traits()` in
 `lib/dataset2/partial_season_traits.py`, using the approved exact
 thresholds (`config.py`'s `DATASET2_EFFICIENCY_VOLUME_EXPLORATORY`/
 `_SENSITIVITY`: QB ≥50/≥150 attempts; RB rushing ≥15/≥60 carries; RB
 receiving ≥15/≥30 targets; WR receiving ≥15/≥40 targets; TE receiving
 ≥15/≥30 targets), neutral "eligible" terminology throughout, raw
-volumes/rates never gated or deleted by either flag. 42/42 tests in
-this file; full suite 920/920
+volumes/rates never gated or deleted by either flag; §2e's three-tier
+meaningful-role classification (this round) — **role present**
+(recurring but potentially peripheral), **meaningful role** (enough
+opportunity to plausibly matter for fantasy production), **strong/lead
+role** (starter-level or high-value involvement) — implemented in
+`build_team_game_role_traits()`/`build_active_game_role_traits()`
+(QB passing attempts; RB carries and targets; WR/TE targets, each on
+team-game AND active-game bases, kept fully separate) and
+`build_team_game_snap_share_role_traits()` (position-specific
+`offense_snap_share`, team-game basis), thresholds in `config.py`'s
+`DATASET2_ROLE_THRESHOLDS_TEAM_GAME`/`_ACTIVE_GAME`/`_SNAP_SHARE`
+exactly as approved. No metric's tier flags are combined into one
+overall role label; raw opportunity counts and continuous per-game/
+share rates stay fully visible regardless of tier. 81/81 tests in
+this file; full suite 959/959
 (`python -m pytest tests/ -q --import-mode=importlib`).
 
-**NOT implemented, proposal under revision**: §2e's meaningful-role
-matrix. An initial single-tier (primary/sensitivity) pass was
-reviewed and **rejected as labeled** — most proposed "primary"
-thresholds identify recurring involvement, not a fantasy-meaningful
-role, and several "sensitivity" levels (RB rushing especially) were
-judged still too low for a strong/lead role. Being reworked into
-three concepts — **role present** (recurring but potentially
-peripheral), **meaningful role** (enough opportunity to plausibly
-matter for fantasy production), **strong/lead role** (starter-level
-or high-value involvement) — with revised candidate ranges per
-position/metric, still preserving team-game and active-game as
-separate, non-merged bases. No role-flag logic exists in code.
+**Deliberately not built this round**: any COMPOSITE role concept
+(e.g. a "three-down RB" label combining rushing + receiving +
+snap-share roles) — per instruction, a future interaction hypothesis
+to test on its own merits, not an automatic consequence of this
+implementation.

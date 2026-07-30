@@ -155,11 +155,81 @@ correlation for these football rate metrics stays modest even at the
 SENSITIVITY volume; the flags mark where the observed rate stops being
 dominated by a handful of plays, nothing stronger.
 
+MEANINGFUL-ROLE CLASSIFICATION -- approved and implemented 2026-07
+(research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md §2e),
+a DIFFERENT, further concept from efficiency sample-eligibility above:
+efficiency asks "is there enough real volume to trust a RATE (yards
+per target)"; role classification asks "is there enough real
+OPPORTUNITY (targets/carries/attempts/snap share themselves) to call
+this a meaningful fantasy role at all." Three ordered tiers --
+`role_present` (recurring but potentially peripheral involvement),
+`meaningful_role` (enough opportunity to plausibly matter for fantasy
+production), `strong_lead_role` (starter-level or high-value
+involvement) -- computed from a real, continuous per-game (or
+snap-share) rate against `config.py`'s
+`DATASET2_ROLE_THRESHOLDS_TEAM_GAME`/`_ACTIVE_GAME`/`_SNAP_SHARE`.
+PREDEFINED DATASET 2 RESEARCH CLASSIFICATIONS, NOT A CLAIM THAT REAL
+FOOTBALL OPPORTUNITY CHANGES DISCONTINUOUSLY AT THE EXACT CUTOFF -- a
+player at 1.9 carries/team-game is not meaningfully different from one
+at 2.0; the tiers exist to make cross-player/cross-season comparison
+tractable, not to assert a bright structural line. Downstream analysis
+should read the underlying continuous rate ALONGSIDE the tier flags
+and consider sensitivity to the exact cutoff, not treat a tier flip as
+itself the finding.
+
+Built by `build_team_game_role_traits()`/`build_active_game_role_traits()`
+(QB attempts, RB carries, RB/WR/TE targets) and
+`build_team_game_snap_share_role_traits()` (position-specific
+`offense_snap_share`, team-game basis only, Source B 2013+ coverage).
+Same "raw counts always visible, only the derived field is ever
+gated" discipline as every other trait in this module: the real
+opportunity count and the per-game (or share) rate are ALWAYS present
+for an applicable, covered row -- the three tier flags are additional,
+non-destructive classifications layered on top, never a filter, and
+NEVER silently combined into one another or into a single overall
+"meaningful role" label across metrics. A player's snap-share role,
+rushing role, and receiving role are reported completely independently
+-- a strong snap-share role with a weak receiving role, or a strong
+active-game role with a weak team-game role (a fragile or
+recently-promoted player), is exactly the kind of finding this
+independence is designed to surface, not average away. Any future
+COMPOSITE concept (e.g. a "three-down RB" label combining rushing +
+receiving + snap-share roles) is a deliberate, separate interaction
+hypothesis to test on its own merits later -- never an automatic
+consequence of building these three tiers.
+
+TEAM-GAME vs. ACTIVE-GAME role classifications are DELIBERATELY
+SEPARATE, per the same rationale as the dual-rate PPG split above:
+per-team-game reflects sustained opportunity PLUS availability (a
+committee back or an injury-interrupted stretch reads lower here even
+in a real starter's season, since the denominator is the fixed real
+window size, never floor-gated -- 0.0 for a genuinely zero-opportunity
+applicable window, not null); per-active-game reflects opportunity
+ONLY across the games the player was actually on the field for (0.0
+when active games had real zero opportunity that metric, null only
+when the player has zero real active games at all). Neither overrides
+the other -- a player can be `strong_lead_role` on the active-game
+basis while failing `role_present` on the team-game basis, which
+plausibly identifies a high-upside player who is fragile or was
+recently promoted into the role; that divergence is preserved and
+readable, never resolved in either direction.
+
+FOR WR SPECIFICALLY: `offense_snap_share` establishes real
+PARTICIPATION but does NOT necessarily identify receiving HIERARCHY --
+a WR can play a real strong-lead share of a team's offensive snaps
+while a teammate absorbs the real target volume (blocking-heavy,
+decoy, or possession-role usage). The real composition evidence
+behind this (WR strong/lead-tier ADP composition spreads more evenly
+across the snap-share candidates than RB's does under the same tiers)
+is in the proposal doc §2e. Snap share and the separate WR
+receiving-role targets thresholds must be read together, never as
+substitutes for one another.
+
 TEST SCOPE: tests/test_dataset2_partial_season_traits.py proves
 implementation correctness (team-game vs. active-game window
 construction, real 16/17-game-era boundary handling, inactive-game
 zero-filling, traded-player exclusion, floor enforcement, efficiency
-sample-eligibility) against
+sample-eligibility, meaningful-role classification) against
 synthetic fixtures. tests/test_dataset2_common.py separately proves
 `real_reg_week_slots()`/`build_team_game_index()` correctness, which
 this module now relies on rather than re-deriving.
@@ -177,12 +247,23 @@ from config import (
     DATASET2_EFFICIENCY_VOLUME_SENSITIVITY,
     DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY,
     DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_SENSITIVITY,
+    DATASET2_ROLE_THRESHOLDS_ACTIVE_GAME,
+    DATASET2_ROLE_THRESHOLDS_SNAP_SHARE,
+    DATASET2_ROLE_THRESHOLDS_TEAM_GAME,
 )
 from lib.dataset2.common import build_team_game_index, validate_columns
 
 POPULATION_REQUIRED_COLUMNS = ("season", "player_id", "position")
 WEEKLY_PLAYER_BASE_COLUMNS = ("season", "player_id", "week", "team")
 WEEKLY_PLAYER_REQUIRED_COLUMNS = WEEKLY_PLAYER_BASE_COLUMNS + ("fantasy_points_ppr",)
+
+# Expected shape of Source B's snap-count input to the snap-share role
+# builder: the CALLER is responsible for pre-filtering to matched rows
+# (real gsis_id) and renaming gsis_id -> player_id -- the EXACT same
+# preprocessing lib/dataset2/snap_traits.py's build_season_snap_usage()
+# does internally, for consistency with that real-audit-validated
+# max-based offense_pct reconstruction.
+SNAP_ROLE_REQUIRED_COLUMNS = ("season", "week", "team", "player_id", "offense_snaps")
 
 # (position, metric_name) -> (numerator_col, denominator_col) in the
 # real Source A weekly file. metric_name distinguishes RB's two real
@@ -280,6 +361,53 @@ EFFICIENCY_ACTIVE_GAME_OUTPUT_COLUMNS = (
     "active_final_n_efficiency_rate",
     "active_final_n_efficiency_volume_eligible_exploratory",
     "active_final_n_efficiency_volume_eligible_sensitivity",
+)
+
+ROLE_TEAM_GAME_OUTPUT_COLUMNS = (
+    "season",
+    "player_id",
+    "position",
+    "metric_name",
+    "window_n",
+    "team_game_window_status",
+    "team_final_n_games",
+    "team_final_n_active_games",
+    "team_final_n_opportunity",
+    "team_final_n_opportunity_per_team_game",
+    "team_final_n_role_present",
+    "team_final_n_meaningful_role",
+    "team_final_n_strong_lead_role",
+)
+
+ROLE_ACTIVE_GAME_OUTPUT_COLUMNS = (
+    "season",
+    "player_id",
+    "position",
+    "metric_name",
+    "window_n",
+    "active_final_n_games",
+    "active_final_n_opportunity",
+    "active_final_n_opportunity_per_active_game",
+    "active_final_n_role_present",
+    "active_final_n_meaningful_role",
+    "active_final_n_strong_lead_role",
+)
+
+SNAP_SHARE_ROLE_OUTPUT_COLUMNS = (
+    "season",
+    "player_id",
+    "position",
+    "window_n",
+    "team_game_window_status",
+    "team_final_n_games",
+    "team_final_n_active_games",
+    "team_final_n_offense_snaps",
+    "team_final_n_team_offense_total",
+    "team_final_n_has_snap_coverage",
+    "team_final_n_offense_snap_share",
+    "team_final_n_role_present",
+    "team_final_n_meaningful_role",
+    "team_final_n_strong_lead_role",
 )
 
 
@@ -727,3 +855,308 @@ def build_active_game_efficiency_traits(
     out["window_n"] = n
 
     return out[list(EFFICIENCY_ACTIVE_GAME_OUTPUT_COLUMNS)].reset_index(drop=True)
+
+
+def _role_tier_flags(rate: pd.Series, thresholds: tuple):
+    """From a real, continuous per-game (or share) `rate` and a
+    (role_present, meaningful_role, strong_lead_role) threshold tuple,
+    returns three pandas NULLABLE-boolean Series -- True/False only
+    where `rate` itself is real and known, `pd.NA` wherever `rate` is
+    null. Deliberately NOT computed via a plain `rate >= threshold`
+    comparison on a float Series, which would silently turn a real
+    NaN into False (numpy/pandas comparison quirk) -- exactly the kind
+    of guessed/defaulted value the module docstring's "every trait
+    field is null for every non-applicable status" rule forbids.
+    Thresholds increase strictly tier to tier (checked at test time,
+    not here), so a real strong_lead_role=True row is always also
+    meaningful_role=True and role_present=True."""
+    role_present_min, meaningful_min, strong_lead_min = thresholds
+    known = rate.notna()
+
+    def _flag(min_value):
+        flag = pd.Series(pd.NA, index=rate.index, dtype="boolean")
+        flag.loc[known] = rate.loc[known] >= min_value
+        return flag
+
+    return _flag(role_present_min), _flag(meaningful_min), _flag(strong_lead_min)
+
+
+def _resolve_role_metric(position: str, metric_name: str, thresholds_by_key: dict):
+    """Real opportunity column (reused from EFFICIENCY_METRICS's own
+    (numerator, denominator) mapping -- role classification only ever
+    needs the denominator/opportunity side, never the numerator) plus
+    the real (role_present, meaningful_role, strong_lead_role)
+    threshold tuple for this (position, metric_name) on the caller's
+    chosen basis (`thresholds_by_key` is one of
+    DATASET2_ROLE_THRESHOLDS_TEAM_GAME/_ACTIVE_GAME). Raises loudly for
+    an unsupported pair rather than silently returning an empty
+    result -- e.g. QB has no team-game entry by design (see module
+    docstring), so requesting it here is a real caller error, not a
+    legitimate empty case."""
+    key = (position, metric_name)
+    if key not in EFFICIENCY_METRICS:
+        raise ValueError(
+            f"No opportunity column defined for (position, metric_name)={key!r}; "
+            f"see EFFICIENCY_METRICS for the supported set."
+        )
+    if key not in thresholds_by_key:
+        raise ValueError(
+            f"No role-tier thresholds defined for (position, metric_name)={key!r} on this "
+            f"basis; see config.py's DATASET2_ROLE_THRESHOLDS_TEAM_GAME/_ACTIVE_GAME for the "
+            f"supported set (QB has no team-game entry by design -- see module docstring)."
+        )
+    _, opportunity_col = EFFICIENCY_METRICS[key]
+    return opportunity_col, thresholds_by_key[key]
+
+
+def build_team_game_role_traits(
+    population: pd.DataFrame,
+    weekly_player: pd.DataFrame,
+    weekly_all_positions: pd.DataFrame,
+    n: int,
+    position: str,
+    metric_name: str,
+) -> pd.DataFrame:
+    """Real per-team-game-window MEANINGFUL-ROLE classification (see
+    module docstring's "MEANINGFUL-ROLE CLASSIFICATION" section) --
+    sustained opportunity PLUS availability, since the denominator is
+    the FIXED real team-window size (`team_final_n_games`), never the
+    active-game count. `team_final_n_opportunity_per_team_game` is
+    NEVER floor-gated -- 0.0, not null, for a real zero-opportunity
+    applicable window, same convention as `team_final_n_points_per_team_game`.
+    The three tier flags (`team_final_n_role_present`/
+    `_meaningful_role`/`_strong_lead_role`) are computed directly from
+    that rate via `_role_tier_flags()` -- nullable booleans, null only
+    for a non-applicable `team_game_window_status` row, never a second
+    filter on top of the always-visible raw counts."""
+    if not isinstance(n, int) or n < 1:
+        raise ValueError(f"n must be a positive integer, got {n!r}")
+    opportunity_col, thresholds = _resolve_role_metric(position, metric_name, DATASET2_ROLE_THRESHOLDS_TEAM_GAME)
+
+    validate_columns(weekly_player, WEEKLY_PLAYER_BASE_COLUMNS + (opportunity_col,), "weekly_player")
+    position_population = population[population["position"] == position]
+    base, player_team, team_game_index = _scope_to_team_games(position_population, weekly_player, weekly_all_positions)
+
+    tgi = team_game_index.copy()
+    tgi["_games_from_end"] = tgi["team_total_games"] - tgi["team_game_index"]
+    final_n_weeks = tgi[tgi["_games_from_end"] < n][["season", "team", "week"]]
+
+    agg = _aggregate_team_window(
+        player_team,
+        final_n_weeks,
+        weekly_player,
+        "team_final_n_games",
+        "team_final_n_active_games",
+        {opportunity_col: "team_final_n_opportunity"},
+    )
+
+    out = base.merge(player_team, on=["season", "player_id"], how="left")
+    out = out.merge(agg, on=["season", "player_id"], how="left")
+    out["team_game_window_status"] = _downgrade_unmatched_applicable(out, "team_final_n_games")
+
+    out["team_final_n_opportunity_per_team_game"] = out["team_final_n_opportunity"] / out["team_final_n_games"]
+
+    (
+        out["team_final_n_role_present"],
+        out["team_final_n_meaningful_role"],
+        out["team_final_n_strong_lead_role"],
+    ) = _role_tier_flags(out["team_final_n_opportunity_per_team_game"], thresholds)
+
+    out["position"] = position
+    out["metric_name"] = metric_name
+    out["window_n"] = n
+
+    return out[list(ROLE_TEAM_GAME_OUTPUT_COLUMNS)].reset_index(drop=True)
+
+
+def build_active_game_role_traits(
+    population: pd.DataFrame, weekly_player: pd.DataFrame, n: int, position: str, metric_name: str
+) -> pd.DataFrame:
+    """Real per-active-game-window MEANINGFUL-ROLE classification --
+    opportunity ONLY across the player's own real final `n` games WITH
+    a real weekly row (identical active-game selection as
+    build_active_game_final_n_traits()/build_active_game_efficiency_traits()).
+    `active_final_n_opportunity_per_active_game` is 0.0 (not null) for
+    a player with real active games but zero real opportunity in this
+    metric across them (a real, meaningful "on the field, no role"
+    finding), and null only when the player has zero real active games
+    at all this season (`active_final_n_games == 0`, nothing to divide
+    by). See build_team_game_role_traits() for what the tier flags do
+    and don't claim -- identical semantics here, on the active-game
+    basis."""
+    if not isinstance(n, int) or n < 1:
+        raise ValueError(f"n must be a positive integer, got {n!r}")
+    opportunity_col, thresholds = _resolve_role_metric(position, metric_name, DATASET2_ROLE_THRESHOLDS_ACTIVE_GAME)
+
+    validate_columns(population, POPULATION_REQUIRED_COLUMNS, "population")
+    validate_columns(weekly_player, WEEKLY_PLAYER_BASE_COLUMNS + (opportunity_col,), "weekly_player")
+
+    position_population = population[population["position"] == position]
+    base = position_population[list(POPULATION_REQUIRED_COLUMNS)].drop_duplicates(
+        subset=["season", "player_id"]
+    ).reset_index(drop=True)
+
+    w = weekly_player.sort_values(["season", "player_id", "week"])
+    w = w.assign(_rank_from_end=w.groupby(["season", "player_id"]).cumcount(ascending=False))
+    in_window = w[w["_rank_from_end"] < n]
+
+    agg = (
+        in_window.groupby(["season", "player_id"])
+        .agg(active_final_n_games=("week", "count"), active_final_n_opportunity=(opportunity_col, "sum"))
+        .reset_index()
+    )
+
+    out = base.merge(agg, on=["season", "player_id"], how="left")
+    out["active_final_n_games"] = out["active_final_n_games"].fillna(0).astype(int)
+    out["active_final_n_opportunity"] = out["active_final_n_opportunity"].fillna(0.0)
+
+    out["active_final_n_opportunity_per_active_game"] = out["active_final_n_opportunity"] / out[
+        "active_final_n_games"
+    ].replace(0, np.nan)
+
+    (
+        out["active_final_n_role_present"],
+        out["active_final_n_meaningful_role"],
+        out["active_final_n_strong_lead_role"],
+    ) = _role_tier_flags(out["active_final_n_opportunity_per_active_game"], thresholds)
+
+    out["position"] = position
+    out["metric_name"] = metric_name
+    out["window_n"] = n
+
+    return out[list(ROLE_ACTIVE_GAME_OUTPUT_COLUMNS)].reset_index(drop=True)
+
+
+def build_team_game_snap_share_role_traits(
+    population: pd.DataFrame,
+    weekly_player: pd.DataFrame,
+    weekly_all_positions: pd.DataFrame,
+    raw_snaps: pd.DataFrame,
+    n: int,
+    position: str,
+) -> pd.DataFrame:
+    """Real per-team-game-window offensive-snap-share MEANINGFUL-ROLE
+    classification -- team-game basis only (no active-game snap-share
+    variant proposed or built). `weekly_player`/`weekly_all_positions`
+    resolve the real team-game window and `team_game_window_status`
+    EXACTLY the same way as every other builder in this module (Source
+    A remains the single authority for team identity/window
+    membership); `raw_snaps` supplies the real snap counts (Source B,
+    2013+ coverage, expected pre-filtered to matched rows and renamed
+    -- see SNAP_ROLE_REQUIRED_COLUMNS) used only for the numerator/
+    denominator of the share itself.
+
+    DENOMINATOR IS REAL-TEAM-GAME-LEVEL, NOT PLAYER-ROW-LEVEL: for each
+    real (season, team, week) in the window, the team's real total
+    offensive plays is `max(offense_snaps)` among matched players that
+    game -- the same real, audit-verified reconstruction
+    lib/dataset2/snap_traits.py's build_season_snap_usage() already
+    uses for the season-level `offense_pct` (the O-line/QB group
+    reliably plays every real offensive snap). This total is summed
+    across the window's real team-games INDEPENDENT of whether THIS
+    player himself has a real snap-count row that week -- a team's
+    real offensive-play total for the week doesn't depend on any one
+    player's individual availability, so a player inactive for part of
+    the window still gets the real, full team denominator, only a real
+    (correctly zero-filled) 0 contribution to his own numerator that
+    week.
+
+    MISSING SOURCE B COVERAGE IS EXPLICIT, NOT SILENTLY ZEROED:
+    `team_final_n_has_snap_coverage` is False whenever the real,
+    summed team-offense-total across the window is zero or entirely
+    absent (pre-2013 seasons, or any other real Source B gap) --
+    `team_final_n_offense_snap_share` and all three tier flags stay
+    null in that case, never computed against a missing or
+    structurally-zero denominator. `team_final_n_offense_snaps` (the
+    raw numerator) still zero-fills the normal way for any in-window
+    week the player has no real snap-count row, consistent with every
+    other raw window sum in this module -- it is
+    `has_snap_coverage`/`offense_snap_share` that carry the
+    "no real Source B data here" distinction, not the raw count.
+
+    FOR WR: see module docstring -- snap share establishes real
+    participation, not receiving hierarchy. Read alongside the
+    separate WR receiving-role targets thresholds
+    (build_team_game_role_traits()), never as a substitute for them.
+    """
+    if not isinstance(n, int) or n < 1:
+        raise ValueError(f"n must be a positive integer, got {n!r}")
+    if position not in DATASET2_ROLE_THRESHOLDS_SNAP_SHARE:
+        raise ValueError(
+            f"No snap-share role thresholds defined for position={position!r}; see "
+            f"config.py's DATASET2_ROLE_THRESHOLDS_SNAP_SHARE for the supported set."
+        )
+    thresholds = DATASET2_ROLE_THRESHOLDS_SNAP_SHARE[position]
+
+    validate_columns(weekly_player, WEEKLY_PLAYER_REQUIRED_COLUMNS, "weekly_player")
+    validate_columns(raw_snaps, SNAP_ROLE_REQUIRED_COLUMNS, "raw_snaps")
+
+    position_population = population[population["position"] == position]
+    base, player_team, team_game_index = _scope_to_team_games(position_population, weekly_player, weekly_all_positions)
+
+    tgi = team_game_index.copy()
+    tgi["_games_from_end"] = tgi["team_total_games"] - tgi["team_game_index"]
+    final_n_weeks = tgi[tgi["_games_from_end"] < n][["season", "team", "week"]]
+
+    games_agg = _aggregate_team_window(
+        player_team,
+        final_n_weeks,
+        weekly_player,
+        "team_final_n_games",
+        "team_final_n_active_games",
+        {"fantasy_points_ppr": "_dummy_total"},
+    ).drop(columns=["_dummy_total"])
+
+    snap_agg = _aggregate_team_window(
+        player_team,
+        final_n_weeks,
+        raw_snaps,
+        "_snap_games",
+        "_snap_active_games",
+        {"offense_snaps": "team_final_n_offense_snaps"},
+    )[["season", "player_id", "team_final_n_offense_snaps"]]
+
+    team_game_totals = (
+        raw_snaps.groupby(["season", "team", "week"])["offense_snaps"]
+        .max()
+        .rename("_team_game_offense_total")
+        .reset_index()
+    )
+    team_window_totals = final_n_weeks.merge(team_game_totals, on=["season", "team", "week"], how="left")
+    team_window_totals["_team_game_offense_total"] = team_window_totals["_team_game_offense_total"].fillna(0.0)
+    team_totals = (
+        team_window_totals.groupby(["season", "team"])["_team_game_offense_total"]
+        .sum()
+        .rename("team_final_n_team_offense_total")
+        .reset_index()
+    )
+
+    out = base.merge(player_team, on=["season", "player_id"], how="left")
+    out = out.merge(games_agg, on=["season", "player_id"], how="left")
+    out["team_game_window_status"] = _downgrade_unmatched_applicable(out, "team_final_n_games")
+    out = out.merge(snap_agg, on=["season", "player_id"], how="left")
+    out = out.merge(team_totals, on=["season", "team"], how="left")
+
+    applicable_mask = out["team_game_window_status"] == TEAM_GAME_STATUS_APPLICABLE
+
+    out["team_final_n_has_snap_coverage"] = pd.Series(pd.NA, index=out.index, dtype="boolean")
+    out.loc[applicable_mask, "team_final_n_has_snap_coverage"] = (
+        out.loc[applicable_mask, "team_final_n_team_offense_total"].fillna(0.0) > 0
+    )
+
+    out["team_final_n_offense_snap_share"] = np.nan
+    coverage_mask = applicable_mask & (out["team_final_n_has_snap_coverage"] == True)  # noqa: E712
+    out.loc[coverage_mask, "team_final_n_offense_snap_share"] = (
+        out.loc[coverage_mask, "team_final_n_offense_snaps"] / out.loc[coverage_mask, "team_final_n_team_offense_total"]
+    )
+
+    (
+        out["team_final_n_role_present"],
+        out["team_final_n_meaningful_role"],
+        out["team_final_n_strong_lead_role"],
+    ) = _role_tier_flags(out["team_final_n_offense_snap_share"], thresholds)
+
+    out["position"] = position
+    out["window_n"] = n
+
+    return out[list(SNAP_SHARE_ROLE_OUTPUT_COLUMNS)].reset_index(drop=True)

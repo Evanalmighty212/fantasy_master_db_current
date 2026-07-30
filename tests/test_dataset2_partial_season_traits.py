@@ -25,16 +25,23 @@ from config import (
     DATASET2_EFFICIENCY_VOLUME_SENSITIVITY,
     DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY,
     DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_SENSITIVITY,
+    DATASET2_ROLE_THRESHOLDS_ACTIVE_GAME,
+    DATASET2_ROLE_THRESHOLDS_SNAP_SHARE,
+    DATASET2_ROLE_THRESHOLDS_TEAM_GAME,
 )
 from lib.dataset2.partial_season_traits import (
+    EFFICIENCY_METRICS,
     OPPORTUNITY_STATUS_PENDING,
     TEAM_GAME_STATUS_APPLICABLE,
     TEAM_GAME_STATUS_UNAVAILABLE_TRADED,
     build_active_game_efficiency_traits,
     build_active_game_final_n_traits,
+    build_active_game_role_traits,
     build_team_game_efficiency_traits,
     build_team_game_final_n_traits,
     build_team_game_half_split_traits,
+    build_team_game_role_traits,
+    build_team_game_snap_share_role_traits,
 )
 
 
@@ -63,6 +70,19 @@ def _weekly_player_metric(rows, col_names):
         record.update(zip(col_names, values))
         records.append(record)
     return pd.DataFrame(records)
+
+
+def _raw_snaps(rows):
+    """rows: list of (season, week, team, player_id, offense_snaps) --
+    matches build_team_game_snap_share_role_traits()'s expected
+    already-matched, already-renamed Source B shape
+    (SNAP_ROLE_REQUIRED_COLUMNS)."""
+    return pd.DataFrame(
+        [
+            {"season": s, "week": w, "team": t, "player_id": p, "offense_snaps": snaps}
+            for s, w, t, p, snaps in rows
+        ]
+    )
 
 
 # Real 2015 (16-game era) team AAA: real bye at week 9 -> 16 real games
@@ -570,3 +590,374 @@ class TestEfficiencyConfigConsistency:
             assert key in DATASET2_EFFICIENCY_VOLUME_EXPLORATORY, key
             assert key in DATASET2_EFFICIENCY_VOLUME_SENSITIVITY, key
             assert DATASET2_EFFICIENCY_VOLUME_EXPLORATORY[key] < DATASET2_EFFICIENCY_VOLUME_SENSITIVITY[key], key
+
+
+class TestTeamGameRoleTraits:
+    """Protects build_team_game_role_traits() -- see module docstring's
+    "MEANINGFUL-ROLE CLASSIFICATION" section and
+    research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md
+    §2e. team_final_n_games is always the fixed real window size, so
+    with a constant per-week carry total the resulting
+    opportunity_per_team_game rate equals that per-week value exactly
+    -- used throughout to hit each config threshold precisely."""
+
+    @pytest.mark.parametrize(
+        "per_week_carries,expect_present,expect_meaningful,expect_strong",
+        [
+            (1.75, False, False, False),  # below role_present (2)
+            (2.0, True, False, False),  # exactly at role_present
+            (3.5, True, False, False),  # between role_present and meaningful
+            (5.0, True, True, False),  # exactly at meaningful (5)
+            (7.5, True, True, False),  # between meaningful and strong
+            (10.0, True, True, True),  # exactly at strong_lead (10)
+            (12.0, True, True, True),  # above strong_lead
+        ],
+    )
+    def test_boundary_values_below_at_above_each_tier(
+        self, per_week_carries, expect_present, expect_meaningful, expect_strong
+    ):
+        assert DATASET2_ROLE_THRESHOLDS_TEAM_GAME[("RB", "rushing")] == (2, 5, 10)
+        pop = _population((2015, "P1", "RB"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        wp = pd.DataFrame(
+            [
+                {"season": 2015, "player_id": "P1", "week": wk, "team": "AAA", "carries": per_week_carries}
+                for wk in last4
+            ]
+        )
+        out = build_team_game_role_traits(pop, wp, wap, n=4, position="RB", metric_name="rushing")
+        row = out.iloc[0]
+        assert row["team_final_n_opportunity_per_team_game"] == pytest.approx(per_week_carries)
+        assert row["team_final_n_role_present"] == expect_present
+        assert row["team_final_n_meaningful_role"] == expect_meaningful
+        assert row["team_final_n_strong_lead_role"] == expect_strong
+
+    def test_zero_opportunity_applicable_row_flags_false_not_null(self):
+        # A real, applicable window with zero real carries is a real
+        # "no rushing role" finding -- rate 0.0 and all three flags
+        # False, never null (null is reserved for non-applicable rows).
+        pop = _population((2015, "P1", "RB"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        wp = pd.DataFrame(
+            [{"season": 2015, "player_id": "P1", "week": AAA_2015_WEEKS[0], "team": "AAA", "carries": 0}]
+        )
+        out = build_team_game_role_traits(pop, wp, wap, n=4, position="RB", metric_name="rushing")
+        row = out.iloc[0]
+        assert row["team_game_window_status"] == TEAM_GAME_STATUS_APPLICABLE
+        assert row["team_final_n_opportunity_per_team_game"] == 0.0
+        assert row["team_final_n_role_present"] == False  # noqa: E712
+        assert row["team_final_n_meaningful_role"] == False  # noqa: E712
+        assert row["team_final_n_strong_lead_role"] == False  # noqa: E712
+
+    def test_unavailable_traded_status_all_role_fields_null(self):
+        pop = _population((2023, "P1", "RB"))
+        wap = _weekly_all_positions([(2023, wk, "KC", "REG") for wk in range(1, 10)] + [(2023, wk, "SF", "REG") for wk in range(10, 19)])
+        wp = pd.DataFrame(
+            [
+                {"season": 2023, "player_id": "P1", "week": wk, "team": "KC", "carries": 5}
+                for wk in range(1, 10)
+            ]
+            + [
+                {"season": 2023, "player_id": "P1", "week": wk, "team": "SF", "carries": 5}
+                for wk in range(10, 19)
+            ]
+        )
+        out = build_team_game_role_traits(pop, wp, wap, n=4, position="RB", metric_name="rushing")
+        row = out.iloc[0]
+        assert row["team_game_window_status"] == TEAM_GAME_STATUS_UNAVAILABLE_TRADED
+        assert pd.isna(row["team_final_n_opportunity_per_team_game"])
+        assert pd.isna(row["team_final_n_role_present"])
+        assert pd.isna(row["team_final_n_meaningful_role"])
+        assert pd.isna(row["team_final_n_strong_lead_role"])
+
+    @pytest.mark.parametrize("n", [4, 6, 8])
+    def test_final_4_6_8_windows_use_correct_fixed_denominator(self, n):
+        pop = _population((2015, "P1", "RB"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        window_weeks = AAA_2015_WEEKS[-n:]
+        wp = pd.DataFrame(
+            [{"season": 2015, "player_id": "P1", "week": wk, "team": "AAA", "carries": 3.0} for wk in window_weeks]
+        )
+        out = build_team_game_role_traits(pop, wp, wap, n=n, position="RB", metric_name="rushing")
+        row = out.iloc[0]
+        assert row["team_final_n_games"] == n
+        assert row["team_final_n_opportunity"] == 3.0 * n
+        assert row["team_final_n_opportunity_per_team_game"] == 3.0  # constant per-game rate regardless of n
+
+    def test_wr_and_te_targets_use_their_own_distinct_thresholds(self):
+        assert DATASET2_ROLE_THRESHOLDS_TEAM_GAME[("WR", "receiving")] == (2, 4, 6)
+        assert DATASET2_ROLE_THRESHOLDS_TEAM_GAME[("TE", "receiving")] == (1.5, 3, 5)
+        wap_wr = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        # 3 targets/team-game clears WR role_present (2) but not TE's stronger meaningful (3) -- wait,
+        # 3 targets/team-game is exactly at TE's meaningful threshold and below WR's meaningful (4).
+        wr_pop = _population((2015, "P1", "WR"))
+        wr_wp = pd.DataFrame(
+            [{"season": 2015, "player_id": "P1", "week": wk, "team": "AAA", "targets": 3.0} for wk in last4]
+        )
+        wr_out = build_team_game_role_traits(wr_pop, wr_wp, wap_wr, n=4, position="WR", metric_name="receiving")
+        te_pop = _population((2015, "P2", "TE"))
+        te_wp = pd.DataFrame(
+            [{"season": 2015, "player_id": "P2", "week": wk, "team": "AAA", "targets": 3.0} for wk in last4]
+        )
+        te_out = build_team_game_role_traits(te_pop, te_wp, wap_wr, n=4, position="TE", metric_name="receiving")
+        assert wr_out.iloc[0]["team_final_n_meaningful_role"] == False  # noqa: E712 -- 3.0 < WR's 4
+        assert te_out.iloc[0]["team_final_n_meaningful_role"] == True  # noqa: E712 -- 3.0 >= TE's 3
+
+    def test_qb_has_no_team_game_entry_and_raises(self):
+        pop = _population((2015, "P1", "QB"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        wp = pd.DataFrame(
+            [{"season": 2015, "player_id": "P1", "week": AAA_2015_WEEKS[0], "team": "AAA", "attempts": 30}]
+        )
+        with pytest.raises(ValueError, match="No role-tier thresholds defined"):
+            build_team_game_role_traits(pop, wp, wap, n=4, position="QB", metric_name="passing")
+
+
+class TestActiveGameRoleTraits:
+    """Protects build_active_game_role_traits() -- opportunity ONLY
+    across the player's own real active games, per the module
+    docstring's team-game-vs-active-game separation."""
+
+    @pytest.mark.parametrize(
+        "per_week_attempts,expect_present,expect_meaningful,expect_strong",
+        [
+            (19.0, False, False, False),  # below role_present (20)
+            (20.0, True, False, False),  # exactly at role_present
+            (25.0, True, True, False),  # exactly at meaningful (25)
+            (30.0, True, True, True),  # exactly at strong_lead (30)
+        ],
+    )
+    def test_boundary_values_below_at_above_each_tier(
+        self, per_week_attempts, expect_present, expect_meaningful, expect_strong
+    ):
+        assert DATASET2_ROLE_THRESHOLDS_ACTIVE_GAME[("QB", "passing")] == (20, 25, 30)
+        pop = _population((2015, "P1", "QB"))
+        wp = pd.DataFrame(
+            [
+                {"season": 2015, "player_id": "P1", "week": wk, "team": "AAA", "attempts": per_week_attempts}
+                for wk in AAA_2015_WEEKS[-4:]
+            ]
+        )
+        out = build_active_game_role_traits(pop, wp, n=4, position="QB", metric_name="passing")
+        row = out.iloc[0]
+        assert row["active_final_n_opportunity_per_active_game"] == pytest.approx(per_week_attempts)
+        assert row["active_final_n_role_present"] == expect_present
+        assert row["active_final_n_meaningful_role"] == expect_meaningful
+        assert row["active_final_n_strong_lead_role"] == expect_strong
+
+    def test_zero_real_active_games_all_role_fields_null(self):
+        # No real rows at all this season -- structurally nothing to
+        # divide by, distinct from a real zero-opportunity active game.
+        pop = _population((2015, "P1", "QB"))
+        wp = pd.DataFrame(columns=["season", "player_id", "week", "team", "attempts"])
+        out = build_active_game_role_traits(pop, wp, n=4, position="QB", metric_name="passing")
+        row = out.iloc[0]
+        assert row["active_final_n_games"] == 0
+        assert pd.isna(row["active_final_n_opportunity_per_active_game"])
+        assert pd.isna(row["active_final_n_role_present"])
+
+    def test_real_active_games_zero_opportunity_flags_false_not_null(self):
+        # On the field (a real row exists) but zero real attempts that
+        # metric -- a real, meaningful "active but no role" finding.
+        pop = _population((2015, "P1", "QB"))
+        wp = pd.DataFrame(
+            [{"season": 2015, "player_id": "P1", "week": wk, "team": "AAA", "attempts": 0} for wk in AAA_2015_WEEKS[-4:]]
+        )
+        out = build_active_game_role_traits(pop, wp, n=4, position="QB", metric_name="passing")
+        row = out.iloc[0]
+        assert row["active_final_n_games"] == 4
+        assert row["active_final_n_opportunity_per_active_game"] == 0.0
+        assert row["active_final_n_role_present"] == False  # noqa: E712
+
+    @pytest.mark.parametrize("n", [4, 6, 8])
+    def test_final_4_6_8_windows(self, n):
+        pop = _population((2015, "P1", "RB"))
+        wp = pd.DataFrame(
+            [{"season": 2015, "player_id": "P1", "week": wk, "team": "AAA", "carries": 4.0} for wk in AAA_2015_WEEKS]
+        )
+        out = build_active_game_role_traits(pop, wp, n=n, position="RB", metric_name="rushing")
+        row = out.iloc[0]
+        assert row["active_final_n_games"] == n
+        assert row["active_final_n_opportunity"] == 4.0 * n
+        assert row["active_final_n_opportunity_per_active_game"] == 4.0
+
+
+class TestSnapShareRoleTraits:
+    """Protects build_team_game_snap_share_role_traits() -- team-game
+    basis, position-specific thresholds, and the real max-based
+    team-total denominator (mirroring snap_traits.py's
+    build_season_snap_usage()) that stays independent of any single
+    player's own week-to-week availability."""
+
+    @pytest.mark.parametrize(
+        "player_snaps_per_week,expect_present,expect_meaningful,expect_strong",
+        [
+            (15.0, False, False, False),  # 15/60 = 0.25, below WR role_present (0.30)
+            (18.0, True, False, False),  # 18/60 = 0.30, exactly at role_present
+            (33.0, True, True, False),  # 33/60 = 0.55, exactly at meaningful
+            (42.0, True, True, True),  # 42/60 = 0.70, exactly at strong_lead
+        ],
+    )
+    def test_boundary_values_below_at_above_each_tier(
+        self, player_snaps_per_week, expect_present, expect_meaningful, expect_strong
+    ):
+        assert DATASET2_ROLE_THRESHOLDS_SNAP_SHARE["WR"] == (0.30, 0.55, 0.70)
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 5.0) for wk in last4])
+        raw = _raw_snaps(
+            [(2015, wk, "AAA", "OL1", 60.0) for wk in last4]
+            + [(2015, wk, "AAA", "P1", player_snaps_per_week) for wk in last4]
+        )
+        out = build_team_game_snap_share_role_traits(pop, wp, wap, raw, n=4, position="WR")
+        row = out.iloc[0]
+        assert row["team_final_n_has_snap_coverage"] == True  # noqa: E712
+        assert row["team_final_n_offense_snap_share"] == pytest.approx(player_snaps_per_week / 60.0)
+        assert row["team_final_n_role_present"] == expect_present
+        assert row["team_final_n_meaningful_role"] == expect_meaningful
+        assert row["team_final_n_strong_lead_role"] == expect_strong
+
+    def test_position_specific_thresholds_classify_the_same_share_differently(self):
+        # A real 0.50 snap share is below WR's meaningful (0.55) but
+        # above RB's meaningful (0.45) -- position-specific thresholds
+        # must be independently wired, not one shared bar.
+        assert DATASET2_ROLE_THRESHOLDS_SNAP_SHARE["RB"] == (0.20, 0.45, 0.60)
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        raw = _raw_snaps(
+            [(2015, wk, "AAA", "OL1", 60.0) for wk in last4]
+            + [(2015, wk, "AAA", "P1", 30.0) for wk in last4]  # 30/60 = 0.50
+            + [(2015, wk, "AAA", "P2", 30.0) for wk in last4]
+        )
+        wr_pop = _population((2015, "P1", "WR"))
+        wr_wp = _weekly_player([(2015, "P1", wk, "AAA", 5.0) for wk in last4])
+        wr_out = build_team_game_snap_share_role_traits(wr_pop, wr_wp, wap, raw, n=4, position="WR")
+
+        rb_pop = _population((2015, "P2", "RB"))
+        rb_wp = _weekly_player([(2015, "P2", wk, "AAA", 5.0) for wk in last4])
+        rb_out = build_team_game_snap_share_role_traits(rb_pop, rb_wp, wap, raw, n=4, position="RB")
+
+        assert wr_out.iloc[0]["team_final_n_offense_snap_share"] == pytest.approx(0.50)
+        assert rb_out.iloc[0]["team_final_n_offense_snap_share"] == pytest.approx(0.50)
+        assert wr_out.iloc[0]["team_final_n_meaningful_role"] == False  # noqa: E712 -- 0.50 < WR's 0.55
+        assert rb_out.iloc[0]["team_final_n_meaningful_role"] == True  # noqa: E712 -- 0.50 >= RB's 0.45
+
+    def test_missing_source_b_coverage_flagged_false_share_null(self):
+        # An applicable team-game window (real Source A team identity)
+        # with ZERO real Source B rows for this team/season at all --
+        # e.g. pre-2013 coverage gap. Must be distinguished from a real
+        # zero share, not silently treated as one.
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 5.0) for wk in AAA_2015_WEEKS[-4:]])
+        empty_raw = pd.DataFrame(
+            {
+                "season": pd.Series(dtype="int64"),
+                "week": pd.Series(dtype="int64"),
+                "team": pd.Series(dtype="object"),
+                "player_id": pd.Series(dtype="object"),
+                "offense_snaps": pd.Series(dtype="float64"),
+            }
+        )
+        out = build_team_game_snap_share_role_traits(pop, wp, wap, empty_raw, n=4, position="WR")
+        row = out.iloc[0]
+        assert row["team_game_window_status"] == TEAM_GAME_STATUS_APPLICABLE
+        assert row["team_final_n_has_snap_coverage"] == False  # noqa: E712
+        assert pd.isna(row["team_final_n_offense_snap_share"])
+        assert pd.isna(row["team_final_n_role_present"])
+
+    def test_zero_snap_applicable_row_visible_not_confused_with_missing_coverage(self):
+        # P1 is applicable and the TEAM has real Source B coverage
+        # (OL1's rows), but P1 himself has zero real recorded snaps --
+        # a real 0.0 share, has_snap_coverage True, flags False (not null).
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 5.0) for wk in last4])
+        raw = _raw_snaps([(2015, wk, "AAA", "OL1", 60.0) for wk in last4])  # no P1 rows at all
+        out = build_team_game_snap_share_role_traits(pop, wp, wap, raw, n=4, position="WR")
+        row = out.iloc[0]
+        assert row["team_final_n_has_snap_coverage"] == True  # noqa: E712
+        assert row["team_final_n_offense_snap_share"] == 0.0
+        assert row["team_final_n_role_present"] == False  # noqa: E712
+
+    def test_unavailable_traded_status_all_snap_fields_null(self):
+        pop = _population((2023, "P1", "WR"))
+        wap = _weekly_all_positions([(2023, wk, "KC", "REG") for wk in range(1, 10)] + [(2023, wk, "SF", "REG") for wk in range(10, 19)])
+        wp = pd.DataFrame(
+            [{"season": 2023, "player_id": "P1", "week": wk, "team": "KC", "fantasy_points_ppr": 5.0} for wk in range(1, 10)]
+            + [{"season": 2023, "player_id": "P1", "week": wk, "team": "SF", "fantasy_points_ppr": 5.0} for wk in range(10, 19)]
+        )
+        raw = _raw_snaps(
+            [(2023, wk, "KC", "P1", 30.0) for wk in range(1, 10)]
+            + [(2023, wk, "SF", "P1", 30.0) for wk in range(10, 19)]
+        )
+        out = build_team_game_snap_share_role_traits(pop, wp, wap, raw, n=4, position="WR")
+        row = out.iloc[0]
+        assert row["team_game_window_status"] == TEAM_GAME_STATUS_UNAVAILABLE_TRADED
+        assert pd.isna(row["team_final_n_offense_snap_share"])
+        assert pd.isna(row["team_final_n_has_snap_coverage"])
+        assert pd.isna(row["team_final_n_role_present"])
+
+    def test_team_denominator_independent_of_player_own_availability(self):
+        # P1 misses one of the window's 4 real team-games entirely
+        # (no real Source B row that week) -- the team's real
+        # offensive-play total for that week still counts in full
+        # (via OL1), only P1's own numerator drops for that week.
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 5.0) for wk in last4])
+        raw = _raw_snaps(
+            [(2015, wk, "AAA", "OL1", 60.0) for wk in last4]
+            + [(2015, wk, "AAA", "P1", 18.0) for wk in last4 if wk != last4[1]]  # missing 1 week
+        )
+        out = build_team_game_snap_share_role_traits(pop, wp, wap, raw, n=4, position="WR")
+        row = out.iloc[0]
+        assert row["team_final_n_team_offense_total"] == 240.0  # 60 * 4, unaffected by P1's absence
+        assert row["team_final_n_offense_snaps"] == 54.0  # 18 * 3 real weeks, 0 the missing week
+        assert row["team_final_n_offense_snap_share"] == pytest.approx(54.0 / 240.0)
+
+    @pytest.mark.parametrize("n", [4, 6, 8])
+    def test_final_4_6_8_windows(self, n):
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        window_weeks = AAA_2015_WEEKS[-n:]
+        wp = _weekly_player([(2015, "P1", wk, "AAA", 5.0) for wk in window_weeks])
+        raw = _raw_snaps(
+            [(2015, wk, "AAA", "OL1", 60.0) for wk in window_weeks]
+            + [(2015, wk, "AAA", "P1", 30.0) for wk in window_weeks]
+        )
+        out = build_team_game_snap_share_role_traits(pop, wp, wap, raw, n=n, position="WR")
+        row = out.iloc[0]
+        assert row["team_final_n_games"] == n
+        assert row["team_final_n_team_offense_total"] == 60.0 * n
+        assert row["team_final_n_offense_snap_share"] == pytest.approx(0.50)
+
+
+class TestRoleConfigConsistency:
+    """Protects config.py's DATASET2_ROLE_THRESHOLDS_* dicts -- each
+    tuple must be strictly increasing (role_present < meaningful_role <
+    strong_lead_role) for _role_tier_flags()'s tier logic to be
+    coherent, and every (position, metric_name) key must resolve to a
+    real opportunity column via EFFICIENCY_METRICS."""
+
+    def test_team_game_thresholds_strictly_increasing_and_resolvable(self):
+        for key, (present, meaningful, strong) in DATASET2_ROLE_THRESHOLDS_TEAM_GAME.items():
+            assert present < meaningful < strong, key
+            assert key in EFFICIENCY_METRICS, key
+
+    def test_active_game_thresholds_strictly_increasing_and_resolvable(self):
+        for key, (present, meaningful, strong) in DATASET2_ROLE_THRESHOLDS_ACTIVE_GAME.items():
+            assert present < meaningful < strong, key
+            assert key in EFFICIENCY_METRICS, key
+
+    def test_snap_share_thresholds_strictly_increasing(self):
+        for position, (present, meaningful, strong) in DATASET2_ROLE_THRESHOLDS_SNAP_SHARE.items():
+            assert present < meaningful < strong, position
+
+    def test_snap_share_covers_every_offense_position(self):
+        assert set(DATASET2_ROLE_THRESHOLDS_SNAP_SHARE.keys()) == {"QB", "RB", "WR", "TE"}

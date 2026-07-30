@@ -1175,8 +1175,18 @@ required and has now been run.
 
 **#9 — Partial-season production splits — SAMPLE-SIZE PORTION BUILT
 (2026-07), REWRITTEN 2026-07 after a real, confirmed week-boundary bug
-was found and FIXED; minimum-opportunity floor still PENDING, by
-design.**
+was found and FIXED. UPDATE (2026-07, later same round): the
+minimum-opportunity work below marked "still PENDING" has since been
+built in three separate, approved slices — the per-team-game/per-
+active-game dual-rate split, EFFICIENCY sample-eligibility flags
+(`build_team_game_efficiency_traits()`/`build_active_game_efficiency_traits()`),
+and a three-tier MEANINGFUL-ROLE classification (`build_team_game_role_traits()`/
+`build_active_game_role_traits()`/`build_team_game_snap_share_role_traits()`)
+— all committed. See
+`research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md`'s
+header and Stop-point sections for the exact current state; the
+narrative below (still PENDING/awaiting-approval language) is kept as
+real decision history, not rewritten to match this update.**
 
 - **Bug fix (committed, tested)**: the original window logic used
   `season_length()` (real games played, 16 or 17) directly as the
