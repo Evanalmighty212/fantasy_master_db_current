@@ -445,3 +445,340 @@ any bust label, per instruction — the next step, once these choices
 are made, is a small, focused change to
 `lib/dataset2/canonical_outcome_table.py` to compute the three label
 columns using whichever combination is approved.
+
+---
+
+## Round 2 (2026-07) — approved decisions, and closing the remaining
+open items
+
+**Status: still a proposal. No label is implemented by this section.**
+This round's real-data analysis is produced by
+`research/dataset2/bust_label_round2_analysis.py`, run against the
+same real, committed canonical outcome table plus `AATP`/`PPG_AR`
+(production.py's own intermediate columns, not new formulas).
+
+### 18. Decisions approved this round
+
+- **Primary percentile: bottom 20%.** Bottom 25%/30% are preserved as
+  named sensitivities (§9 above), not alternates under consideration
+  for the primary label.
+- **Strict hybrid: bottom 20% AND `P < 0`** (below replacement level,
+  zero free parameters — §10's floor candidate B). Percentage-of-
+  threshold floors are preserved only as sensitivities.
+- **Zero-game real-ADP rule, generalized** (§21 below) — a mechanical
+  rule, not a player-specific override.
+
+### 19. G-raw vs. E_P-dependent (G-score) — disagreement audit
+
+The 60 real disagreement rows (30 flagged only by `score_like`, 30
+flagged only by raw `P` — together the 10.8% already reported in §4)
+were audited directly, not assumed:
+
+**A structural fact worth stating plainly**: because G-score and G-raw
+rank the SAME group sizes (same position×bucket cells) and this data
+has zero ties (§11), **the two methods always flag the identical COUNT
+per cell** — 527 total either way. Disagreement is entirely about
+*which* players fill those slots, never about how many.
+
+| | score_only (n=30) | raw_only (n=30) |
+|---|---|---|
+| Position | WR 9, QB 9, RB 8, TE 4 | WR 9, QB 9, RB 8, TE 4 (identical — a mathematical necessity given equal per-cell counts, §above) |
+| ADP bucket | Same identical-count property as position | Same |
+| Era | 2011-2020: 14, 2021+: 14, pre-2011: 2 | 2011-2020: 16, 2021+: 9, pre-2011: 5 |
+| Games bucket | 13+: 13, 9-12: 11, 5-8: 6 | 13+: 18, 9-12: 7, 5-8: 4, 1-4: 1 |
+| Rookie | 4 of 30 | 3 of 30 |
+| `adp_round` (mean / median) | 7.23 / 7 | 8.73 / 10 |
+| Rounds from E_P lookup's coverage boundary (mean) | 7.2 | 5.6 |
+
+**Real finding: disagreement is NOT concentrated near the E_P lookup's
+coverage edge.** Both groups sit, on average, 5-7 rounds away from
+where the fitted lookup actually runs out — this rules out "G-score
+disagrees with G-raw mainly because the lookup model gets unreliable
+near its boundary" as the explanation.
+
+**What the disagreement actually is**: `raw_only` rows skew to LATER
+rounds within their bucket (median round 10) than `score_only` rows
+(median round 7). Real examples make this concrete — Sam Bradford
+(2010, round 14 QB, `P`=74.6) is flagged bust by raw-P-within-`R11+`
+(his absolute output is low among the whole R11+ QB pool, which
+includes some strong round-11 performers), but NOT by G-score, because
+his round's own expectation (`E_P`=182.4) was already appropriately
+low for a round-14 QB — relative to what a round-14 QB is supposed to
+produce, he was not a standout underperformer. This is exactly the
+scenario position×ADP-**round** conditioning exists to correct, and
+G-raw's coarse 4-bucket grouping cannot see it (it cannot distinguish
+a round-11 pick from a round-14 pick, both inside "R11+").
+
+**Conclusion: the four ADP buckets DO make G-raw meaningfully coarser
+within-bucket** — this is not primarily an artifact of the E_P lookup.
+**G-score is the more defensible ranking method on this evidence**,
+not merely because it "was already being used" — the disagreement
+cases are concentrated exactly where fine-round conditioning should
+matter, and away from the lookup's own coverage edge. The 19-row
+coverage gap is handled separately (§22).
+
+### 20. Era handling — four methods compared
+
+| Method | Description | n flagged (of 2,657 rankable) | Real cell-size issue |
+|---|---|---|---|
+| **1. Fully pooled** | Current approach — rank within position×bucket, era ignored | 527 | None |
+| **2. Broad-era stratification** | Rank within position×bucket×era | 513 | **10 of 47 real cells (21%) fall below `DATASET2_ANALYSIS_MIN_CELL_SAMPLE_SIZE=10`** — e.g. `TE/R1-2/2011-2020`=9, `QB/R1-2/pre-2011`=3, `WR/R1-2/pre-2011`=9 |
+| **3. Era-normalized production, pooled ranking** | z-score `score_like` within era×position, then rank the z-score within pooled position×bucket | 527 | None — normalization never fragments cells |
+| **4. Era-stratified with minimum-sample fallback** | Rank within position×bucket×era; for the 10 real sparse cells, fall back to the pooled position×bucket ranking (mechanical rule, pre-specified: any cell with n < 10 uses method 1 for its members) | 517 (65 rows used the fallback) | Resolved by construction |
+
+**Pairwise label-stability (Jaccard overlap)**:
+
+| | M1 | M2 | M3 | M4 |
+|---|---|---|---|---|
+| M1 | 100% | 81.2% | 88.6% | 82.2% |
+| M2 | 81.2% | 100% | 84.7% | 98.8% |
+| M3 | 88.6% | 84.7% | 100% | 85.4% |
+| M4 | 82.2% | 98.8% | 85.4% | 100% |
+
+**Real, convergent finding across all three era-aware methods (2, 3,
+4)**: pooling (M1) measurably OVER-flags the pre-2011 era relative to
+every era-aware alternative:
+
+| Era | M1 (pooled) | M2 (era-stratified) | M3 (era-normalized) | M4 (fallback) |
+|---|---|---|---|---|
+| pre-2011 | **22.3%** | 15.6% | 15.1% | 16.2% |
+| 2011-2020 | 19.4% | 19.7% | 20.8% | 19.7% |
+| 2021+ | 20.1% | 19.4% | 19.1% | 19.6% |
+
+All three era-aware methods agree pre-2011's flag rate should be
+~15-16%, not 22.3% — this is no longer a minor sensitivity difference,
+per instruction, and pooling (M1) is not recommended.
+
+**Recommendation: Method 4 (era-stratified with a pre-specified
+minimum-sample fallback to pooled)** — it delivers the same
+era-correction as pure stratification (98.8% overlap with M2) while
+mechanically resolving every real sparse cell, and it ranks the actual
+real production value directly rather than a normalized proxy (easier
+to audit/explain than M3's z-score transform). The fallback rule is
+fully specified and requires no judgment at build time: **for a given
+(position, adp_bucket, era) cell, if n < `DATASET2_ANALYSIS_MIN_CELL_SAMPLE_SIZE`
+(10), rank that cell's members within the pooled (position, adp_bucket)
+group instead** — applied mechanically, identically, to all 10 real
+sparse cells.
+
+### 21. Availability / partial seasons — season-total vs. rate vs.
+current blend
+
+Per instruction, season-total (`P`, already the leading concept) is
+kept as the primary measure. Compared directly against its own two
+component concepts already computed by `production.py` — no new
+formula:
+
+- **Availability-adjusted season production = `AATP`** (season-total
+  scale; credits REPLACEMENT-level production for each eligible game
+  missed, so a hurt player isn't penalized as if the season simply
+  didn't happen, but also isn't credited their OWN rate for time
+  missed).
+- **Active-game production rate = `PPG_AR`** (rate only, entirely
+  ignores games played — measures only what happened while active).
+
+| | vs. `P` (current) overlap | Rankable n |
+|---|---|---|
+| `AATP` alone | 80.4% | 2,676 |
+| `PPG_AR` alone | 70.9% | 2,676 |
+| `AATP` vs. `PPG_AR` directly | 58.0% | 2,676 |
+
+**Real finding — the two component measures cleanly separate injury
+busts from performance busts, exactly per instruction**:
+
+- **Flagged by `AATP` but NOT by `PPG_AR`** (n=141): a recognizable
+  real list of established, good-rate players who got hurt early —
+  **Antonio Brown (2019, 1 game, `PPG_AR`=+4.41 — a GOOD per-game
+  rate)**, David Johnson (2017, 1 game), Delanie Walker (2018, 1
+  game), Odell Beckham Jr. (2017, 4 games, `PPG_AR`=+7.34), Jermichael
+  Finley (2010, 4 games). These are the real injury-bust pattern —
+  `AATP`'s replacement-level-for-missed-games credit still can't offset
+  losing most of a season, even though the player was clearly
+  productive when active.
+- **Flagged by `PPG_AR` but NOT by `AATP`** (n=141): players with a
+  genuinely POOR rate even in the limited action they got — Tyrell
+  Williams (2021, 1 game, `PPG_AR`=**-7.24**), Kevin White (2017, 1
+  game, -8.56), Damien Harris (2019, 1 game, -8.47). `AATP` is more
+  forgiving of these because most of the season defaults to a neutral
+  replacement assumption regardless of how badly their brief action
+  went — `PPG_AR` correctly isolates that the actual performance, not
+  just the absence, was bad.
+
+**This resolves round 1's open question (§2/§13) rather than leaving
+it unresolved**: instruction explicitly says injury-shortened players
+must NOT be exempted from the bust label merely because their
+per-game rate was adequate ("do not remove injury-shortened players
+merely because their per-game production was adequate"). `P`'s 50/50
+blend of `AATP` and shrunk `PPG_AR_eq` does exactly this — it still
+lets a value-destroying absence (Antonio Brown 2019) register as a
+real acquisition-cost failure, while the shrinkage component keeps a
+tiny, clearly-lucky sample from dominating the other direction. Round
+1's elevated partial-season flag rate (§2, ~29% vs 16.2% for full
+seasons) is **confirmed as intended behavior under this instruction,
+not an artifact requiring correction.**
+
+### 22. Zero-game real-ADP rule — formalized, generalized
+
+**Rule (not a player-specific override)**: any row with
+`bust_primary_eligible = True` and `games_played = 0` receives
+`bust_primary_label = True` automatically, bypassing the percentile
+mechanism it cannot mathematically participate in (`compute_production()`
+structurally requires non-null `ppg_ppr`, undefined at 0 games).
+
+**Grounding, not assertion**: replacement level is a real, positive
+number for every position/season in this data (e.g. real 2025 RB
+`replacement_ppg` = 8.55, computed directly by
+`lib.replacement.replacement_level_from_rank()` — the same function
+`production.py` itself calls). Zero real points recorded across a full
+season (`fantasy_points_ppr` = 0.00, a real, disclosed value, not a
+placeholder — verified directly for Isaac Guerendo, 2025 RB) is below
+ANY positive replacement baseline by construction — no percentile
+computation is needed to establish that this is the worst possible
+outcome in any peer cell.
+
+**Strict-hybrid status — stated separately, per instruction**: strict
+requires `P < 0` in addition to the primary flag. `P` cannot be
+literally computed (undefined at 0 games), but the same replacement-
+level argument extends directly: 0 recorded points is below the real,
+positive `replacement_ppg` for every position in this dataset, which
+is the exact condition `P < 0` tests for on rows where `P` IS
+computable. **This row therefore also qualifies for
+`bust_strict_label = True`, by logical extension of the same
+replacement-level argument the literal `P<0` floor is built on — not
+because `P` was computed and found negative, but because the
+underlying condition the floor exists to detect (below-replacement
+production) unambiguously holds.**
+
+**Today's real count under this generalized rule: 1** (Isaac Guerendo,
+2025 RB, `overall_adp`=158.83, round 14, R11+). The rule is written to
+generalize to any future row meeting the same condition, not to this
+player specifically.
+
+### 23. Final proposed formula (recommendation, not yet implemented)
+
+1. **Ranking measure**: `score_like = P - SBV_LAMBDA * expected_production`
+   (G-score, §19), because the disagreement evidence favors it on
+   substance, not just historical use.
+2. **Peer cells**: position × `DATASET2_ADP_ROUND_BUCKETS`, era-
+   stratified with the mechanical minimum-sample fallback to pooled
+   (Method 4, §20).
+3. **E_P-lookup-coverage gap (19 rows)**: fall back to a G-raw
+   percentile (raw `P` ranked within the same peer cell) for exactly
+   these rows — the same "pre-specified mechanical fallback" pattern
+   as the era rule, applied to a different real gap. Real effect: 4 of
+   19 flagged bust under this fallback (see §22's table in the
+   analysis script output).
+4. **Zero-game real-ADP row(s)**: automatic `bust_primary_label = True`
+   and `bust_strict_label = True` per §22's rule — never subject to
+   the percentile mechanism.
+5. **Primary threshold**: bottom 20% within each (era-aware) peer cell.
+6. **Strict hybrid**: bottom 20% AND `P < 0`.
+7. **Tie rule** (§11, unchanged — no ties found in real data, kept as
+   a forward-looking rule): `method="average"` percentile rank,
+   inclusive `<=` cutoff comparison.
+8. **Sensitivities preserved, not primary**: bottom 25%/30% (§9),
+   percentage-of-threshold floors (§10), fully-pooled era treatment
+   (Method 1), `AATP`-alone and `PPG_AR`-alone availability measures
+   (§21), G-raw as the full ranking method (§19).
+
+### 24. Exact final counts — CORRECTED (2026-07, implementation round)
+
+**Disclosure: the counts originally reported here (532 primary / 104
+strict) were wrong, caught during implementation, not before.**
+`section_22_23_final_formula()` in `bust_label_round2_analysis.py`
+computed its "final formula" ranking using the plain POOLED
+`["position", "adp_bucket"]` percentile — it never actually applied
+era-stratification (Method 4), despite §20 recommending Method 4 and
+§23's own item 2 claiming to use it. This was a real bug in that
+function, not a rounding or tie-rule difference. It was caught exactly
+where it was supposed to be caught: `lib/dataset2/canonical_outcome_table.py`'s
+real implementation of the approved formula (which correctly applies
+era-stratification with the mechanical fallback) produced **522**, not
+532, and re-deriving the count independently after fixing the
+analysis script's bug reproduces **522** exactly — two independently
+written computations of the same formula now agree. The verified,
+correct counts are:
+
+| | n | % of 2,677 primary-eligible |
+|---|---|---|
+| **Primary bust** (`bust_primary_label` — era-specific/pooled-fallback G-score + G-raw fallback for the 19-row lookup gap + automatic zero-game rule) | **522** | 19.5% |
+| **Strict below-replacement** (`bust_strict_below_replacement_label` — primary AND `P<0`, plus the zero-game logical extension) | **103** | 3.8% |
+| Sensitivity: bottom 25% (`bust_primary_sensitivity_pct25_label`, same ranking pipeline as primary) | 659 | 24.6% |
+| Sensitivity: bottom 30% (`bust_primary_sensitivity_pct30_label`, same ranking pipeline as primary) | 790 | 29.5% |
+
+Real assignment-method totals (`bust_primary_assignment_method`, population = 2,677 `bust_primary_eligible` rows):
+
+| Method | n |
+|---|---|
+| `era_specific_g_score` | 2,592 |
+| `pooled_era_g_score_fallback` | 65 |
+| `g_raw_lookup_gap_fallback` | 19 (4 flagged primary bust, 2 also strict) |
+| `automatic_zero_game` | 1 (flagged bust at every threshold, including strict) |
+| **Total** | **2,677** |
+
+### 25. Prevalence under the CORRECTED final formula (primary / strict)
+
+| Position | n | primary | rate | strict | rate |
+|---|---|---|---|---|---|
+| QB | 386 | 77 | 19.9% | 0 | **0.0%** |
+| RB | 939 | 183 | 19.5% | 45 | 4.8% |
+| TE | 312 | 58 | 18.6% | 3 | 1.0% |
+| WR | 1,040 | 204 | 19.6% | 55 | 5.3% |
+
+**Real finding worth flagging plainly**: the `P<0` strict floor is
+NOT position-symmetric — zero QBs in this entire dataset ever record
+`P<0` among the flagged primary busts (QB replacement level is low
+enough, and even bad QB seasons rarely post literally negative
+value-add). The strict-hybrid label, as currently formulated, is
+effectively a RB/WR/TE phenomenon. This is disclosed here, not hidden
+— if a position-balanced strict definition is wanted, this floor
+choice needs revisiting.
+
+| ADP bucket | n | primary | rate | strict | rate |
+|---|---|---|---|---|---|
+| R1-2 | 381 | 75 | 19.7% | 0 | 0.0% |
+| R3-5 | 570 | 110 | 19.3% | 1 | 0.2% |
+| R6-10 | 972 | 190 | 19.5% | 43 | 4.4% |
+| R11+ | 754 | 147 | 19.5% | 59 | 7.8% |
+
+| Era | n | primary | rate | strict | rate |
+|---|---|---|---|---|---|
+| pre-2011 | 179 | 29 | 16.2% | 10 | 5.6% |
+| 2011-2020 | 1,571 | 310 | 19.7% | 44 | 2.8% |
+| 2021+ | 927 | 183 | 19.7% | 49 | 5.3% |
+
+Note the era rates are now much closer to each other (16.2/19.7/19.7)
+than the earlier, wrong 532-based table showed (22.3/19.4/20.2) — the
+era-stratification bug being fixed is EXACTLY what corrects this,
+consistent with §20's own finding that era-aware methods bring
+pre-2011 down from a pooled-only 22.3% to ~15-16%.
+
+| Games bucket | n | primary | rate | strict | rate |
+|---|---|---|---|---|---|
+| 0 | 1 | 1 | 100.0% | 1 | 100.0% |
+| 1-4 | 110 | 28 | 25.5% | 0 | 0.0% |
+| 5-8 | 225 | 69 | 30.7% | 4 | 1.8% |
+| 9-12 | 455 | 130 | 28.6% | 31 | 6.8% |
+| 13+ | 1,886 | 294 | 15.6% | 67 | 3.6% |
+
+| Rookie status | n | primary | rate | strict | rate |
+|---|---|---|---|---|---|
+| Veteran | 2,395 | 444 | 18.5% | 72 | 3.0% |
+| Rookie | 282 | 78 | 27.7% | 31 | **11.0%** |
+
+Rookie strict-hybrid rate (11.0%) remains roughly 3.7x the veteran
+rate (3.0%) — this finding survives the correction essentially intact.
+
+### 26. What remains for the next round
+
+**Superseded — labels are now implemented.** §23's formula was
+approved and `lib/dataset2/canonical_outcome_table.py` now computes
+`bust_primary_label`, `bust_primary_sensitivity_pct25_label`,
+`bust_primary_sensitivity_pct30_label`, and
+`bust_strict_below_replacement_label` for real (commit history —
+`bust_historical_sensitivity_label` remains reserved/null, its label
+values were not in scope for this implementation round). The corrected
+522/103 counts in §24-25 are the real, verified values under the
+approved formula; the 532/104 figures earlier in this document are
+preserved as a disclosed historical error, not silently deleted, per
+this project's own decision-history conventions.

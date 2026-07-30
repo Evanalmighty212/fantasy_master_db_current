@@ -13,8 +13,17 @@ Reuses lib.stars_by_value.production.compute_production() directly
 outcome table needs -- every row with a real, non-null `ppg_ppr`
 (i.e., every row that could ever reach SBV's own production-gate
 check), which excludes the 516 real zero-game rows (they have
-`ppg_ppr = NaN` and are outside this diagnostic's population anyway,
-see canonical_outcome_table.py's own docstring).
+`ppg_ppr = NaN` -- handled instead by the automatic zero-game bust
+rule inside canonical_outcome_table.py, not by this driver).
+
+As of the 2026-07 label-implementation round, this also produces the
+real, computed `bust_primary_label` /
+`bust_primary_sensitivity_pct25_label` /
+`bust_primary_sensitivity_pct30_label` /
+`bust_strict_below_replacement_label` values (approved formula, see
+research/dataset2/DATASET2_BUST_LABEL_OPERATIONALIZATION_PROPOSAL_2026_07.md
+§23) -- master_population must include `games_played` (the automatic
+zero-game rule needs it directly, not just as a proxy for missing P).
 
 Writes:
   - dataset2_canonical_outcome_table.parquet / .csv
@@ -52,12 +61,15 @@ _COLUMN_REGISTRY = [
     {"canonical_column": "star_by_value_label", "meaning": "Real, nullable boolean -- False is a real, deliberate value (below_production_gate), never confused with <NA> (ineligible). This is the Star outcome and eligibility infrastructure -- fully implemented.", "implementation_status": "implemented", "usable_as_target": True},
     {"canonical_column": "sbv_score_available", "meaning": "True only for adp_scored/minimal_market_cost_scored -- SEPARATE from star_outcome_eligible; a below-gate row is eligible with no score.", "implementation_status": "implemented", "usable_as_target": False},
     {"canonical_column": "star_by_value_score", "meaning": "Real SBV score, only where sbv_score_available.", "implementation_status": "implemented", "usable_as_target": True},
-    {"canonical_column": "bust_primary_eligible", "meaning": "True iff real market ADP AND outcome_season >= 2010. Does NOT require clearing SBV's production gate. ELIGIBILITY is implemented; the LABEL (bust_primary_label) is not -- see that row below.", "implementation_status": "implemented", "usable_as_target": False},
+    {"canonical_column": "bust_primary_eligible", "meaning": "True iff real market ADP AND outcome_season >= 2010. Does NOT require clearing SBV's production gate.", "implementation_status": "implemented", "usable_as_target": False},
     {"canonical_column": "bust_primary_ineligibility_reason", "meaning": "Null iff eligible; else one of: pre_2010_temporal_window_real_adp, mmc_no_real_adp_round_peer_group, acquisition_cost_unresolved_drafted, acquisition_cost_unresolved_ambiguous, no_real_fantasy_adp_below_production_gate, no_real_fantasy_adp_pre_2010, zero_games_nfl_draft_capital_not_fantasy_adp, zero_games_no_valid_cost_signal.", "implementation_status": "implemented", "usable_as_target": False},
-    {"canonical_column": "bust_primary_label", "meaning": "RESERVED, always <NA> this round -- no approved percentile threshold exists yet for definition G. Dataset 2B labels are NOT yet computed; see research/dataset2/DATASET2_BUST_LABEL_OPERATIONALIZATION_PROPOSAL_2026_07.md for candidate formulas under review.", "implementation_status": "reserved_not_computed", "usable_as_target": False},
-    {"canonical_column": "bust_strict_eligible", "meaning": "Same population as bust_primary_eligible (definition I adds an absolute-floor THRESHOLD, not a separate eligibility gate).", "implementation_status": "implemented", "usable_as_target": False},
-    {"canonical_column": "bust_strict_ineligibility_reason", "meaning": "Same as bust_primary_ineligibility_reason.", "implementation_status": "implemented", "usable_as_target": False},
-    {"canonical_column": "bust_strict_label", "meaning": "RESERVED, always <NA> this round -- no approved absolute-floor value exists yet for definition I. Dataset 2B labels are NOT yet computed; see the bust-label operationalization proposal.", "implementation_status": "reserved_not_computed", "usable_as_target": False},
+    {"canonical_column": "bust_primary_assignment_method", "meaning": "Categorical, null if ineligible: era_specific_g_score (ranked within real position x ADP-bucket x era cell, n>=DATASET2_ANALYSIS_MIN_CELL_SAMPLE_SIZE), pooled_era_g_score_fallback (era cell too small, ranked pooled across era instead -- mechanical, pre-specified), g_raw_lookup_gap_fallback (no fitted E_P cell, ranked on raw P within the pooled cell instead), automatic_zero_game (games_played==0, bypasses ranking entirely). Shared by bust_primary_label, both sensitivities, and bust_strict_below_replacement_label -- describes the ranking mechanism, not a per-threshold decision.", "implementation_status": "implemented", "usable_as_target": False},
+    {"canonical_column": "bust_primary_label", "meaning": "Bottom 20% within (position, ADP bucket, era) via bust_primary_assignment_method's mechanism -- IMPLEMENTED, approved formula per research/dataset2/DATASET2_BUST_LABEL_OPERATIONALIZATION_PROPOSAL_2026_07.md §23. Real nullable boolean; null iff bust_primary_eligible is False.", "implementation_status": "implemented", "usable_as_target": True},
+    {"canonical_column": "bust_primary_sensitivity_pct25_label", "meaning": "Same population/ranking as bust_primary_label, bottom 25% cutoff instead of 20% -- a named SENSITIVITY, never the primary label.", "implementation_status": "implemented", "usable_as_target": True},
+    {"canonical_column": "bust_primary_sensitivity_pct30_label", "meaning": "Same population/ranking as bust_primary_label, bottom 30% cutoff -- a named SENSITIVITY, never the primary label.", "implementation_status": "implemented", "usable_as_target": True},
+    {"canonical_column": "bust_strict_below_replacement_eligible", "meaning": "Same population as bust_primary_eligible.", "implementation_status": "implemented", "usable_as_target": False},
+    {"canonical_column": "bust_strict_below_replacement_ineligibility_reason", "meaning": "Same as bust_primary_ineligibility_reason.", "implementation_status": "implemented", "usable_as_target": False},
+    {"canonical_column": "bust_strict_below_replacement_label", "meaning": "bust_primary_label (bottom 20%) AND P<0 (real, parameter-free below-replacement floor -- P is already defined relative to replacement level). Zero-game rows get automatic True by the same replacement-level argument. Explicitly named to be unambiguous: 'primary bust AND below replacement level', not a generic 'strict' label.", "implementation_status": "implemented", "usable_as_target": True},
     {"canonical_column": "bust_historical_sensitivity_eligible", "meaning": "True iff real market ADP, WITHOUT the >=2010 restriction -- a named, explicit sensitivity population including the 521 real pre-2010-ADP rows.", "implementation_status": "implemented", "usable_as_target": False},
     {"canonical_column": "bust_historical_sensitivity_ineligibility_reason", "meaning": "Same reason vocabulary as bust_primary, minus the pre-2010 branch (never fires here).", "implementation_status": "implemented", "usable_as_target": False},
     {"canonical_column": "bust_historical_sensitivity_label", "meaning": "RESERVED, always <NA> this round -- see the bust-label operationalization proposal.", "implementation_status": "reserved_not_computed", "usable_as_target": False},
@@ -135,7 +147,7 @@ def main():
     print(f"star_outcome_eligible:                  {outcome_table['star_outcome_eligible'].sum()}")
     print(f"  of which sbv_score_available:          {outcome_table['sbv_score_available'].sum()}")
     print(f"bust_primary_eligible:                   {outcome_table['bust_primary_eligible'].sum()}")
-    print(f"bust_strict_eligible:                    {outcome_table['bust_strict_eligible'].sum()}")
+    print(f"bust_strict_below_replacement_eligible:   {outcome_table['bust_strict_below_replacement_eligible'].sum()}")
     print(f"bust_historical_sensitivity_eligible:     {outcome_table['bust_historical_sensitivity_eligible'].sum()}")
     print(f"underperformance_diagnostic_eligible:     {outcome_table['underperformance_diagnostic_eligible'].sum()}")
 
@@ -152,13 +164,35 @@ def main():
     for eligible_col, reason_col in (
         ("star_outcome_eligible", "star_outcome_ineligibility_reason"),
         ("bust_primary_eligible", "bust_primary_ineligibility_reason"),
-        ("bust_strict_eligible", "bust_strict_ineligibility_reason"),
+        ("bust_strict_below_replacement_eligible", "bust_strict_below_replacement_ineligibility_reason"),
         ("bust_historical_sensitivity_eligible", "bust_historical_sensitivity_ineligibility_reason"),
         ("underperformance_diagnostic_eligible", "underperformance_diagnostic_ineligibility_reason"),
     ):
         eligible_with_reason = (outcome_table[eligible_col] & outcome_table[reason_col].notna()).sum()
         ineligible_without_reason = ((~outcome_table[eligible_col].astype(bool)) & outcome_table[reason_col].isna()).sum()
         print(f"\n{eligible_col}: eligible-with-reason={eligible_with_reason}  ineligible-without-reason={ineligible_without_reason}")
+
+    print("\n" + "=" * 90)
+    print("BUST LABELS -- real counts and assignment-method totals")
+    print("=" * 90)
+    for label_col in (
+        "bust_primary_label",
+        "bust_primary_sensitivity_pct25_label",
+        "bust_primary_sensitivity_pct30_label",
+        "bust_strict_below_replacement_label",
+    ):
+        n_true = (outcome_table[label_col] == True).sum()  # noqa: E712
+        n_eligible = outcome_table["bust_primary_eligible"].sum()
+        print(f"{label_col}: {n_true} of {n_eligible} eligible ({n_true / n_eligible * 100:.1f}%)")
+
+    print("\n--- bust_primary_assignment_method (population of bust_primary_eligible rows) ---")
+    print(outcome_table["bust_primary_assignment_method"].value_counts(dropna=False).to_string())
+
+    # An eligible row with no assignment method (games_played != 0, P
+    # also null) would be an undocumented real-data gap outside all
+    # four mechanisms -- verified empty against real data, not assumed.
+    unhandled = outcome_table["bust_primary_eligible"] & outcome_table["bust_primary_assignment_method"].isna()
+    print(f"\nEligible rows with NO assignment method (undocumented gap, expected 0): {unhandled.sum()}")
 
     print(f"\nWrote:\n  {PARQUET_PATH}\n  {CSV_PATH}\n  {DICTIONARY_PATH}")
 
