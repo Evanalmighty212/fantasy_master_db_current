@@ -532,6 +532,107 @@ final candidate list for Dataset 3, with the full standardized output
 
 ---
 
+## 11.5 Firth validation status (commit `b74d746`, cautions carried forward)
+
+Both real cautions from that round remain in force and are restated
+here, not just in the commit message, so they stay attached to the
+document that actually governs Phase 1:
+
+1. **91.3% empirical profile-CI coverage (150 sims, nominal 95%) is
+   BELOW the nominal target — documented as such, not rounded up to
+   "close enough."** This does not invalidate Firth's bias-reduced
+   point estimates (validated separately: the closed-form Jeffreys
+   result, complete-separation behavior, and large-sample MLE
+   agreement all passed on their own real, independent checks). It
+   specifically means: **adjusted Star confidence intervals remain
+   provisional** until the independent cross-check below is complete.
+2. **Independent cross-check**: `.github/workflows/fetch_schedules_and_firth_crosscheck.yml`'s
+   `firth-crosscheck` job is now built (R `logistf`, the standard
+   independent reference implementation, run on the identical
+   `ordinary`/`sparse`/`complete_separation` fixtures this project's
+   own Python validation suite uses — see
+   `lib/dataset2/firth_logistic_fixtures.py`) but **has not yet run** —
+   this sandbox has no `gh` CLI or GitHub API token to trigger a
+   `workflow_dispatch` run itself; a human must click "Run workflow" on
+   the Actions tab. Until that run's comparison report
+   (`data/exports/firth_crosscheck/firth_crosscheck_comparison.csv`)
+   is reviewed, adjusted Star results stay provisional per instruction.
+
+## 11.6 Three future outcome proposals — RECORDED, NOT IMPLEMENTED
+
+Per instruction: documented here for future consideration, no design
+work or implementation performed this round, and NONE of the existing
+Tier 1 targets (`star_by_value_label`, `bust_primary_label`,
+`bust_strict_below_replacement_label`) are changed by recording these.
+
+1. **A broader Tier 2 / "high-value-hit" Star outcome** — a less
+   restrictive companion to `star_by_value_label` capturing a wider
+   band of real success (not just the current Star bar), to
+   distinguish predictors of "clearly good value" from predictors that
+   only catch the rarest top tier. Real motivation: `star_by_value_label`'s
+   own 0.9% base rate (§1's real number) leaves very little room for
+   Phase 1 to detect anything beyond the strongest possible effects,
+   even with Firth's bias reduction — a broader outcome would trade
+   some of that rarity for statistical power, as a genuinely different
+   (not a replacement) research question.
+2. **A position-relative severe-bust sensitivity that includes QBs
+   fairly** — motivated by §1.5/§25's real, disclosed finding that the
+   current `bust_strict_below_replacement_label`'s `P<0` floor is
+   structurally NOT position-symmetric (zero QBs in the entire dataset
+   ever clear it, since QB replacement level rarely goes negative even
+   in a bad season) — a position-RELATIVE severe-bust definition (e.g.
+   an extreme percentile within each position's own distribution,
+   rather than one shared absolute floor) would let QB severe busts
+   exist as a category at all.
+3. **A material-cost bust sensitivity distinguishing costly early/mid-
+   round failures from low-cost late-round misses** — motivated by
+   §25's real prevalence finding that `bust_primary_label`'s rate is
+   ALREADY roughly uniform across ADP buckets by construction (the
+   percentile mechanism guarantees ~20% in every bucket) — a
+   materially different question ("how much real fantasy-market cost
+   did this failure represent") would need its own construction, not a
+   re-read of the existing rate table, since a late-round miss and an
+   early-round miss currently count equally toward the same label
+   despite representing very different real stakes.
+
+These remain proposals only — no eligibility population, threshold, or
+column has been designed, and none will be built until explicitly
+approved in a future round.
+
+## 11.7 Age (family #2) — Wave 1 status update (2026-07, reversed)
+
+**Decision reversed since the prior round**: age is now approved for
+inclusion in Wave 1 (previously deferred to Wave 2). The blocking
+prerequisite (`schedules.csv`, real per-team Week-1 kickoff dates) has
+a fetch/pin/integrity-check mechanism ALREADY BUILT
+(`scripts/nflverse_source.py`'s `register_schedules_manifest_entry()`/
+`fetch_schedules()`) and an age-computation module ALREADY BUILT AND
+TESTED against synthetic fixtures
+(`lib/dataset2/experience_age_draft.py`) — the only real gap is that
+this dev sandbox has never had outbound internet to nflverse's GitHub
+releases (confirmed directly this round, not assumed: a raw request to
+GitHub's API failed SSL certificate verification; no local
+`schedules.csv`/`games.csv` cache exists). `.github/workflows/fetch_schedules_and_firth_crosscheck.yml`'s
+`fetch-schedules` job is built to close this gap on a real GitHub
+Actions runner — **not yet triggered**, same manual-trigger limitation
+as §11.5.
+
+**Explicitly NOT blocking Wave 1**: family #88's workload/durability
+opportunity-based sub-signal (`workload_qualified`, still the literal
+placeholder `"pending"` per `DEFERRED_FAMILIES`) and Source C
+(participation-derived predictors, no player-season aggregate exists
+yet) remain deferred exactly as before — only the age/schedules gap is
+being closed this round.
+
+**Until the schedules fetch actually runs and is reviewed**: the
+canonical predictor table, analysis view, predictor inventory,
+clustering, representatives, and evidence gates are all UNCHANGED from
+commit `4b95d67`/`b74d746` — 431 predictors, 131 clusters. Rebuilding
+with age added is the next step once real `games.csv` is available
+locally, not performed in this round.
+
+---
+
 ## 12. Explicit stop point
 
 **This document stops before Phase 1 begins.** No trait has been

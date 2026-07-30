@@ -52,6 +52,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from lib.dataset2.firth_logistic import fit_firth_logistic, firth_lr_test, firth_profile_ci
+from lib.dataset2.firth_logistic_fixtures import complete_separation_fixture, ordinary_fixture
 
 
 def _intercept_only_X(n):
@@ -100,11 +101,11 @@ class TestEstablishedReferenceExample:
 
 class TestCompleteSeparation:
     def _separated_fixture(self, n_per_group=40):
-        rng = np.random.default_rng(0)
-        x = np.concatenate([np.zeros(n_per_group), np.ones(n_per_group)])
-        y = np.concatenate([np.zeros(n_per_group), np.ones(n_per_group)])  # PERFECT separation on x
-        noise_cov = rng.normal(size=2 * n_per_group)  # a real, unrelated second covariate
-        X = np.column_stack([np.ones(2 * n_per_group), x, noise_cov])
+        # Shared with scripts/ci_export_firth_fixtures.py's R cross-check
+        # -- see lib/dataset2/firth_logistic_fixtures.py -- so the
+        # internal suite and the external logistf comparison run on
+        # IDENTICAL data, not just "the same kind" of data.
+        X, y, _ = complete_separation_fixture(n_per_group)
         return X, y
 
     def test_ordinary_mle_diverges_on_complete_separation(self):
@@ -150,15 +151,9 @@ class TestCompleteSeparation:
 
 class TestLargeNonsparseAgreement:
     def test_firth_close_to_ordinary_mle_when_well_powered(self):
-        rng = np.random.default_rng(42)
-        n = 8000
-        x1 = rng.normal(size=n)
-        x2 = rng.normal(size=n)
-        true_beta = np.array([-0.3, 0.8, -0.5])
-        X = np.column_stack([np.ones(n), x1, x2])
-        eta = X @ true_beta
-        p = 1.0 / (1.0 + np.exp(-eta))
-        y = rng.binomial(1, p)
+        # Shared fixture -- see TestCompleteSeparation's note above.
+        X, y, _ = ordinary_fixture()
+        n = len(y)
 
         firth_fit = fit_firth_logistic(X, y)
         assert firth_fit.converged

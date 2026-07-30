@@ -1,0 +1,92 @@
+name: Fetch Schedules (age prerequisite) + Independent Firth Cross-Check
+
+# Manual trigger only -- click "Run workflow" on the Actions tab.
+# Mirrors this project's established fetch-workflow convention
+# (fetch_adp.yml, fetch_mfl_historical.yml): never scheduled, never
+# auto-commits -- results come back as a downloadable artifact for
+# deliberate local review and commit.
+#
+# Two independent jobs, run together per instruction ("use the same CI
+# round both to obtain the schedule data and to perform the
+# independent Firth cross-check"):
+#   1. fetch-schedules -- pins and downloads nflverse's real games.csv
+#      (schedules release), the one prerequisite blocking Dataset 2
+#      family #2 (age). Needs real outbound internet, which this dev
+#      sandbox does not have (confirmed directly, not assumed).
+#   2. firth-crosscheck -- runs this project's own Firth logistic
+#      regression implementation (lib/dataset2/firth_logistic.py)
+#      against R's `logistf` package (the standard independent
+#      reference implementation) on three identical fixtures. No R
+#      interpreter, conda, pyenv, or compatible alternate Python exists
+#      in the dev sandbox to run this locally (checked directly).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-schedules:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests pandas
+
+      - name: Fetch and pin real schedules (games.csv)
+        run: python scripts/ci_fetch_schedules.py
+
+      - name: Upload results as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: schedules-raw-data-and-manifest
+          path: |
+            data/raw/nflverse/reference/games.csv
+            data/raw/nflverse/reference/schedules_fetch_summary.csv
+            scripts/nflverse_source_manifest.json
+          retention-days: 14
+
+  firth-crosscheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install numpy scipy pandas
+
+      - name: Export fixtures + Python Firth results
+        run: python scripts/ci_export_firth_fixtures.py
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+
+      - name: Install logistf (R's Firth reference implementation)
+        run: install.packages("logistf", repos = "https://cloud.r-project.org")
+        shell: Rscript {0}
+
+      - name: Run R logistf cross-check
+        run: Rscript scripts/firth_crosscheck.R
+
+      - name: Compare Python vs. R results
+        run: python scripts/ci_compare_firth_crosscheck.py
+
+      - name: Upload results as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firth-crosscheck-results
+          path: data/exports/firth_crosscheck/
+          retention-days: 14
