@@ -128,9 +128,38 @@ def main():
     if len(future_rows) > 0:
         print(f"  prediction_season values: {sorted(future_rows['prediction_season'].unique().tolist())}")
 
-    print("\n--- Missingness summary (top-level, % null per column) ---")
-    null_pct = (predictor_table.isna().mean() * 100).round(1).sort_values(ascending=False)
-    print(null_pct.to_string())
+    # --- Missingness, position-scope-adjusted (real revision this round) ---
+    # A non-QB row's real <NA> on a QB-only column (e.g. a WR's
+    # fam9_*_qb_passing_role_present) is CORRECT, INTENTIONAL
+    # inapplicability, not "missing data" -- reporting its null rate
+    # against the FULL population silently inflates it and hides that
+    # distinction. column_registry's own `position_scope` (real,
+    # inferred from each column's canonical name, verified against
+    # every real column this round -- see
+    # lib/dataset2/canonical_predictor_table.py::_infer_position_scope())
+    # is used here so each column's null rate is computed within its
+    # OWN applicable population, never the full 11,784-row table for a
+    # position-scoped column.
+    print("\n--- Missingness summary (position-scope-adjusted) ---")
+    scope_by_col = column_registry.set_index("canonical_column")["position_scope"].to_dict()
+    rows = []
+    for col in predictor_table.columns:
+        scope = scope_by_col.get(col, "ALL")
+        if scope == "ALL":
+            applicable = predictor_table
+        else:
+            applicable = predictor_table[predictor_table["position"] == scope]
+        n_applicable = len(applicable)
+        null_pct_scoped = round(applicable[col].isna().mean() * 100, 1) if n_applicable else float("nan")
+        rows.append({"column": col, "position_scope": scope, "n_applicable_rows": n_applicable, "null_pct_within_scope": null_pct_scoped})
+    missingness_df = pd.DataFrame(rows).sort_values("null_pct_within_scope", ascending=False)
+    position_scoped_count = (missingness_df["position_scope"] != "ALL").sum()
+    print(f"Columns scoped to a single position (excluded from the full-population denominator above): {position_scoped_count}")
+    print("Top 15 by within-scope null %:")
+    print(missingness_df.head(15).to_string(index=False))
+    print("\nBottom 15 (least missing) by within-scope null %:")
+    print(missingness_df.tail(15).to_string(index=False))
+    missingness_df.to_csv(OUTPUT_DIR / "dataset2_canonical_predictor_table_missingness.csv", index=False)
 
     print("\n--- Deferred family inventory ---")
     for _, row in deferred_families.iterrows():

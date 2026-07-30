@@ -202,6 +202,45 @@ def _cast_boolean_columns(df: pd.DataFrame, columns) -> pd.DataFrame:
     return df
 
 
+_POSITION_TOKENS = ("qb", "rb", "wr", "te")
+
+# Real, found exception to the generic name-based inference below:
+# fam86_team_qb_uncertainty's own name contains a "qb" segment (it's
+# ABOUT the team's QB slot being tied), but per fragility_traits.py's
+# own docstring it is broadcast to EVERY skill-position player on that
+# team, not QB-only. Verified this is the ONLY real exception by
+# checking every one of the real 435 columns produced by the 2026-07
+# real-data run against this inference function -- no other column
+# both (a) contains a position-token segment and (b) is actually
+# scoped wider than that position.
+_POSITION_SCOPE_OVERRIDES = {
+    "fam86_team_qb_uncertainty": "ALL",
+}
+
+
+def _infer_position_scope(canonical_column: str) -> str:
+    """Best-effort inference of which single position a canonical
+    column meaningfully applies to, from its own canonical name --
+    "ALL" for every column that genuinely applies uniformly across
+    QB/RB/WR/TE (biographical, draft-capital, prior-season, depth-
+    chart-status, family #9's non-position-scoped PPG/half-split/
+    status columns, etc.). Used so a consumer auditing this table's
+    missingness can distinguish a real position-inapplicable <NA>
+    (e.g. a WR row's QB-passing-role columns) from every other real
+    missingness cause -- see
+    scripts/build_dataset2_canonical_predictor_table.py's own
+    missingness section, and this round's real verification that only
+    ONE column (`fam86_team_qb_uncertainty`, see
+    _POSITION_SCOPE_OVERRIDES above) needed an explicit override
+    against the naive per-token match."""
+    if canonical_column in _POSITION_SCOPE_OVERRIDES:
+        return _POSITION_SCOPE_OVERRIDES[canonical_column]
+    for part in canonical_column.split("_"):
+        if part in _POSITION_TOKENS:
+            return part.upper()
+    return "ALL"
+
+
 def _registry_row(canonical_column, family_number, family_name, source, earliest, latest, dtype, missingness, observation_type, raw_column=None):
     return {
         "canonical_column": canonical_column,
@@ -705,5 +744,6 @@ def build_canonical_predictor_table(
     )
 
     column_registry = pd.DataFrame(registry_rows)
+    column_registry["position_scope"] = column_registry["canonical_column"].apply(_infer_position_scope)
     deferred_families = pd.DataFrame(DEFERRED_FAMILIES)
     return out, column_registry, deferred_families

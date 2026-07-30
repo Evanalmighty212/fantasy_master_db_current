@@ -300,6 +300,33 @@ class TestMissingnessAndNormalization:
         out, registry, deferred = _build(pop, players, weekly)
         assert "fam88_workload_qualified" not in out.columns
 
+    def test_position_inapplicable_flag_reads_as_scoped_not_ordinary_missing(self):
+        # A WR's QB-passing-role columns must be recognized as
+        # position-inapplicable, not lumped in with ordinary missing
+        # data, per the registry's own position_scope field.
+        pop = _population((2015, "P1", "WR", "AAA", 16, 8.0, 60, 15))
+        players = _players(("P1", "PfrP1", "1995-01-01", 2010, 73, 195, 2010, 4, 100, "AAA"))
+        weekly = _weekly([(2015, "P1", wk, "AAA", "REG", 5, 0, 0.0, 40.0, 20.0, 0.0, 0.0, 0.0, 2.0, 0, 8.0) for wk in AAA_2015_WEEKS])
+        out, registry, deferred = _build(pop, players, weekly)
+        qb_col = "fam9_active_final_4_qb_passing_role_present"
+        assert qb_col in out.columns
+        row = out[out["prediction_season"] == 2015].iloc[0]
+        assert pd.isna(row[qb_col])  # real, for a WR -- but SCOPED, not ordinary missing
+        scope = registry.set_index("canonical_column").loc[qb_col, "position_scope"]
+        assert scope == "QB"
+
+    def test_team_broadcast_column_scoped_all_not_qb(self):
+        # Real, found exception: fam86_team_qb_uncertainty's name
+        # contains "qb" but it's broadcast to every position on the
+        # team, per fragility_traits.py's own docstring -- must not be
+        # misclassified as QB-only.
+        pop = _population((2015, "P1", "RB", "AAA", 16, 10.0, 20, 5))
+        players = _players(("P1", "PfrP1", "1995-01-01", 2010, 70, 210, 2010, 3, 80, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA"))
+        out, registry, deferred = _build(pop, players, weekly)
+        scope = registry.set_index("canonical_column").loc["fam86_team_qb_uncertainty", "position_scope"]
+        assert scope == "ALL"
+
 
 class TestColumnRegistry:
     def test_every_output_column_except_identity_has_a_registry_row(self):
