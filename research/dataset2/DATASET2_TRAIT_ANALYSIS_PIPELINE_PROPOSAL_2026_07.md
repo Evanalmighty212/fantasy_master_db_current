@@ -2,16 +2,29 @@
 
 **Status: PROPOSAL ONLY. No predictor has been tested against any
 outcome/target in this document.** Every real computation performed
-this round and last round is a STRUCTURAL characterization of the
-431-column predictor whitelist and the 4 targets' own aggregate base
+this round and prior rounds is a STRUCTURAL characterization of the
+434-column predictor whitelist and the 4 targets' own aggregate base
 rates — never a predictor-vs-outcome association test
 (`research/dataset2/trait_analysis_pipeline_predictor_inventory.py`).
 Phase 1 (the first actual predictor-vs-outcome pass) is proposed below
 but **not executed**.
 
-Built on the canonical analysis view at commit `04eaa4b`
-(`data/exports/dataset2_analysis_view.parquet`, 11,784 rows, 459
-columns, 431-column predictor whitelist, 6-target registry).
+Built on the canonical analysis view rebuilt 2026-07 with family #2
+(age) included
+(`data/exports/dataset2_analysis_view.parquet`, 11,784 rows, 462
+columns, 434-column predictor whitelist, 6-target registry). Commit
+hash to be recorded once this round's changes are committed.
+
+**Revision note (third revision, 2026-07: age included)**: family #2
+(age) was moved from deferred to Wave 1 per explicit instruction, once
+real `schedules.csv` (nflverse `games.csv`) was fetched/pinned via the
+established GitHub Actions path — see revised §11.7. All predictor
+inventory, near-duplicate, and clustering numbers throughout §1 and
+§1.5 below are RECOMPUTED against the new 434-column whitelist
+(431 + `fam2_age_at_week1_years`/`fam2_age_x_experience`/
+`fam2_age_position_z`), verified deterministic (two independent runs,
+byte-identical CSV output). No outcome/target was inspected to produce
+any number in this revision.
 
 **Revision note (second revision)**: §1.5 (predictor clustering) is
 now fully replaced. The originally-approved methodology (commit
@@ -23,13 +36,14 @@ metric_category × volume-or-efficiency, computed BEFORE any statistic
 runs), excludes eligibility columns from every similarity edge,
 replaces raw boolean agreement with prevalence-aware Jaccard(positive)
 + phi, and replaces connected-components with complete linkage. Real
-result: 131 clusters, 0 exceeding 10 members — the 69-member cluster is
-fully resolved. Two real bugs were caught and fixed during this
-verification, both disclosed in §1.5.3 (a semantic bug that would have
-wrongly attached a threshold flag to an unrelated efficiency measure,
-and a determinism bug from Python's hash-randomized set iteration).
-Everything else (§2 onward) is unchanged from the prior revision
-(commit `e648dcf`, directionally approved).
+result (recomputed with age, see above): 133 clusters, 0 exceeding 10
+members — the 69-member cluster is fully resolved. Two real bugs were
+caught and fixed during this verification, both disclosed in §1.5.3 (a
+semantic bug that would have wrongly attached a threshold flag to an
+unrelated efficiency measure, and a determinism bug from Python's
+hash-randomized set iteration). Everything else (§2 onward) is
+unchanged from the prior revision (commit `e648dcf`, directionally
+approved).
 
 ---
 
@@ -40,17 +54,19 @@ rows.
 
 | Dimension | Breakdown |
 |---|---|
-| **Variable type** | continuous: 213 · boolean: 213 · categorical/status: 5 |
-| **Position scope** | RB: 130 · ALL: 82 · WR: 79 · TE: 76 · QB: 64 |
-| **Family** | family #9: **385 of 431 (89.3%)** · Source A base (#15/17/18/20/22): 10 · family #86: 9 · family #10: 7 · family #4: 4 · families #6/#7: 3 each · families #1/#8: 2 each · family #39/#44/#88: 1 each |
-| **Constant columns** (`n_unique<=1`, excluded from all testing) | 6: `fam10_depth_chart_schema_era`, `fam9_team_final_4_games`, `fam9_team_final_6_games`, `fam9_team_final_8_games`, `fam9_team_second_half_team_games`, `fam9_prediction_season_outcome_unavailable` |
-| **Near-duplicate continuous pairs** (`\|r\|>=0.95`) | 270 pairs, involving 159 of 205 continuous columns (77.6%) |
+| **Variable type** | continuous: 216 · boolean: 213 · categorical/status: 5 |
+| **Position scope** | RB: 130 · ALL: 85 · WR: 79 · TE: 76 · QB: 64 |
+| **Family** | family #9: **385 of 434 (88.7%)** · Source A base (#15/17/18/20/22): 10 · family #86: 9 · family #10: 7 · family #4: 4 · families #2/#6/#7: 3 each · families #1/#8: 2 each · family #39/#44/#88: 1 each |
+| **Constant columns** (`n_unique<=1`, excluded from all testing) | 6: `fam10_depth_chart_schema_era`, `fam9_team_final_4_games`, `fam9_team_final_6_games`, `fam9_team_final_8_games`, `fam9_team_second_half_team_games`, `fam9_prediction_season_outcome_unavailable` (unchanged by age's inclusion -- none of the 3 new age columns are constant) |
+| **Near-duplicate continuous pairs** (`\|r\|>=0.95`) | 274 pairs, involving 162 of 216 continuous columns (75.0%) (includes the real, expected `fam2_age_at_week1_years`/`fam2_age_x_experience` pair -- age and its own interaction term are highly correlated by construction; recomputed after the historical team-code crosswalk fix below, +1 pair vs. the pre-fix number since fewer real rows now have any null in them) |
 | **Single-season concentration** (outcome-free: share of a trait's own non-null values in its single busiest real season) | **0 columns exceed 50%** — no predictor's apparent coverage is a one-season artifact |
-| **Position-scoped low coverage** (`<50%` applicable, within the trait's own position population) | 56 real columns |
+| **Position-scoped low coverage** (`<50%` applicable, within the trait's own position population) | 56 real columns (unchanged by age -- age's own within-scope missingness is 0.30% after this round's historical team-code crosswalk fix, far above this floor; see §11.7) |
 
-Full detail unchanged from the approved round — see the prior version
-of §1 in git history (commit history for this file) for the complete
-discussion; this revision's new material starts at §1.5.
+Recomputed 2026-07 against the 434-column whitelist (431 + family #2's
+3 age columns) -- see §11.7 for the age-inclusion rebuild itself.
+Every OTHER row here is structurally unchanged from the prior,
+431-column round (see the prior version of §1 in git history for that
+full discussion); this revision's new material starts at §1.5.
 
 ### 1.5 Outcome-free predictor clustering — REVISED (resolves the 69-member cluster)
 
@@ -64,7 +80,7 @@ resolution below; implementation:
 
 #### 1.5.1 Semantic structure, parsed from the family #9 naming convention
 
-Every family #9 column (385 of 431 whitelist columns) is parsed —
+Every family #9 column (385 of 434 whitelist columns) is parsed —
 **before any statistic runs** — into: `basis` (team-game vs.
 active-game), `window` (`final_4`/`final_6`/`final_8`/`first_half`/
 `second_half`), `position`, `metric_category` (e.g. `rushing`,
@@ -72,7 +88,8 @@ active-game), `window` (`final_4`/`final_6`/`final_8`/`first_half`/
 measurement — `opportunity`, `production`, `efficiency_rate`,
 `role_present`, etc.), and `kind` — one of:
 
-- **`content`** (220 columns) — a real, continuous measurement.
+- **`content`** (223 columns, recomputed 2026-07 with age's 3 columns
+  included) — a real, continuous measurement.
 - **`role_tier`** (117 columns) — `role_present`/`meaningful_role`/
   `strong_lead_role`: threshold flags derived from ONE underlying
   continuous measure, known by construction (this project's own
@@ -155,18 +172,44 @@ diffing byte-identical output before any number below was trusted.
 
 #### 1.5.4 Real, corrected result
 
-**425 non-constant columns → 131 clusters.** Sizes: 78 singletons, 39
+**Recomputed 2026-07 with family #2 (age) included.** Age contributes
+2 new outcome-free clusters: `{fam2_age_at_week1_years,
+fam2_age_x_experience}` (paired on real, expected collinearity -- the
+interaction term is literally `age * experience`) and
+`{fam2_age_position_z}` (a singleton -- no other column shares its
+`(age, position-adjusted)` semantic concept). Every other family's
+cluster membership is unaffected (age doesn't share a semantic concept
+with any fam9/fam86/fam10/etc. column, so it can only ADD clusters,
+never move existing members between them -- verified by inspecting the
+full cluster CSV, not just the summary counts).
+
+**428 non-constant columns → 133 clusters.** Sizes: 79 singletons, 40
 of size 2-5, 14 of size 6-10, **0 exceeding 10 members** — the
-69-member cluster is fully resolved, not merely shrunk.
+69-member cluster remains fully resolved.
 
 | Metric | Value |
 |---|---|
-| Content columns clustered | 220 |
+| Content columns clustered | 223 |
 | Role-tier columns attached by known construction | 117 |
 | Eligibility columns excluded from all edges, attached as metadata | 88 |
-| Pairs statistically checked (post semantic pre-filter) | 1,027 |
-| Distinct semantic concepts | 34 |
-| Largest real cluster | 10 members (8 clusters tied at this size) |
+| Pairs statistically checked (post semantic pre-filter) | 1,030 |
+| Distinct semantic concepts | 35 |
+| Largest real cluster | 10 members (12 clusters tied at this size, all fam9 concepts -- see note below) |
+
+**Disclosed discrepancy, not investigated further this round**: the
+prior (431-column, pre-age) revision of this document stated "8
+clusters tied" at the size-10 maximum. Re-running the SAME,
+unmodified clustering script (`trait_analysis_pipeline_predictor_inventory.py`
+— not touched by this round's age work) against the current real data
+now finds 12, all legitimate fam9 `{team,active} x {final_6} x
+{position}_{metric}_meaningful_role` concepts, none involving age.
+Since age cannot affect fam9 cluster membership (different, disjoint
+semantic concepts) and no clustering code changed, this is most likely
+a pre-existing staleness in that prior count rather than anything
+caused by this round's change -- flagged for the record rather than
+silently corrected without investigating its origin, per this
+project's disclosure convention. Does not affect the 0-clusters-over-10
+finding or any evidence-gate decision.
 
 **Audit for every cluster exceeding 10 members: none exist.** The
 8 clusters at the real maximum (10 members) are all the SAME
@@ -428,11 +471,11 @@ validation design are separate, future decisions.
 
 | Count | Real/expected value | Basis |
 |---|---|---|
-| **Raw trait-target combinations** | 431 × 4 = 1,724 | Full whitelist × all 4 targets |
+| **Raw trait-target combinations** | 434 × 4 = 1,736 | Full whitelist × all 4 targets |
 | **Testable combinations after evidence gates** (§5) | Computed per target once Phase 1 actually runs (cannot be stated without touching outcome eligibility per trait — genuinely unknown until Phase 1) | Gate gate application is itself part of Phase 1, not precomputable outcome-free |
-| **Predictor clusters** | **131** (revised §1.5 methodology — semantic pre-filter + complete linkage; the original review's 69-member cluster fully resolved, 0 clusters now exceed 10 members) | Outcome-free, computed this round |
-| **Primary FDR tests** | ≤ 131 × 4 = 524 nominal, reduced further per target by §5's gates | Cluster representatives only |
-| **Within-cluster sensitivity tests** | The remaining 425−131=294 non-representative members, tested only as secondary formulation/threshold sensitivities AFTER their cluster's representative already cleared Phase 2 | Never independently entered into the FDR budget |
+| **Predictor clusters** | **133** (revised §1.5 methodology — semantic pre-filter + complete linkage; recomputed 2026-07 with age included; the original review's 69-member cluster fully resolved, 0 clusters now exceed 10 members) | Outcome-free, computed this round |
+| **Primary FDR tests** | ≤ 133 × 4 = 532 nominal, reduced further per target by §5's gates | Cluster representatives only |
+| **Within-cluster sensitivity tests** | The remaining 428−133=295 non-representative members, tested only as secondary formulation/threshold sensitivities AFTER their cluster's representative already cleared Phase 2 | Never independently entered into the FDR budget |
 
 **Procedure**: Benjamini-Hochberg FDR control, **q=0.10**, applied to
 the cluster-REPRESENTATIVE primary tests only (§1.5's representative
@@ -611,37 +654,110 @@ These remain proposals only — no eligibility population, threshold, or
 column has been designed, and none will be built until explicitly
 approved in a future round.
 
-## 11.7 Age (family #2) — Wave 1 status update (2026-07, reversed)
+## 11.7 Age (family #2) — Wave 1 rebuild COMPLETE (2026-07)
 
-**Decision reversed since the prior round**: age is now approved for
-inclusion in Wave 1 (previously deferred to Wave 2). The blocking
-prerequisite (`schedules.csv`, real per-team Week-1 kickoff dates) has
-a fetch/pin/integrity-check mechanism ALREADY BUILT
-(`scripts/nflverse_source.py`'s `register_schedules_manifest_entry()`/
-`fetch_schedules()`) and an age-computation module ALREADY BUILT AND
-TESTED against synthetic fixtures
-(`lib/dataset2/experience_age_draft.py`) — the only real gap is that
-this dev sandbox has never had outbound internet to nflverse's GitHub
-releases (confirmed directly this round, not assumed: a raw request to
-GitHub's API failed SSL certificate verification; no local
-`schedules.csv`/`games.csv` cache exists). `.github/workflows/fetch_schedules_and_firth_crosscheck.yml`'s
-`fetch-schedules` job is built to close this gap on a real GitHub
-Actions runner — **not yet triggered**, same manual-trigger limitation
-as §11.5.
+**Decision reversed since the prior round, now fully executed.** Age
+was moved to Wave 1 per explicit instruction. The blocking prerequisite
+(`schedules.csv`, real per-team Week-1 kickoff dates) has been
+fetched, pinned, and integrity-verified via the established GitHub
+Actions path.
 
-**Explicitly NOT blocking Wave 1**: family #88's workload/durability
-opportunity-based sub-signal (`workload_qualified`, still the literal
-placeholder `"pending"` per `DEFERRED_FAMILIES`) and Source C
-(participation-derived predictors, no player-season aggregate exists
-yet) remain deferred exactly as before — only the age/schedules gap is
-being closed this round.
+**Schedule source and coverage**: nflverse `games.csv`, fetched via
+`.github/workflows/fetch_schedules_and_firth_crosscheck.yml`'s
+`fetch-schedules` job (manually triggered, reviewed, and merged this
+round) and `scripts/nflverse_source.py`'s
+`register_schedules_manifest_entry()`/`fetch_schedules()` pin/fetch/
+integrity-check machinery. 7,548 real games, seasons 1999-2026,
+sha256-verified against the pinned hash recorded in
+`scripts/nflverse_source_manifest.json`'s `"schedules"` entry
+(`252ef81b...57f1f62`, asset id `495643391`). Zero nulls on any of
+`season`/`week`/`gameday`/`home_team`/`away_team`/`game_type` in the
+raw fetched file.
 
-**Until the schedules fetch actually runs and is reviewed**: the
-canonical predictor table, analysis view, predictor inventory,
-clustering, representatives, and evidence gates are all UNCHANGED from
-commit `4b95d67`/`b74d746` — 431 predictors, 131 clusters. Rebuilding
-with age added is the next step once real `games.csv` is available
-locally, not performed in this round.
+**Age coverage and missingness audit**, against the rebuilt canonical
+predictor table (`data/exports/dataset2_canonical_predictor_table.parquet`,
+11,784 rows). **Historical team-code crosswalk applied this round**
+(see below) — the numbers here are POST-fix.
+
+| Population | `fam2_age_at_week1_years` null rate |
+|---|---|
+| Full predictor table (11,784 rows, includes the 609 structurally-future 2026 rows that are null for every non-fam9 family, not just age) | 642 / 11,784 = 5.4% |
+| Historical rows only (11,175 rows -- the outcome-join-eligible population §1's inventory is computed against) | 33 / 11,175 = 0.30% |
+
+**Historical team-code crosswalk (this round's fix)**: the first pass
+of this rebuild found 624 historical-row nulls (5.6%), audited and
+traced to a real, verified cause -- the master population's team
+column always uses the CURRENT/canonical code for a franchise (`LV`/
+`LA`/`LAC`) even for historical pre-relocation seasons, while the real
+nflverse schedule file uses whichever code was ACTUALLY in use that
+season (`OAK`/`STL`/`SD`). A full audit of every population team code
+with no real Week-1 schedule match, by season, found EXACTLY 5 codes
+affected -- `LV`, `LA`, `LAC` (relocation-driven, 617 of the 624 rows)
+plus `MIA`/`TB` in 2017 only (33 rows -- see below, not a code
+mismatch). `lib/dataset2/common.py` now carries a deterministic,
+season-aware `HISTORICAL_TEAM_CODE_ALIASES` table (Oakland→Las Vegas
+Raiders 1999-2019, St. Louis→Los Angeles Rams 1999-2015, San Diego→Los
+Angeles Chargers 1999-2016 -- the exact real season ranges each
+historical code appears in the real schedule file, verified directly)
+applied ONLY inside `week1_kickoff_by_team()`'s own per-season kickoff
+lookup -- additively (the raw historical code still resolves too,
+never replaced) and never touching population's own `team` column or
+any other canonical team identity. Proven via
+`tests/test_dataset2_common.py::TestHistoricalTeamCodeAliases` (8
+tests: correct historical-date resolution for all 3 relocations,
+season-aware boundary enforcement, no guessing for unverified codes,
+determinism, no unrelated team-season affected) and
+`tests/test_dataset2_experience_age_draft.py`'s new end-to-end
+relocation test.
+
+**Remaining 33 historical nulls, by reason** — every one traced, none
+approximated: **0 missing a real players.csv `birth_date` match, 0
+remaining relocation/team-code mismatches** (fully resolved by the
+crosswalk above). All 33 are `MIA` (16) and `TB` (17) in the 2017
+season specifically -- a real, genuine schedule gap, NOT a code
+mismatch: the real MIA@TB Week-1 game was postponed league-wide due to
+Hurricane Irma and never replayed as a real "Week 1" game (their real
+first games of that season were Week 2, confirmed directly against the
+real schedule file). Correctly left null per this project's
+missingness policy -- guessing a kickoff date that was never real
+would violate it. `fam1_experience_years` (needs only a `players.csv`
+match, no schedule) has 0% historical missingness, confirming the
+entire remaining 0.30% gap is this one real 2017 schedule anomaly, not
+any residual match-quality issue.
+
+**Revised predictor/cluster counts**: 434 predictors (431 + 3 age
+columns), 133 clusters, 0 exceeding 10 members (up from 431/131 --
+see §1 and §1.5.4 for the full recomputed inventory/clustering
+detail). Analysis view: 462 columns, 434-column predictor whitelist.
+Rebuild verified deterministic (byte-identical CSV output across two
+independent runs of both the predictor-table build and the
+outcome-free inventory/clustering script) before any number above was
+trusted.
+
+**Confirmation that no target was opened**: the outcome table
+(`data/exports/dataset2_canonical_outcome_table.parquet`) was not
+recomputed or read by any step in this round except
+`build_dataset2_analysis_view.py`'s existing read-only join (which
+re-verified its own hardcoded expected counts --
+`bust_primary_label` positive=522, `bust_strict_below_replacement_label`
+positive=103, `star_by_value_label` positive=76 -- all UNCHANGED from
+before this round, confirming the outcome table itself is untouched).
+No descriptive screening, regression, FDR calculation, or advancement
+decision was run against any trait-outcome relationship.
+
+**Explicitly NOT blocking Wave 1, still deferred exactly as before**:
+family #88's workload/durability opportunity-based sub-signal
+(`workload_qualified`, still the literal placeholder `"pending"`) and
+Source C (participation-derived predictors, no player-season aggregate
+exists yet) — see `DEFERRED_FAMILIES` (now 2 entries, family #2
+removed).
+
+**Separately disclosed, NOT touched this round**: `_build_fam10_86_layer()`
+in `lib/dataset2/canonical_predictor_table.py` has its OWN, unrelated
+empty-schedule usage (feeding `build_depth_chart_traits()`'s 2025
+rookie-QB depth-chart-schema correction) — a distinct prerequisite from
+age's, not part of this round's scope, and not silently fixed
+alongside it. Still a real, open item for a future round if requested.
 
 ---
 
@@ -649,10 +765,11 @@ locally, not performed in this round.
 
 **This document stops before Phase 1 begins.** No trait has been
 tested against any of the 4 targets. The real work performed this
-round is entirely structural/outcome-free: the revised, audited
-predictor clustering (§1.5, 131 clusters, 0 exceeding 10 members) and
-the targets' own aggregate discovery/holdout base counts (§4 —
-properties of the targets alone, not of any trait-target association).
+round is entirely structural/outcome-free: the age (family #2) rebuild
+(§11.7), the revised, audited predictor clustering (§1.5, 133 clusters,
+0 exceeding 10 members), and the targets' own aggregate discovery/
+holdout base counts (§4 — properties of the targets alone, not of any
+trait-target association).
 Artifacts:
 `data/exports/dataset2_trait_pipeline_predictor_inventory.csv`,
 `data/exports/dataset2_trait_pipeline_near_duplicate_pairs.csv`,
