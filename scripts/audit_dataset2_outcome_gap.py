@@ -2,53 +2,70 @@
 scripts/audit_dataset2_outcome_gap.py
 
 Dataset 2 OUTCOME-ELIGIBILITY RECONCILIATION -- a real, independent
-audit of the four outcome-availability categories proposed in
-research/dataset2/CANONICAL_TABLE_PROPOSAL_2026_07.md §3, run against
-the real Stars-by-Value export, the real master population, and (new
-this round) real players.csv draft/rookie data. This is NOT the
-outcome table itself (artifact 2 of the three-artifact architecture is
-not built here, per instruction) and its output is NEVER joined into
-the predictor table (lib/dataset2/canonical_predictor_table.py imports
-nothing from lib.stars_by_value and reads no file this script
-touches). This is a standalone research artifact for whoever builds
-the real outcome table next.
+audit run against the real Stars-by-Value export, the real master
+population, and real players.csv draft/rookie data. This is NOT the
+outcome table itself (artifact 2 of the three-artifact architecture,
+research/dataset2/CANONICAL_TABLE_PROPOSAL_2026_07.md §1a, is not
+built here) and its output is NEVER joined into the predictor table.
+Standalone research artifact for whoever builds the real outcome table
+next.
 
-REVISED THIS ROUND -- a real, disclosed correction to the category
-name inherited from the proposal: `scored_but_unlabeled` is a
-MISNOMER. Verified directly against the real SBV export this round:
-`star_by_value_score` is NULL for every one of the 188 rows in this
-category, no exceptions -- `_SCOREABLE_STATUSES` in
-lib/stars_by_value/labeling.py is exactly (adp_scored,
-minimal_market_cost_scored), and every OTHER status (including all
-three making up this 188) hits labeling.py's step 4 `else: score,
-label = None, None` branch. None of the 188 have "a numeric score
-withheld from a label" -- they are genuinely UNSCOREABLE, for three
-DIFFERENT real reasons (broken down below), never a single catch-all.
-This script keeps the name `scored_but_unlabeled` ONLY as a pointer
-back to the already-approved proposal language; the real breakdown
-below is what should replace it as the actual working vocabulary.
+REVISED THIS ROUND -- two real corrections:
 
-REAL, FOUND ROOT CAUSE for `no_sbv_row_found` (confirmed this round,
-not just described): scripts/11_calculate_stars_by_value.py's own
-`build_population()` runs
-`pop.dropna(subset=["ppg_ppr", "position_finish_ppr", "games_played",
-"fantasy_points_ppr"])` BEFORE ever calling `labeling.label_rows()`.
-A real zero-game player-season structurally has `ppg_ppr = NaN`
-(0 points / 0 games), so this dropna() silently removes them from
-SBV's own INPUT -- they never even reach labeling.py's own step-1
-"games_played < 1 -> out_of_scope" rule, which would have given them a
-real, explicit status row. Verified directly: `ppg_ppr` is null for
-100% of the real 516 no_sbv_row_found rows.
+1. `scored_but_unlabeled` is RETIRED as a reporting category (it was
+   already flagged last round as a misnomer -- no row in it has a real
+   score). This round drops it from the top-level counts entirely;
+   the three real underlying statuses
+   (unscoreable_drafted_adp_missing / unscoreable_ambiguous /
+   unscoreable_expected_production_out_of_range) are reported
+   directly, never re-aggregated.
+
+2. STAR ELIGIBILITY CORRECTED: verified directly this round that
+   `below_production_gate` rows carry a REAL, non-null
+   `star_by_value_label = 0` (labeling.py's own step 2 assigns this
+   deliberately -- production too low to ever be a Star is a real,
+   determinate fact that needs no acquisition-cost resolution at all,
+   unlike `out_of_scope`/`unscoreable_*`, where label is genuinely
+   NULL). Per this round's exact instruction ("star_outcome_eligible
+   = True only for rows with a legitimate existing SBV binary
+   label"), `below_production_gate` rows THEREFORE ARE
+   star_outcome_eligible -- this is a real expansion from an earlier
+   round's narrower reading (which only counted the 1,347
+   score-AND-label rows). Verified: `star_by_value_label.notna().sum()
+   == 8537 == 1347 (scored) + 7190 (below_production_gate)` exactly.
+
+REAL, FOUND STRUCTURAL FACT this round: 100% of the real 1,934
+`out_of_scope` rows are `out_of_scope_temporal_window` (pre-2010,
+`season < SBV_FIRST_SCOREABLE_SEASON`) -- ZERO real
+`out_of_scope_insufficient_participation` rows exist in the real SBV
+export, even though labeling.py has that branch. This is because
+scripts/11_calculate_stars_by_value.py's own `build_population()`
+already drops every zero-game row (via its `dropna(subset=["ppg_ppr",
+...])`, since a real zero-game season has `ppg_ppr = NaN`) BEFORE
+`label_rows()` is ever called -- labeling.py's own "games_played < 1
+-> out_of_scope" branch is real, disclosed DEAD CODE against the
+current population-assembly pipeline. Not fixed here (that's
+scripts/11's own logic, a Dataset 1/SBV concern, out of this task's
+scope) -- flagged so it isn't silently rediscovered later.
+
+THE CORE METHODOLOGICAL CORRECTION THIS ROUND (per instruction):
+Dataset 2B bust eligibility must NOT inherit SBV's Star production
+gate. `below_production_gate`'s real 1,381 rows WITH a real fantasy
+market ADP are real, legitimate primary-bust-eligible candidates --
+low production is not a reason to exclude someone from a study of
+whether their real fantasy investment underperformed; it may in fact
+BE the underperformance the study exists to find.
 
 Writes:
-  - dataset2_outcome_gap_audit.csv: one row per (season, player_id) in
-    the real master population, the four outcome-availability
-    categories, never a bare boolean.
-  - dataset2_outcome_gap_scored_but_unlabeled_detail.csv: the real
-    188-row breakdown by exact underlying SBV status.
+  - dataset2_outcome_gap_audit.csv: one row per (season, player_id),
+    every granular real SBV status (no aggregated categories), plus
+    all four proposed outcome-eligibility flags and reason codes.
+  - dataset2_outcome_gap_below_production_gate_detail.csv: the real
+    7,190-row breakdown.
+  - dataset2_outcome_gap_out_of_scope_detail.csv: the real 1,934-row
+    breakdown.
   - dataset2_outcome_gap_no_sbv_row_found_detail.csv: the real 516-row
-    investigation, with acquisition-cost bucket, rookie/veteran,
-    era, and draft-round context.
+    breakdown (unchanged from last round).
 """
 
 import sys
@@ -57,6 +74,8 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+from config import DATASET2_ADP_ROUND_BUCKETS
+from lib.stars_by_value import expected_production as ep
 
 MASTER_POPULATION_PATH = "data/master/master_historical_db_with_lwi_2006_2025.csv"
 SBV_EXPORT_PATH = "data/exports/stars_by_value_player_seasons.csv"
@@ -64,59 +83,27 @@ PLAYERS_PATH = "data/raw/nflverse/reference/players.csv"
 
 OUTPUT_DIR = Path("data/exports")
 AUDIT_PATH = OUTPUT_DIR / "dataset2_outcome_gap_audit.csv"
-SCORED_BUT_UNLABELED_DETAIL_PATH = OUTPUT_DIR / "dataset2_outcome_gap_scored_but_unlabeled_detail.csv"
+BELOW_GATE_DETAIL_PATH = OUTPUT_DIR / "dataset2_outcome_gap_below_production_gate_detail.csv"
+OUT_OF_SCOPE_DETAIL_PATH = OUTPUT_DIR / "dataset2_outcome_gap_out_of_scope_detail.csv"
 NO_SBV_ROW_DETAIL_PATH = OUTPUT_DIR / "dataset2_outcome_gap_no_sbv_row_found_detail.csv"
 
-CATEGORY_SCORED_LABELED = "scored_labeled"
-CATEGORY_SCORED_BUT_UNLABELED = "scored_but_unlabeled"  # kept for continuity with the approved proposal; see module docstring
-CATEGORY_OUT_OF_SCOPE_BY_SBV_DESIGN = "out_of_scope_by_sbv_design"
-CATEGORY_NO_SBV_ROW_FOUND = "no_sbv_row_found"
-
-_SCORED_LABELED_STATUSES = ("adp_scored", "minimal_market_cost_scored")
-
-# The three real, DIFFERENT statuses making up `scored_but_unlabeled`,
-# with the exact real reason each never gets a score (from
-# lib/stars_by_value/labeling.py's own step 3 -- see that module for
-# the authoritative logic; this is a read, not a re-derivation).
 _UNSCOREABLE_STATUS_REASONS = {
-    "unscoreable_drafted_adp_missing": (
-        "Real evidence (from acquisition_cost.py's classifier + MFL corroboration) indicates "
-        "this player was genuinely drafted in a real fantasy league that season, but no usable "
-        "acquisition cost (ADP round) could be resolved -- so E_P (expected production for that "
-        "cost) cannot be looked up, and score = P - lambda*E_P is structurally uncomputable. "
-        "The absence of a label is a genuine data gap in resolving ACQUISITION COST, not a "
-        "deliberate SBV methodology decision."
-    ),
-    "unscoreable_ambiguous": (
-        "No real ADP match; the acquisition-cost classifier bucket and the real MFL "
-        "corroboration signal DISAGREE with each other. SBV's settled 3-way corroboration table "
-        "refuses to guess in this case rather than picking one signal over the other -- same "
-        "structural consequence as drafted_adp_missing (no acquisition cost, no E_P, no score), "
-        "but the REASON is a genuine conflict between two real signals, not a missing one."
-    ),
-    "unscoreable_expected_production_out_of_range": (
-        "REAL, TRUSTWORTHY acquisition cost IS known (a genuine ADP match, draft_round resolved) "
-        "-- what's missing is a fitted E_P value for a round this deep (the real historical "
-        "population never reached that round in the seasons the E_P model was fit on). This is "
-        "the ONE sub-status where the acquisition-cost side is fully resolved; only the "
-        "expected-production LOOKUP has a coverage gap, not the cost itself."
-    ),
+    "unscoreable_drafted_adp_missing": "Real evidence of a real fantasy draft, but no usable acquisition cost resolved -- E_P uncomputable.",
+    "unscoreable_ambiguous": "No ADP match; classifier bucket and real MFL corroboration disagree -- SBV refuses to guess.",
+    "unscoreable_expected_production_out_of_range": "Real, trustworthy acquisition cost IS known -- only the fitted E_P lookup has no value this deep.",
 }
 
 
-def _categorize(status) -> str:
-    if pd.isna(status):
-        return CATEGORY_NO_SBV_ROW_FOUND
-    if status in _SCORED_LABELED_STATUSES:
-        return CATEGORY_SCORED_LABELED
-    if status in _UNSCOREABLE_STATUS_REASONS:
-        return CATEGORY_SCORED_BUT_UNLABELED
-    if status in ("out_of_scope", "below_production_gate"):
-        return CATEGORY_OUT_OF_SCOPE_BY_SBV_DESIGN
-    raise ValueError(
-        f"Unrecognized real star_by_value_status value: {status!r} -- update this script's "
-        f"category map, do not silently default it."
-    )
+def _adp_bucket(adp_round):
+    if pd.isna(adp_round):
+        return "no_real_adp"
+    for label, lo, hi in DATASET2_ADP_ROUND_BUCKETS:
+        if hi is None:
+            if adp_round >= lo:
+                return label
+        elif lo <= adp_round <= hi:
+            return label
+    return "unbucketed"
 
 
 def main():
@@ -126,131 +113,162 @@ def main():
     sbv = pd.read_csv(SBV_EXPORT_PATH, low_memory=False)
     players = pd.read_csv(PLAYERS_PATH, low_memory=False)
 
-    merged = master[
-        [
-            "season", "player_id", "player_name", "position", "games_played", "fantasy_points_ppr",
-            "overall_adp", "adp_status", "data_quality_flag", "lwi_eligibility_flag",
-        ]
-    ].merge(
-        sbv[["season", "player_id", "star_by_value_status", "star_by_value_score", "star_by_value_label"]],
-        on=["season", "player_id"],
-        how="left",
+    merged = master.merge(
+        sbv[["season", "player_id", "star_by_value_status", "star_by_value_provenance_type", "star_by_value_score", "star_by_value_label"]],
+        on=["season", "player_id"], how="left",
     )
-    merged["outcome_availability_category"] = merged["star_by_value_status"].apply(_categorize)
-
-    # --- Explicit safety checks, never trust the label alone ---
-    unmatched = merged[merged["outcome_availability_category"] == CATEGORY_NO_SBV_ROW_FOUND]
-    assert unmatched["star_by_value_label"].isna().all(), (
-        "A no_sbv_row_found row has a non-null star_by_value_label -- an unmatched predictor "
-        "row must never be classified star=False or star=True."
-    )
-    unscoreable = merged[merged["outcome_availability_category"] == CATEGORY_SCORED_BUT_UNLABELED]
-    assert unscoreable["star_by_value_score"].isna().all(), (
-        "A scored_but_unlabeled row has a non-null star_by_value_score -- this category name "
-        "would then be accurate, contradicting this round's real finding; investigate before "
-        "trusting this script's category map."
-    )
+    merged = merged.merge(players[["gsis_id", "rookie_season", "draft_round"]], left_on="player_id", right_on="gsis_id", how="left")
+    merged["is_rookie_season"] = merged["season"] == merged["rookie_season"]
+    merged["has_real_adp"] = merged["overall_adp"].notna()
+    merged["adp_round"] = merged["overall_adp"].apply(ep.adp_round)
+    merged["adp_bucket"] = merged["adp_round"].apply(_adp_bucket)
+    # Granular real status -- "no_sbv_row_found" as an explicit value,
+    # never a bare null, never folded into any aggregate.
+    merged["real_status"] = merged["star_by_value_status"].fillna("no_sbv_row_found")
 
     print("\n" + "=" * 90)
-    print("OUTCOME-AVAILABILITY CATEGORY COUNTS (real, 2006-2025)")
+    print("GRANULAR REAL STATUS COUNTS (2006-2025) -- no aggregated categories")
     print("=" * 90)
-    print(merged["outcome_availability_category"].value_counts().to_string())
-    print(f"\nTotal real master population rows: {len(merged)}")
-    print("star_by_value_label distribution WITHIN scored_labeled only:")
-    print(merged[merged["outcome_availability_category"] == CATEGORY_SCORED_LABELED]["star_by_value_label"].value_counts(dropna=False).to_string())
+    print(merged["real_status"].value_counts().to_string())
+    assert merged["real_status"].value_counts().sum() == len(merged)
 
     # ================================================================
-    # scored_but_unlabeled -- real breakdown by exact SBV status
+    # 1. below_production_gate -- full real breakdown (7,190)
+    # ================================================================
+    bpg = merged[merged["real_status"] == "below_production_gate"]
+    print("\n" + "=" * 90)
+    print(f"1. below_production_gate -- real breakdown (n={len(bpg)})")
+    print("=" * 90)
+    print("Real label check (must be 0.0 for every row, never null):")
+    print(bpg["star_by_value_label"].value_counts(dropna=False).to_string())
+    print("\nFantasy acquisition-cost status (has_real_adp):")
+    print(bpg["has_real_adp"].value_counts().to_string())
+    print("\nADP-round bucket (config.DATASET2_ADP_ROUND_BUCKETS):")
+    print(bpg["adp_bucket"].value_counts().to_string())
+    print("\nPosition:")
+    print(bpg["position"].value_counts().to_string())
+    print("\ngames_played (min/25/50/75/max):", bpg["games_played"].quantile([0, 0.25, 0.5, 0.75, 1]).tolist())
+    print("fantasy_points_ppr (min/25/50/75/max):", bpg["fantasy_points_ppr"].quantile([0, 0.25, 0.5, 0.75, 1]).tolist())
+    print("ppg_ppr (min/25/50/75/max):", bpg["ppg_ppr"].quantile([0, 0.25, 0.5, 0.75, 1]).tolist())
+    print(f"\nReal fantasy-ADP subset (n={bpg['has_real_adp'].sum()}) -- these are real, legitimate primary-bust-eligible candidates, per this round's correction.")
+
+    # ================================================================
+    # 2. out_of_scope -- full real breakdown (1,934)
+    # ================================================================
+    oos = merged[merged["real_status"] == "out_of_scope"]
+    print("\n" + "=" * 90)
+    print(f"2. out_of_scope -- real breakdown (n={len(oos)})")
+    print("=" * 90)
+    print("Real provenance breakdown:")
+    print(oos["star_by_value_provenance_type"].value_counts(dropna=False).to_string())
+    print("Season range:", oos["season"].min(), "-", oos["season"].max(), "(SBV_FIRST_SCOREABLE_SEASON = 2010, confirmed temporal-window-only)")
+    print("\nFantasy acquisition-cost status:")
+    print(oos["has_real_adp"].value_counts().to_string())
+    print("\nADP-round bucket:")
+    print(oos["adp_bucket"].value_counts().to_string())
+    print("\nPosition:")
+    print(oos["position"].value_counts().to_string())
+    print("\ngames_played (min/25/50/75/max):", oos["games_played"].quantile([0, 0.25, 0.5, 0.75, 1]).tolist())
+    print("fantasy_points_ppr (min/25/50/75/max):", oos["fantasy_points_ppr"].quantile([0, 0.25, 0.5, 0.75, 1]).tolist())
+
+    # ================================================================
+    # 3. no_sbv_row_found -- acquisition-cost audit (516), unchanged logic
+    # ================================================================
+    nsrf = merged[merged["real_status"] == "no_sbv_row_found"]
+    nsrf = nsrf.copy()
+    nsrf["acquisition_bucket"] = "no_valid_cost_signal"
+    nsrf.loc[nsrf["draft_round"].notna() & ~nsrf["has_real_adp"], "acquisition_bucket"] = "drafted_no_market_adp"
+    nsrf.loc[nsrf["has_real_adp"], "acquisition_bucket"] = "has_real_market_adp"
+
+    # ================================================================
+    # Four separate outcome-eligibility fields (proposal, not implemented)
     # ================================================================
     print("\n" + "=" * 90)
-    print(f"{CATEGORY_SCORED_BUT_UNLABELED} -- real breakdown by exact canonical SBV status (n={len(unscoreable)})")
+    print("PROPOSED OUTCOME-ELIGIBILITY FIELDS -- real counts")
     print("=" * 90)
-    print("REAL CORRECTION: zero of these rows have a real star_by_value_score -- verified directly.")
-    for status, reason in _UNSCOREABLE_STATUS_REASONS.items():
-        n = (unscoreable["star_by_value_status"] == status).sum()
-        print(f"\n  {status}  (n={n})")
-        print(f"    {reason}")
-    print(
-        "\nRECOMMENDATION: a future outcome table should expose these three real statuses "
-        "directly (or a `star_outcome_eligible=False` + `outcome_unavailable_reason=<exact "
-        "status>` pair), never collapse them into one undifferentiated "
-        "'scored_but_unlabeled' bucket -- the three reasons are methodologically distinct "
-        "(missing cost vs. conflicting signals vs. a real cost with a lookup-coverage gap)."
+
+    # 1. star_outcome_eligible -- True wherever a real, non-null SBV label exists.
+    merged["star_outcome_eligible"] = merged["star_by_value_label"].notna()
+    print(f"\n[1] star_outcome_eligible = True: {merged['star_outcome_eligible'].sum()}"
+          f"  (= scored_labeled {(merged['real_status'].isin(['adp_scored','minimal_market_cost_scored'])).sum()}"
+          f"  + below_production_gate {(merged['real_status']=='below_production_gate').sum()})")
+    print(f"    False (ineligible, NOT auto non-Star): {(~merged['star_outcome_eligible']).sum()}")
+
+    # 2. bust_outcome_eligible_primary (position x ADP-range conditioned) --
+    # real, usable fantasy ADP required. Production gate NOT inherited.
+    # Temporal window (pre-2010) reported separately as an OPEN, undecided
+    # question -- not silently extended by this script.
+    merged["bust_eligible_primary_2010plus"] = merged["has_real_adp"] & (merged["season"] >= 2010)
+    merged["bust_eligible_primary_full_range"] = merged["has_real_adp"]
+    print(f"\n[2] bust_outcome_eligible_primary (ADP-range-conditioned):")
+    print(f"    True, restricted to SBV's 2010+ window: {merged['bust_eligible_primary_2010plus'].sum()}")
+    print(f"    True, if temporal window is ALSO not inherited (2006-2025): {merged['bust_eligible_primary_full_range'].sum()}")
+    print("    (temporal-window question is OPEN -- this round's instruction addressed the production gate only, not this)")
+    print(f"    MMC rows (n=54): NOT eligible under this definition -- no real ADP-round bucket exists for them (open question: add a 5th 'minimal-cost' bucket, or exclude).")
+    print(f"    drafted_no_market_adp rows (n={ (nsrf['acquisition_bucket']=='drafted_no_market_adp').sum() }): NOT eligible -- NFL draft capital is not fantasy acquisition cost, per instruction.")
+    print(f"    unscoreable_drafted_adp_missing (n=106) / unscoreable_ambiguous (n=80): NOT eligible -- no defensible cost value.")
+    eor_adp = merged[merged["real_status"] == "unscoreable_expected_production_out_of_range"]
+    print(f"    unscoreable_expected_production_out_of_range (n=2): ELIGIBLE -- real ADP round resolves to a real bucket "
+          f"({eor_adp['adp_bucket'].tolist()}) even though the fitted E_P lookup (needed for Star scoring specifically) has no value.")
+
+    # 3. bust_outcome_eligible_strict_hybrid -- same eligibility population
+    # as primary (definition I = G + an additional absolute-floor
+    # THRESHOLD, not a different eligibility gate).
+    merged["bust_eligible_strict_hybrid"] = merged["bust_eligible_primary_2010plus"]
+    print(f"\n[3] bust_outcome_eligible_strict_hybrid: SAME population as primary "
+          f"({merged['bust_eligible_strict_hybrid'].sum()} under the 2010+ window) -- "
+          f"the strict-hybrid definition adds an absolute-floor THRESHOLD on top of G, not a separate eligibility gate.")
+
+    # 4. underperformance_diagnostic_eligible (raw P vs E_P) -- needs a
+    # real FITTED E_P value, which today only exists for the two
+    # scoreable statuses. Flagged as an open question whether this
+    # should be extended to below_production_gate's real-ADP subset.
+    merged["diagnostic_eligible_narrow"] = merged["real_status"].isin(["adp_scored", "minimal_market_cost_scored"])
+    merged["diagnostic_eligible_extended"] = merged["diagnostic_eligible_narrow"] | (
+        (merged["real_status"] == "below_production_gate") & merged["has_real_adp"]
     )
+    print(f"\n[4] underperformance_diagnostic_eligible (raw P vs. E_P):")
+    print(f"    Narrow (today's real, already-computed E_P only): {merged['diagnostic_eligible_narrow'].sum()}")
+    print(f"    Extended (also compute E_P for below_production_gate's real-ADP rows -- same lookup formula, "
+          f"just currently short-circuited by labeling.py's early return): {merged['diagnostic_eligible_extended'].sum()}")
+    print("    OPEN QUESTION: which population the real outcome-table build should use -- not decided here.")
 
     # ================================================================
-    # no_sbv_row_found -- real investigation, acquisition-cost audit
+    # Reason codes for every ineligible row (per outcome)
     # ================================================================
-    print("\n" + "=" * 90)
-    print(f"{CATEGORY_NO_SBV_ROW_FOUND} -- real investigation (n={len(unmatched)})")
-    print("=" * 90)
-    all_zero_games = (unmatched["games_played"] == 0).all()
-    print(f"Every row has games_played == 0: {all_zero_games}")
-    ppg_null = master.merge(unmatched[["season", "player_id"]], on=["season", "player_id"])["ppg_ppr"].isna().all()
-    print(f"Every row has ppg_ppr == NaN (SBV's build_population() dropna() root cause): {ppg_null}")
+    def reason_star(row):
+        if row["star_outcome_eligible"]:
+            return None
+        return {
+            "out_of_scope": "out_of_scope_temporal_window (pre-2010)",
+            "unscoreable_drafted_adp_missing": "acquisition_cost_unresolved_drafted",
+            "unscoreable_ambiguous": "acquisition_cost_unresolved_ambiguous",
+            "unscoreable_expected_production_out_of_range": "expected_production_lookup_out_of_range",
+            "no_sbv_row_found": "zero_games_excluded_from_sbv_population",
+        }[row["real_status"]]
 
-    detail = unmatched.merge(
-        players[["gsis_id", "rookie_season", "draft_round", "draft_pick"]],
-        left_on="player_id", right_on="gsis_id", how="left",
-    )
-    detail["is_rookie_season"] = detail["season"] == detail["rookie_season"]
-    detail["has_real_market_adp"] = detail["overall_adp"].notna()
-    detail["acquisition_bucket"] = "no_valid_cost_signal"
-    detail.loc[detail["draft_round"].notna() & ~detail["has_real_market_adp"], "acquisition_bucket"] = "drafted_no_market_adp"
-    detail.loc[detail["has_real_market_adp"], "acquisition_bucket"] = "has_real_market_adp"
-    detail["era"] = pd.cut(detail["season"], bins=[2005, 2010, 2020, 2025], labels=["2006-2010", "2011-2020", "2021-2025"])
+    def reason_bust_primary(row):
+        if row["bust_eligible_primary_2010plus"]:
+            return None
+        if row["season"] < 2010 and row["has_real_adp"]:
+            return "pre_2010_temporal_window_open_question"
+        if row["real_status"] == "minimal_market_cost_scored":
+            return "no_real_adp_round_mmc_baseline_only"
+        if row["real_status"] == "no_sbv_row_found":
+            bucket = nsrf.set_index(["season", "player_id"]).reindex([(row["season"], row["player_id"])])["acquisition_bucket"]
+            b = bucket.iloc[0] if len(bucket) else "no_valid_cost_signal"
+            return f"zero_games_{b}"
+        return "no_usable_fantasy_acquisition_cost"
 
-    print("\nBy season:")
-    print(detail["season"].value_counts().sort_index().to_string())
-    print("\nBy position:")
-    print(detail["position"].value_counts().to_string())
-    print("\nBy acquisition-cost bucket (real fantasy market ADP + real NFL draft_round from players.csv):")
-    print(detail["acquisition_bucket"].value_counts().to_string())
-    print("\nBy rookie-season vs. veteran-season:")
-    print(detail["is_rookie_season"].value_counts().to_string())
-    print("\nAcquisition bucket x rookie/veteran:")
-    print(pd.crosstab(detail["acquisition_bucket"], detail["is_rookie_season"]).to_string())
-    print("\nAcquisition bucket x era:")
-    print(pd.crosstab(detail["era"], detail["acquisition_bucket"]).to_string())
-
-    r1 = detail[detail["draft_round"] == 1.0]
-    print(f"\nReal round-1 NFL picks with zero games, no market ADP (n={len(r1)}):")
-    print(r1[["season", "player_name", "position", "draft_pick"]].to_string(index=False))
-    print(
-        "FINDING: every one of these is a REAL VETERAN season (career-entry draft position is "
-        "ancient history by the season shown, e.g. a 15th-year player), never a current-season "
-        "high-pick rookie bust -- confirmed by cross-referencing rookie_season above."
-    )
-
-    rookie_drafted = detail[detail["is_rookie_season"] & (detail["acquisition_bucket"] == "drafted_no_market_adp")]
-    print(f"\nRookie-season, real NFL draft pick, zero games, NO market ADP (n={len(rookie_drafted)}):")
-    print("Draft-round distribution (this is the subset closest to the user's 'case 3' concern):")
-    print(rookie_drafted["draft_round"].value_counts().sort_index().to_string())
-    print(
-        "FINDING: minimum real draft round in this subset is round 2 -- ZERO real round-1 "
-        "rookie-year zero-game cases with no market ADP. This is consistent with real fantasy "
-        "ADP being set from PRESEASON draft hype, not final games played -- a genuine round-1 "
-        "rookie almost always generates a real market ADP regardless of how their season turns "
-        "out, so a round-1 bust of this shape would more likely show up in the (real, n=1) "
-        "has_real_market_adp bucket instead."
-    )
-
-    print(
-        "\nSURVIVORSHIP-BIAS ASSESSMENT (requested): automatically excluding all 516 from bust "
-        "analysis WOULD risk survivorship bias for a small, real, high-cost subset -- "
-        "specifically the 244 'drafted_no_market_adp' rows, and especially the 58 rookie-season "
-        "ones (rounds 2-7, real early-career investment, zero return). The 271 "
-        "'no_valid_cost_signal' rows carry materially less bust-research risk if excluded (no "
-        "real evidence of meaningful acquisition cost, fantasy or NFL). The single "
-        "'has_real_market_adp' row (2023-2025 era) is the cleanest possible zero-game bust case "
-        "and should not be excluded from any bust definition by default."
-    )
+    merged["star_ineligible_reason"] = merged.apply(reason_star, axis=1)
+    merged["bust_primary_ineligible_reason"] = merged.apply(reason_bust_primary, axis=1)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     merged.to_csv(AUDIT_PATH, index=False)
-    unscoreable.to_csv(SCORED_BUT_UNLABELED_DETAIL_PATH, index=False)
-    detail.to_csv(NO_SBV_ROW_DETAIL_PATH, index=False)
-    print(f"\nWrote:\n  {AUDIT_PATH}\n  {SCORED_BUT_UNLABELED_DETAIL_PATH}\n  {NO_SBV_ROW_DETAIL_PATH}")
+    bpg.to_csv(BELOW_GATE_DETAIL_PATH, index=False)
+    oos.to_csv(OUT_OF_SCOPE_DETAIL_PATH, index=False)
+    nsrf.to_csv(NO_SBV_ROW_DETAIL_PATH, index=False)
+    print(f"\nWrote:\n  {AUDIT_PATH}\n  {BELOW_GATE_DETAIL_PATH}\n  {OUT_OF_SCOPE_DETAIL_PATH}\n  {NO_SBV_ROW_DETAIL_PATH}")
 
 
 if __name__ == "__main__":
