@@ -3,12 +3,28 @@
 **Committed so far**: §0/§1 (bug fix, window redesign) in `c79eea0`;
 §1a's exclusion audit and `team_game_window_status` in `292d7d2`. §1b
 (the per-team-game/per-active-game rate split) and §2b item 1 (the
-flat 3-primary/4-sensitivity active-game interpretability floor) are
-**APPROVED and committed this round**. §2b items 2/3 (flat
-efficiency-volume and meaningful-role thresholds) were **rejected as
-too low** and are superseded by §2c/§2d/§2e, a revised three-concept
-framework (minimal computability / efficiency reliability / meaningful
-role) — proposal only, not implemented as code.
+flat 3-primary/4-sensitivity active-game interpretability floor) were
+committed in an earlier round. §2b items 2/3 (flat efficiency-volume
+and meaningful-role thresholds) were **rejected as too low** and were
+superseded by §2c/§2d/§2e, a revised three-concept framework (minimal
+computability / efficiency sample-eligibility / meaningful role).
+
+The active-game floor constants were renamed to explicit,
+self-evident names (`DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY`
+/ `_SENSITIVITY`, no "swap" semantics required to read them) and
+committed in `667f633`. §2d's efficiency **sample-eligibility** flags
+(explicitly not called "reliability" — see the terminology correction
+in §2d) are **approved and committed** in
+`build_team_game_efficiency_traits()`/`build_active_game_efficiency_traits()`
+in `lib/dataset2/partial_season_traits.py`, with the exact
+exploratory/higher-volume thresholds given in this round's approval,
+and tested (42/42 in this file). §2e's meaningful-role matrix is
+**being reworked** — an initial single-tier primary/sensitivity pass
+was reviewed and rejected as mislabeled (most "primary" values
+identify recurring involvement, not a meaningful fantasy role) and is
+being replaced with a three-concept structure (role present /
+meaningful role / strong-lead role) and revised candidate thresholds
+— proposal only, nothing wired into code.
 
 ---
 
@@ -425,6 +441,244 @@ conflating them into "% of population retained."
 
 ---
 
+## 2c. Concept 1 — minimal computability (not implemented, not a floor)
+
+A rate is computable whenever its real denominator is nonzero — 1
+carry, 1 target, 1 attempt is enough to produce a number. This is
+already true of every raw opportunity field this module exposes (no
+code change needed): nothing prevents computing `receiving_yards /
+targets` for a 1-target player today. **Preserve the calculation where
+useful — e.g. as an input to a larger aggregate — but never label a
+computability-only rate "reliable" or "interpretable."** This concept
+gets no threshold and no flag; it's the floor below which nothing
+(concepts 2 or 3) applies. Stated explicitly here because the
+superseded §2/§3 tables silently equated "computable" with
+"reliable" — exactly the conflation being corrected.
+
+---
+
+## 2d. Concept 2 — efficiency SAMPLE-ELIGIBILITY, from real odd/even-week
+OBSERVED HISTORICAL STABILITY — NOT a statistical-reliability estimate
+
+**Terminology correction, per instruction**: the odd/even-week split
+below is described as OBSERVED HISTORICAL STABILITY, not a pure
+statistical-reliability estimate. A formal reliability estimate (in
+the classical psychometric sense) assumes the underlying quantity is
+otherwise constant and only the MEASUREMENT is noisy. That assumption
+doesn't hold here: the real odd/even split also captures real changes
+in role, injury status, starting QB, and opponent across a season —
+so part of any observed instability is a real change in the player's
+actual circumstances, not just sampling noise in the metric. The two
+sample-eligibility levels below (§below) are correspondingly labeled
+**sample-eligibility levels**, not proof either level makes the metric
+reliable.
+
+**Method** (unchanged): for every real player-season 2006-2025, split
+real games into ODD-week and EVEN-week halves (a clean, order-
+independent, real split — not the partial-season windows themselves,
+which are about lag/timing, not stability measurement). Compute the
+efficiency metric independently on each half, band players by real
+TOTAL SEASON volume, and report two real, complementary signals per
+band:
+- **Split-half correlation** (Pearson r between the odd-half and
+  even-half rate, across players in the band) — does this metric
+  rank-order players consistently between two independent real
+  samples? (Real role/injury/QB/opponent change across the season
+  means this is an OBSERVED historical pattern, not a pure
+  measurement-reliability figure.)
+- **Coefficient of variation** (real season-level rate's std ÷ mean
+  across players in the band, or raw std when the mean is near zero —
+  see the QB note below) — a second, real, complementary signal: how
+  extreme/volatile is the metric itself at this volume, regardless of
+  whether it correlates across samples?
+
+**Honest finding, stated up front**: split-half correlation for these
+football rate stats is genuinely modest even at high real volume —
+never approaching the 0.7+ that would usually be called "highly
+reliable" in a classical psychometric sense. This is a real property
+of these metrics (yards-per-carry, yards-per-target, and similar
+per-touch rates are known to be volatile in real football, and the
+season also brings real role/injury/QB/opponent churn — not an
+artifact of this method) — **the levels below mark where the metric
+becomes MINIMALLY worth reading at all, not where it becomes highly
+predictive**, and per instruction, it remains acceptable and expected
+for efficiency traits to stay unavailable (or eligible only at the
+weaker "exploratory" level) for many real low-volume players.
+
+**APPROVED AND IMPLEMENTED 2026-07** (`build_team_game_efficiency_traits()`/
+`build_active_game_efficiency_traits()`, `config.py`'s
+`DATASET2_EFFICIENCY_VOLUME_EXPLORATORY`/`_SENSITIVITY`): two real
+eligibility levels, EXPLORATORY MINIMUM and HIGHER-VOLUME SENSITIVITY,
+computed from the real window's own opportunity count (not the season
+total used to build the tables below) and exposed as two separate
+boolean flags per window (`*_efficiency_volume_eligible_exploratory`/
+`_sensitivity`) — never a filter, the real opportunity/production
+counts and the rate itself (whenever the real denominator is nonzero)
+stay visible regardless of either flag.
+
+### QB passing efficiency (EPA per attempt)
+
+| Volume band (season attempts) | n (usable, nonzero both halves) | Split-half r | Season-rate mean | Season-rate std |
+|---|---|---|---|---|
+| 1-9 | 34 | -0.08 | -0.27 | 0.80 |
+| 10-24 | 54 | 0.33 | -0.41 | 0.68 |
+| 25-49 | 88 | 0.18 | -0.20 | 0.35 |
+| 50-99 | 137 | 0.21 | -0.15 | 0.26 |
+| 100-199 | 179 | 0.16 | -0.13 | 0.17 |
+| 200+ | 695 | 0.50 | 0.04 | 0.15 |
+
+QB's real mean sits near zero, so CV is misleading (division by a
+near-zero mean exaggerates the ratio) — **raw std is the right signal
+here**, and it drops cleanly and monotonically (0.80 → 0.15) as volume
+rises. Split-half r also strengthens materially by the 200+ band
+(0.50, the only band with a real, non-trivial historical pattern).
+**Approved: exploratory minimum ≥50 real attempts** (std already down
+to ~1/3 of the lowest band, a real, meaningful stabilization),
+**higher-volume sensitivity ≥150 attempts** (real std continuing to
+shrink, closer to where r itself becomes non-trivial). Given QB's
+games floor already self-selects real starters (§1a), 50+ attempts is
+reached quickly in practice — not a practically restrictive floor.
+
+### RB rushing efficiency (yards per carry)
+
+| Volume band (season carries) | n | Split-half r | Mean | CV |
+|---|---|---|---|---|
+| 1-4 | 66 | 0.02 | 3.15 | 0.85 |
+| 5-14 | 281 | 0.08 | 3.80 | 0.67 |
+| 15-29 | 320 | 0.07 | 3.90 | 0.34 |
+| 30-59 | 401 | 0.17 | 4.13 | 0.27 |
+| 60-119 | 490 | 0.22 | 4.15 | 0.19 |
+| 120+ | 781 | 0.26 | 4.28 | 0.14 |
+
+CV roughly halves between the lowest bands and 15-29 carries (0.85/0.67
+→ 0.34), then keeps improving gradually. **Approved: exploratory
+minimum ≥15 real carries** (the first band with real, meaningful
+stabilization), **higher-volume sensitivity ≥60 carries** (CV under
+0.2, the clearest further inflection).
+
+### RB receiving efficiency (yards per target)
+
+| Volume band (season targets) | n | Split-half r | Mean | CV |
+|---|---|---|---|---|
+| 1-4 | 170 | -0.06 | 5.02 | 0.80 |
+| 5-14 | 522 | 0.08 | 5.43 | 0.46 |
+| 15-29 | 451 | 0.05 | 5.75 | 0.32 |
+| 30-59 | 513 | 0.10 | 5.82 | 0.23 |
+| 60+ | 202 | 0.03 | 6.17 | 0.17 |
+
+Same real pattern, correlation weaker throughout (receiving-back
+volume is real but small for most RBs). **Approved: exploratory
+minimum ≥15 real targets, higher-volume sensitivity ≥30 targets.**
+
+### WR/TE receiving efficiency (yards per target)
+
+| Position | Volume band | n | Split-half r | Mean | CV |
+|---|---|---|---|---|---|
+| WR | 1-4 | 149 | 0.94* | 10.07 | 3.45* |
+| WR | 5-14 | 501 | 0.00 | 6.72 | 0.54 |
+| WR | 15-29 | 488 | 0.19 | 6.93 | 0.36 |
+| WR | 30-59 | 705 | 0.15 | 7.38 | 0.25 |
+| WR | 60-119 | 914 | 0.21 | 7.92 | 0.19 |
+| WR | 120+ | 334 | 0.26 | 8.24 | 0.15 |
+| TE | 1-4 | 152 | 0.10 | 6.15 | 0.83 |
+| TE | 5-14 | 462 | 0.00 | 6.23 | 0.46 |
+| TE | 15-29 | 349 | 0.08 | 6.87 | 0.29 |
+| TE | 30-59 | 366 | 0.21 | 7.20 | 0.23 |
+| TE | 60+ | 395 | 0.21 | 7.44 | 0.17 |
+
+*The WR 1-4-target band's r=0.94 is a real, disclosed ARTIFACT, not a
+genuine finding — its CV (3.45) is the highest of any band in this
+whole analysis, meaning the "high correlation" comes from a handful of
+extreme, coincidental ratios (e.g. 1 target for a long touchdown in
+each half) at a volume too low to mean anything. **This is exactly why
+a single correlation number should never be read alone** — always
+check the CV alongside it, per instruction.
+
+**Approved, exploratory minimum ≥15 real targets for both positions;
+higher-volume sensitivity DIFFERS by position**: **WR ≥40 targets**,
+**TE ≥30 targets** — WR's real CV curve is still descending more
+steeply through the 30-59 band (0.36→0.25) than TE's (0.29→0.23) at
+the same volume, so WR is held to a real, slightly higher bar for the
+stronger level rather than defaulting both positions to the same
+number. Both real curves cross below ~0.25 CV close to where §2e's
+meaningful-role candidates also land — a real, independent convergence
+between the two different questions, not a coincidence to ignore, but
+kept as two SEPARATE concepts per instruction (sample-eligibility here
+vs. role substance in §2e), not merged into one threshold.
+
+---
+
+## 2e. Concept 3 — meaningful role, from continuous per-game measures,
+not one flat total
+
+Per instruction, no flat total threshold. Every candidate below is a
+**continuous, per-game (or snap-share) rate** — proposed for further
+discussion, no specific cutoff selected yet.
+
+**Proposed continuous measures**:
+- QB: pass attempts per active game
+- RB: carries per team game AND per active game (both — they diverge
+  meaningfully; team-game reflects real role even through inactive
+  weeks, active-game reflects role when actually playing)
+- WR/TE: targets per team game AND per active game
+- All positions: `offense_snap_share` (already position-normalized,
+  Source B 2013+ only)
+
+**Real percentiles, team-game windows, base = primary-floor-qualified
+(active_games≥3)**:
+
+| Window | QB attempts/team-game (50th/90th) | RB carries/team-game (50th/90th) | WR targets/team-game (50th/90th) | TE targets/team-game (50th/90th) |
+|---|---|---|---|---|
+| Final-4 | 30.0 / 38.8 | 7.0 / 17.5 | 3.5 / 8.3 | 2.3 / 6.5 |
+| Final-6 | 27.5 / 37.5 | 5.7 / 16.5 | 2.8 / 7.8 | 1.7 / 5.8 |
+| Final-8 | 25.3 / 37.3 | 4.9 / 15.8 | 2.5 / 7.5 | 1.4 / 5.5 |
+
+**Real finding confirming why per-game beats a flat total**: the
+per-game rate's central tendency drifts only modestly across window
+lengths (RB median carries/team-game: 7.0 → 5.7 → 4.9 for final-4/6/8
+— some real drift from mixing in additional real games, but nowhere
+near proportional to window length the way a flat total necessarily
+is).
+
+**Concrete classification-instability demonstration, requested**:
+comparing a flat total (`carries≥15`) against a per-team-game rate
+(`carries/team-game≥2.5`) for the SAME real RB population at each
+window:
+
+| Window | Flat ≥15 total | Rate ≥2.5/team-game | Both | Flat-only | Rate-only |
+|---|---|---|---|---|---|
+| Final-4 | 1,083 (68.0%) | 1,223 (76.8%) | 1,083 | 0 | **140** |
+| Final-6 | 1,350 (70.6%) | 1,350 (70.6%) | 1,350 | 0 | 0 |
+| Final-8 | 1,501 (72.7%) | 1,390 (67.3%) | 1,390 | **111** | 0 |
+
+At final-4, the flat total is stricter than the rate (real 3.75
+carries/game needed to clear 15 in only 4 games) — 140 real players
+with a genuine ≥2.5/game role get WRONGLY excluded by the flat bar. At
+final-8, the flat total flips to being LOOSER than the rate (15
+carries over 8 games is only 1.875/game) — 111 real players with a
+genuinely low per-game role get WRONGLY included. The two measures
+only coincide at final-6 (15/6 = exactly 2.5/game) — a coincidence of
+that specific window length, not evidence the flat total is sound in
+general. This is real, concrete proof the flat-total approach silently
+changes what "meaningful role" means depending on which window it's
+applied to, exactly as instructed to check.
+
+**Not yet selected**: which per-game/snap-share level constitutes
+"meaningful," and whether team-game or active-game denominator (or
+both, exposed separately) is the right basis per position.
+
+**2026-07 status**: a first pass at this matrix (using a single
+primary/sensitivity pair per role type) was reviewed and **rejected as
+labeled** — most of the proposed "primary" thresholds identify
+recurring involvement, not a fantasy-meaningful role, and several
+"sensitivity" levels (RB rushing especially) were judged still too
+low to represent a strong/lead role. This is being reworked into a
+three-concept structure (role present / meaningful role / strong-lead
+role) with revised candidate ranges per position and metric. See the
+active proposal work for the current state — not yet finalized here.
+
+---
+
 ## 3. What each candidate threshold would flag differently (not
 "exclude" — see §1a-0)
 
@@ -491,16 +745,32 @@ proposal.
 
 ## Stop point
 
-§0/§1 (bug fix, window redesign) are committed (`c79eea0`). This
-round's new work — the `team_game_window_status` field, its tests, and
-the exclusion audit / floor decision table above — is real, tested
-(907/907 passing, `python -m pytest tests/ -q --import-mode=importlib`),
-and **NOT yet committed**, per instruction to stop again before
-committing or selecting thresholds. Awaiting your decision on:
-1. Whether to commit the `team_game_window_status` code change now
-   (independent of any floor decision).
-2. Which lenient/moderate/meaningful-role tier (or a different one, or
-   different tiers per position given QB's low sensitivity to the
-   opportunity overlay) to select for each position/metric.
-3. Whether the team-game window, the active-game window, or both get a
-   final `opportunity_qualified` treatment.
+**Committed**: §0/§1 bug fix and window redesign (`c79eea0`); §1a
+exclusion audit and `team_game_window_status` (`292d7d2`); §1b's
+per-team-game/per-active-game rate split and the flat 3-primary/4-
+sensitivity active-game interpretability floor (an earlier round);
+the active-game floor constant rename to explicit,
+non-"swap"-dependent names (`667f633`); §2d's efficiency
+sample-eligibility flags — `build_team_game_efficiency_traits()` and
+`build_active_game_efficiency_traits()` in
+`lib/dataset2/partial_season_traits.py`, using the approved exact
+thresholds (`config.py`'s `DATASET2_EFFICIENCY_VOLUME_EXPLORATORY`/
+`_SENSITIVITY`: QB ≥50/≥150 attempts; RB rushing ≥15/≥60 carries; RB
+receiving ≥15/≥30 targets; WR receiving ≥15/≥40 targets; TE receiving
+≥15/≥30 targets), neutral "eligible" terminology throughout, raw
+volumes/rates never gated or deleted by either flag. 42/42 tests in
+this file; full suite 920/920
+(`python -m pytest tests/ -q --import-mode=importlib`).
+
+**NOT implemented, proposal under revision**: §2e's meaningful-role
+matrix. An initial single-tier (primary/sensitivity) pass was
+reviewed and **rejected as labeled** — most proposed "primary"
+thresholds identify recurring involvement, not a fantasy-meaningful
+role, and several "sensitivity" levels (RB rushing especially) were
+judged still too low for a strong/lead role. Being reworked into
+three concepts — **role present** (recurring but potentially
+peripheral), **meaningful role** (enough opportunity to plausibly
+matter for fantasy production), **strong/lead role** (starter-level
+or high-value involvement) — with revised candidate ranges per
+position/metric, still preserving team-game and active-game as
+separate, non-merged bases. No role-flag logic exists in code.

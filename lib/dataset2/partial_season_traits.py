@@ -123,17 +123,43 @@ final-4/6/8 (`build_team_game_final_n_traits()`) and first/second half
 there is no separate "team window size" concept there, the window IS
 the active-game set by definition, so no ambiguity exists to resolve.
 
-MINIMUM-OPPORTUNITY IS DELIBERATELY NOT IMPLEMENTED HERE.
-`opportunity_qualified` is present in every output row but is ALWAYS
-the literal string OPPORTUNITY_STATUS_PENDING -- never True/False,
-never silently defaulted to "qualified." See the reliability proposal
-doc for real candidate opportunity floors (general snap-share +
-position-specific touch metrics); no threshold has been selected.
+MEANINGFUL-ROLE OPPORTUNITY IS DELIBERATELY NOT IMPLEMENTED HERE YET.
+`opportunity_qualified` is present in every PPG-style output row but
+is ALWAYS the literal string OPPORTUNITY_STATUS_PENDING -- never
+True/False, never silently defaulted to "qualified." See the
+reliability proposal doc for the proposed continuous per-game/
+snap-share meaningful-role measures; no threshold has been selected
+or implemented as a flag.
+
+EFFICIENCY SAMPLE-ELIGIBILITY -- approved and implemented 2026-07,
+a DIFFERENT, narrower concept from meaningful-role opportunity above
+(research/dataset2/PARTIAL_SEASON_RELIABILITY_PROPOSAL_2026_07.md §2d).
+`build_team_game_efficiency_traits()`/`build_active_game_efficiency_traits()`
+compute a real efficiency RATE (production ÷ opportunity, e.g. real
+yards per real target) for one (position, metric_name) pair at a time
+-- see `EFFICIENCY_METRICS` for the supported set and the real
+(numerator, denominator) column each resolves to. Every row keeps its
+real, zero-filled opportunity/production counts regardless of
+eligibility (§2c's "minimal computability": the rate itself is null
+ONLY when opportunity is literally 0, never gated by a volume
+threshold). Two SEPARATE eligibility flags
+(`*_efficiency_volume_eligible_exploratory`/`_sensitivity`, real
+volumes from config.py's DATASET2_EFFICIENCY_VOLUME_EXPLORATORY/
+SENSITIVITY) mark whether the real opportunity count clears an
+approved minimum -- derived from real ODD/EVEN-WEEK split OBSERVED
+HISTORICAL STABILITY (deliberately not called a formal statistical-
+reliability estimate, since the real split also captures real role,
+injury, QB, and opponent change across a season, not pure measurement
+noise). NEITHER FLAG IS A CLAIM THE RATE IS RELIABLE -- real split-half
+correlation for these football rate metrics stays modest even at the
+SENSITIVITY volume; the flags mark where the observed rate stops being
+dominated by a handful of plays, nothing stronger.
 
 TEST SCOPE: tests/test_dataset2_partial_season_traits.py proves
 implementation correctness (team-game vs. active-game window
 construction, real 16/17-game-era boundary handling, inactive-game
-zero-filling, traded-player exclusion, floor enforcement) against
+zero-filling, traded-player exclusion, floor enforcement, efficiency
+sample-eligibility) against
 synthetic fixtures. tests/test_dataset2_common.py separately proves
 `real_reg_week_slots()`/`build_team_game_index()` correctness, which
 this module now relies on rather than re-deriving.
@@ -146,11 +172,31 @@ import numpy as np
 import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from config import DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY, DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_SENSITIVITY
+from config import (
+    DATASET2_EFFICIENCY_VOLUME_EXPLORATORY,
+    DATASET2_EFFICIENCY_VOLUME_SENSITIVITY,
+    DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY,
+    DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_SENSITIVITY,
+)
 from lib.dataset2.common import build_team_game_index, validate_columns
 
 POPULATION_REQUIRED_COLUMNS = ("season", "player_id", "position")
-WEEKLY_PLAYER_REQUIRED_COLUMNS = ("season", "player_id", "week", "team", "fantasy_points_ppr")
+WEEKLY_PLAYER_BASE_COLUMNS = ("season", "player_id", "week", "team")
+WEEKLY_PLAYER_REQUIRED_COLUMNS = WEEKLY_PLAYER_BASE_COLUMNS + ("fantasy_points_ppr",)
+
+# (position, metric_name) -> (numerator_col, denominator_col) in the
+# real Source A weekly file. metric_name distinguishes RB's two real
+# efficiency questions (rushing vs. receiving), which need different
+# real columns. Matches config.py's DATASET2_EFFICIENCY_VOLUME_*
+# dicts exactly (same keys) -- see that config for the real
+# split-half-derived volume levels per pair.
+EFFICIENCY_METRICS = {
+    ("QB", "passing"): ("passing_epa", "attempts"),
+    ("RB", "rushing"): ("rushing_yards", "carries"),
+    ("RB", "receiving"): ("receiving_yards", "targets"),
+    ("WR", "receiving"): ("receiving_yards", "targets"),
+    ("TE", "receiving"): ("receiving_yards", "targets"),
+}
 
 OPPORTUNITY_STATUS_PENDING = "pending"
 
@@ -204,6 +250,36 @@ TEAM_GAME_HALF_SPLIT_OUTPUT_COLUMNS = (
     "second_half_sample_qualified_primary",
     "second_half_sample_qualified_sensitivity",
     "opportunity_qualified",
+)
+
+EFFICIENCY_TEAM_GAME_OUTPUT_COLUMNS = (
+    "season",
+    "player_id",
+    "position",
+    "metric_name",
+    "window_n",
+    "team_game_window_status",
+    "team_final_n_games",
+    "team_final_n_active_games",
+    "team_final_n_opportunity",
+    "team_final_n_production",
+    "team_final_n_efficiency_rate",
+    "team_final_n_efficiency_volume_eligible_exploratory",
+    "team_final_n_efficiency_volume_eligible_sensitivity",
+)
+
+EFFICIENCY_ACTIVE_GAME_OUTPUT_COLUMNS = (
+    "season",
+    "player_id",
+    "position",
+    "metric_name",
+    "window_n",
+    "active_final_n_games",
+    "active_final_n_opportunity",
+    "active_final_n_production",
+    "active_final_n_efficiency_rate",
+    "active_final_n_efficiency_volume_eligible_exploratory",
+    "active_final_n_efficiency_volume_eligible_sensitivity",
 )
 
 
@@ -283,9 +359,14 @@ def _scope_to_team_games(
     (population scope), `player_team` (every population row's team +
     team_game_window_status), and `team_game_index` (every real team's
     real REG games, chronologically indexed, bye-gap-compressed -- see
-    common.build_team_game_index())."""
+    common.build_team_game_index()). Validates only the BASE identity
+    columns (season/player_id/week/team) -- callers validate whatever
+    additional value column(s) they specifically need (PPG builders:
+    `fantasy_points_ppr`; efficiency builders: the resolved
+    numerator/denominator columns for that metric), since different
+    builders need different real Source A columns."""
     validate_columns(population, POPULATION_REQUIRED_COLUMNS, "population")
-    validate_columns(weekly_player, WEEKLY_PLAYER_REQUIRED_COLUMNS, "weekly_player")
+    validate_columns(weekly_player, WEEKLY_PLAYER_BASE_COLUMNS, "weekly_player")
 
     base = population[list(POPULATION_REQUIRED_COLUMNS)].drop_duplicates(subset=["season", "player_id"]).reset_index(
         drop=True
@@ -314,36 +395,42 @@ def _aggregate_team_window(
     weekly_player: pd.DataFrame,
     games_col: str,
     active_col: str,
-    total_col: str,
+    value_cols: dict,
 ):
     """`window_weeks`: (season, team, week[, half]) -- the specific
     real team-games in scope. Joins each single-team player to their
     team's real games in the window, zero-fills any game with no real
     player row (inactive/no usage -- never dropped), and aggregates.
-    Returns a DataFrame keyed on (season, player_id[, half]) with
-    `games_col` (real window size), `active_col` (real active-game
-    count), and `total_col` (real zero-filled point total) -- NO rate
-    is computed here. Callers use `_compute_dual_rates()` on top of
-    these raw fields so the per-team-game and per-active-game rates
-    stay two deliberately separate computations, never derived from
-    each other."""
+    `value_cols`: {real source column in `weekly_player`: output total
+    column name} -- EVERY entry is summed with the same zero-fill
+    treatment (one column for a PPG builder: `{"fantasy_points_ppr":
+    "..."}`; two for an efficiency builder, numerator AND denominator:
+    `{"receiving_yards": "...", "targets": "..."}`). Returns a
+    DataFrame keyed on (season, player_id[, half]) with `games_col`
+    (real window size), `active_col` (real active-game count), and one
+    output column per `value_cols` entry -- NO rate is computed here.
+    Callers compute their own rate on top of these raw fields so a
+    per-team-game rate and a per-active-game (or efficiency) rate stay
+    deliberately separate computations, never derived from each
+    other."""
     group_keys = ["season", "player_id"] + (["half"] if "half" in window_weeks.columns else [])
 
     scoped = player_team.merge(window_weeks, on=["season", "team"], how="inner")
     merged = scoped.merge(
-        weekly_player[["season", "player_id", "week", "fantasy_points_ppr"]],
+        weekly_player[["season", "player_id", "week"] + list(value_cols.keys())],
         on=["season", "player_id", "week"],
         how="left",
         indicator=True,
     )
     merged["_active"] = merged["_merge"] == "both"
-    merged["fantasy_points_ppr"] = merged["fantasy_points_ppr"].fillna(0.0)
+    for src_col in value_cols:
+        merged[src_col] = merged[src_col].fillna(0.0)
 
-    return (
-        merged.groupby(group_keys)
-        .agg(**{games_col: ("week", "nunique"), active_col: ("_active", "sum"), total_col: ("fantasy_points_ppr", "sum")})
-        .reset_index()
-    )
+    agg_kwargs = {games_col: ("week", "nunique"), active_col: ("_active", "sum")}
+    for src_col, out_col in value_cols.items():
+        agg_kwargs[out_col] = (src_col, "sum")
+
+    return merged.groupby(group_keys).agg(**agg_kwargs).reset_index()
 
 
 def build_team_game_final_n_traits(
@@ -362,6 +449,7 @@ def build_team_game_final_n_traits(
     if not isinstance(n, int) or n < 1:
         raise ValueError(f"n must be a positive integer, got {n!r}")
 
+    validate_columns(weekly_player, WEEKLY_PLAYER_REQUIRED_COLUMNS, "weekly_player")
     base, player_team, team_game_index = _scope_to_team_games(population, weekly_player, weekly_all_positions)
 
     tgi = team_game_index.copy()
@@ -374,7 +462,7 @@ def build_team_game_final_n_traits(
         weekly_player,
         "team_final_n_games",
         "team_final_n_active_games",
-        "_team_final_n_total",
+        {"fantasy_points_ppr": "_team_final_n_total"},
     )
 
     out = base.merge(player_team, on=["season", "player_id"], how="left")
@@ -451,6 +539,7 @@ def build_team_game_half_split_traits(
     (traded, no real team evidence, or the defensive "other" catch-all)
     get `team_game_window_status` set accordingly and every trait field
     null -- see module docstring."""
+    validate_columns(weekly_player, WEEKLY_PLAYER_REQUIRED_COLUMNS, "weekly_player")
     base, player_team, team_game_index = _scope_to_team_games(population, weekly_player, weekly_all_positions)
 
     tgi = team_game_index.copy()
@@ -458,7 +547,9 @@ def build_team_game_half_split_traits(
     tgi["half"] = np.where(tgi["team_game_index"] <= tgi["_cutoff"], "first_half", "second_half")
     half_weeks = tgi[["season", "team", "week", "half"]]
 
-    agg = _aggregate_team_window(player_team, half_weeks, weekly_player, "_games", "_active_games", "_total")
+    agg = _aggregate_team_window(
+        player_team, half_weeks, weekly_player, "_games", "_active_games", {"fantasy_points_ppr": "_total"}
+    )
 
     matched_players = agg[["season", "player_id"]].drop_duplicates()
     matched_players["_matched"] = 1.0
@@ -484,3 +575,155 @@ def build_team_game_half_split_traits(
     out["opportunity_qualified"] = OPPORTUNITY_STATUS_PENDING
 
     return out[list(TEAM_GAME_HALF_SPLIT_OUTPUT_COLUMNS)].reset_index(drop=True)
+
+
+def _resolve_efficiency_metric(position: str, metric_name: str):
+    key = (position, metric_name)
+    if key not in EFFICIENCY_METRICS:
+        raise ValueError(
+            f"No efficiency metric defined for (position, metric_name)={key!r}; "
+            f"see EFFICIENCY_METRICS for the supported set."
+        )
+    numerator_col, denominator_col = EFFICIENCY_METRICS[key]
+    exploratory_min = DATASET2_EFFICIENCY_VOLUME_EXPLORATORY[key]
+    sensitivity_min = DATASET2_EFFICIENCY_VOLUME_SENSITIVITY[key]
+    return numerator_col, denominator_col, exploratory_min, sensitivity_min
+
+
+def build_team_game_efficiency_traits(
+    population: pd.DataFrame,
+    weekly_player: pd.DataFrame,
+    weekly_all_positions: pd.DataFrame,
+    n: int,
+    position: str,
+    metric_name: str,
+) -> pd.DataFrame:
+    """Real per-team-game-window efficiency (e.g. yards per target),
+    for the team's real final `n` REG games -- same team-game
+    window/status machinery as build_team_game_final_n_traits(), with
+    an EFFICIENCY rate in place of a points rate.
+
+    SAMPLE-ELIGIBILITY, NOT A RELIABILITY PROOF (see module docstring's
+    "EFFICIENCY SAMPLE-ELIGIBILITY" section and
+    config.py's DATASET2_EFFICIENCY_VOLUME_EXPLORATORY/SENSITIVITY):
+    `*_efficiency_volume_eligible_exploratory`/`*_sensitivity` flag
+    whether the real window OPPORTUNITY count (the metric's real
+    denominator, e.g. targets) clears the approved volume level --
+    they do NOT claim the resulting rate is statistically reliable,
+    only that it clears a real, disclosed minimum before being read as
+    even an exploratory signal.
+
+    MINIMAL COMPUTABILITY, ALWAYS PRESERVED: `team_final_n_opportunity`/
+    `team_final_n_production` (the real, zero-filled denominator/
+    numerator sums) are populated for every `applicable` row regardless
+    of either eligibility flag -- only `team_final_n_efficiency_rate`
+    itself is null, and only when the real opportunity count is
+    literally zero (division undefined), never gated by a volume
+    threshold. A player below both eligibility flags still gets a real
+    rate here if their opportunity is nonzero; the flags describe how
+    much to trust it, they don't hide it.
+    """
+    if not isinstance(n, int) or n < 1:
+        raise ValueError(f"n must be a positive integer, got {n!r}")
+    numerator_col, denominator_col, exploratory_min, sensitivity_min = _resolve_efficiency_metric(
+        position, metric_name
+    )
+
+    validate_columns(
+        weekly_player, WEEKLY_PLAYER_BASE_COLUMNS + (numerator_col, denominator_col), "weekly_player"
+    )
+    position_population = population[population["position"] == position]
+    base, player_team, team_game_index = _scope_to_team_games(position_population, weekly_player, weekly_all_positions)
+
+    tgi = team_game_index.copy()
+    tgi["_games_from_end"] = tgi["team_total_games"] - tgi["team_game_index"]
+    final_n_weeks = tgi[tgi["_games_from_end"] < n][["season", "team", "week"]]
+
+    agg = _aggregate_team_window(
+        player_team,
+        final_n_weeks,
+        weekly_player,
+        "team_final_n_games",
+        "team_final_n_active_games",
+        {denominator_col: "team_final_n_opportunity", numerator_col: "team_final_n_production"},
+    )
+
+    out = base.merge(player_team, on=["season", "player_id"], how="left")
+    out = out.merge(agg, on=["season", "player_id"], how="left")
+    out["team_game_window_status"] = _downgrade_unmatched_applicable(out, "team_final_n_games")
+
+    out["team_final_n_efficiency_rate"] = out["team_final_n_production"] / out["team_final_n_opportunity"].replace(
+        0, np.nan
+    )
+    out["team_final_n_efficiency_volume_eligible_exploratory"] = out["team_final_n_opportunity"] >= exploratory_min
+    out["team_final_n_efficiency_volume_eligible_sensitivity"] = out["team_final_n_opportunity"] >= sensitivity_min
+
+    out["position"] = position
+    out["metric_name"] = metric_name
+    out["window_n"] = n
+
+    return out[list(EFFICIENCY_TEAM_GAME_OUTPUT_COLUMNS)].reset_index(drop=True)
+
+
+def build_active_game_efficiency_traits(
+    population: pd.DataFrame, weekly_player: pd.DataFrame, n: int, position: str, metric_name: str
+) -> pd.DataFrame:
+    """Real per-active-game-window efficiency, over the player's own
+    real final `n` games WITH a real weekly row (same active-game
+    selection as build_active_game_final_n_traits() -- a real row
+    counts as "active" even if that specific week's opportunity in
+    THIS metric happens to be 0, consistent with every other
+    active-game window in this module). See
+    build_team_game_efficiency_traits()'s docstring for what the
+    eligibility flags do and don't claim -- identical semantics here.
+    """
+    if not isinstance(n, int) or n < 1:
+        raise ValueError(f"n must be a positive integer, got {n!r}")
+    numerator_col, denominator_col, exploratory_min, sensitivity_min = _resolve_efficiency_metric(
+        position, metric_name
+    )
+
+    validate_columns(population, POPULATION_REQUIRED_COLUMNS, "population")
+    validate_columns(
+        weekly_player, WEEKLY_PLAYER_BASE_COLUMNS + (numerator_col, denominator_col), "weekly_player"
+    )
+
+    position_population = population[population["position"] == position]
+    base = position_population[list(POPULATION_REQUIRED_COLUMNS)].drop_duplicates(
+        subset=["season", "player_id"]
+    ).reset_index(drop=True)
+
+    w = weekly_player.sort_values(["season", "player_id", "week"])
+    w = w.assign(_rank_from_end=w.groupby(["season", "player_id"]).cumcount(ascending=False))
+    in_window = w[w["_rank_from_end"] < n]
+
+    agg = (
+        in_window.groupby(["season", "player_id"])
+        .agg(
+            active_final_n_games=("week", "count"),
+            active_final_n_opportunity=(denominator_col, "sum"),
+            active_final_n_production=(numerator_col, "sum"),
+        )
+        .reset_index()
+    )
+
+    out = base.merge(agg, on=["season", "player_id"], how="left")
+    out["active_final_n_games"] = out["active_final_n_games"].fillna(0).astype(int)
+    out["active_final_n_opportunity"] = out["active_final_n_opportunity"].fillna(0.0)
+    out["active_final_n_production"] = out["active_final_n_production"].fillna(0.0)
+
+    out["active_final_n_efficiency_rate"] = out["active_final_n_production"] / out[
+        "active_final_n_opportunity"
+    ].replace(0, np.nan)
+    out["active_final_n_efficiency_volume_eligible_exploratory"] = (
+        out["active_final_n_opportunity"] >= exploratory_min
+    )
+    out["active_final_n_efficiency_volume_eligible_sensitivity"] = (
+        out["active_final_n_opportunity"] >= sensitivity_min
+    )
+
+    out["position"] = position
+    out["metric_name"] = metric_name
+    out["window_n"] = n
+
+    return out[list(EFFICIENCY_ACTIVE_GAME_OUTPUT_COLUMNS)].reset_index(drop=True)

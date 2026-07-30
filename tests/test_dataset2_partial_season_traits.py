@@ -20,12 +20,19 @@ import pandas as pd
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from config import DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY, DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_SENSITIVITY
+from config import (
+    DATASET2_EFFICIENCY_VOLUME_EXPLORATORY,
+    DATASET2_EFFICIENCY_VOLUME_SENSITIVITY,
+    DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_PRIMARY,
+    DATASET2_PARTIAL_WINDOW_MIN_ACTIVE_GAMES_SENSITIVITY,
+)
 from lib.dataset2.partial_season_traits import (
     OPPORTUNITY_STATUS_PENDING,
     TEAM_GAME_STATUS_APPLICABLE,
     TEAM_GAME_STATUS_UNAVAILABLE_TRADED,
+    build_active_game_efficiency_traits,
     build_active_game_final_n_traits,
+    build_team_game_efficiency_traits,
     build_team_game_final_n_traits,
     build_team_game_half_split_traits,
 )
@@ -45,6 +52,17 @@ def _weekly_player(rows):
     return pd.DataFrame(
         [{"season": s, "player_id": p, "week": w, "team": t, "fantasy_points_ppr": pts} for s, p, w, t, pts in rows]
     )
+
+
+def _weekly_player_metric(rows, col_names):
+    """rows: list of (season, player_id, week, team, *values); col_names:
+    names for the trailing values in order (e.g. ["targets","receiving_yards"])."""
+    records = []
+    for season, player_id, week, team, *values in rows:
+        record = {"season": season, "player_id": player_id, "week": week, "team": team}
+        record.update(zip(col_names, values))
+        records.append(record)
+    return pd.DataFrame(records)
 
 
 # Real 2015 (16-game era) team AAA: real bye at week 9 -> 16 real games
@@ -412,3 +430,143 @@ class TestRowCountPreserved:
         wp = _weekly_player([(2015, "P1", wk, "AAA", 5.0) for wk in AAA_2015_WEEKS])
         out = build_active_game_final_n_traits(pop, wp, n=4)
         assert len(out) == 2
+
+
+class TestTeamGameEfficiencyTraits:
+    def test_real_rate_computed_from_opportunity_and_production(self):
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        # 3 targets/20 yards, 2 targets/10 yards -> 5 targets, 30 yards over the real window
+        wp = _weekly_player_metric(
+            [(2015, "P1", last4[0], "AAA", 3, 20.0), (2015, "P1", last4[2], "AAA", 2, 10.0)],
+            ["targets", "receiving_yards"],
+        )
+        out = build_team_game_efficiency_traits(pop, wp, wap, n=4, position="WR", metric_name="receiving")
+        row = out.iloc[0]
+        assert row["team_final_n_opportunity"] == 5
+        assert row["team_final_n_production"] == 30.0
+        assert row["team_final_n_efficiency_rate"] == 6.0
+
+    def test_zero_opportunity_applicable_row_rate_null_but_counts_zero_not_missing(self):
+        # Minimal computability (§2c): denominator 0 -> rate null, but
+        # the real zero opportunity/production stay visible, never
+        # confused with an unavailable row.
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        wp = _weekly_player_metric([(2015, "P1", AAA_2015_WEEKS[0], "AAA", 0, 0.0)], ["targets", "receiving_yards"])
+        out = build_team_game_efficiency_traits(pop, wp, wap, n=4, position="WR", metric_name="receiving")
+        row = out.iloc[0]
+        assert row["team_game_window_status"] == TEAM_GAME_STATUS_APPLICABLE
+        assert row["team_final_n_opportunity"] == 0.0
+        assert row["team_final_n_production"] == 0.0
+        assert pd.isna(row["team_final_n_efficiency_rate"])
+
+    def test_eligibility_flags_from_config_thresholds(self):
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        exploratory_min = DATASET2_EFFICIENCY_VOLUME_EXPLORATORY[("WR", "receiving")]
+        # exactly at the exploratory minimum, real targets spread across the window
+        per_week = exploratory_min // 4
+        remainder = exploratory_min - per_week * 4
+        targets_by_week = [per_week] * 4
+        targets_by_week[0] += remainder
+        wp = _weekly_player_metric(
+            [(2015, "P1", wk, "AAA", t, float(t) * 5) for wk, t in zip(last4, targets_by_week)],
+            ["targets", "receiving_yards"],
+        )
+        out = build_team_game_efficiency_traits(pop, wp, wap, n=4, position="WR", metric_name="receiving")
+        row = out.iloc[0]
+        assert row["team_final_n_opportunity"] == exploratory_min
+        assert row["team_final_n_efficiency_volume_eligible_exploratory"] == True  # noqa: E712
+        assert row["team_final_n_efficiency_volume_eligible_sensitivity"] == False  # noqa: E712
+        # the rate itself is still real and shown, eligibility is a label, not a gate
+        assert not pd.isna(row["team_final_n_efficiency_rate"])
+
+    def test_below_exploratory_minimum_neither_flag_set_but_rate_still_shown(self):
+        pop = _population((2015, "P1", "WR"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        wp = _weekly_player_metric([(2015, "P1", last4[0], "AAA", 1, 8.0)], ["targets", "receiving_yards"])
+        out = build_team_game_efficiency_traits(pop, wp, wap, n=4, position="WR", metric_name="receiving")
+        row = out.iloc[0]
+        assert row["team_final_n_efficiency_volume_eligible_exploratory"] == False  # noqa: E712
+        assert row["team_final_n_efficiency_volume_eligible_sensitivity"] == False  # noqa: E712
+        assert row["team_final_n_efficiency_rate"] == 8.0
+
+    def test_unknown_position_metric_pair_raises(self):
+        pop = _population((2015, "P1", "QB"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        wp = _weekly_player_metric([(2015, "P1", AAA_2015_WEEKS[0], "AAA", 1, 8.0)], ["targets", "receiving_yards"])
+        with pytest.raises(ValueError, match="No efficiency metric defined"):
+            build_team_game_efficiency_traits(pop, wp, wap, n=4, position="QB", metric_name="receiving")
+
+    def test_only_requested_position_returned(self):
+        pop = _population((2015, "P1", "WR"), (2015, "P2", "RB"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        wp = _weekly_player_metric(
+            [(2015, "P1", AAA_2015_WEEKS[0], "AAA", 3, 20.0), (2015, "P2", AAA_2015_WEEKS[0], "AAA", 2, 10.0)],
+            ["targets", "receiving_yards"],
+        )
+        out = build_team_game_efficiency_traits(pop, wp, wap, n=4, position="WR", metric_name="receiving")
+        assert list(out["player_id"]) == ["P1"]
+
+    def test_rb_rushing_and_receiving_are_independent_metrics(self):
+        pop = _population((2015, "P1", "RB"))
+        wap = _weekly_all_positions([(2015, wk, "AAA", "REG") for wk in AAA_2015_WEEKS])
+        last4 = AAA_2015_WEEKS[-4:]
+        wp = pd.DataFrame(
+            [
+                {
+                    "season": 2015, "player_id": "P1", "week": wk, "team": "AAA",
+                    "carries": 10, "rushing_yards": 40.0, "targets": 2, "receiving_yards": 15.0,
+                }
+                for wk in last4
+            ]
+        )
+        rushing = build_team_game_efficiency_traits(pop, wp, wap, n=4, position="RB", metric_name="rushing")
+        receiving = build_team_game_efficiency_traits(pop, wp, wap, n=4, position="RB", metric_name="receiving")
+        assert rushing.iloc[0]["team_final_n_efficiency_rate"] == 4.0  # 160 yards / 40 carries
+        assert receiving.iloc[0]["team_final_n_efficiency_rate"] == 7.5  # 60 yards / 8 targets
+
+
+class TestActiveGameEfficiencyTraits:
+    def test_real_rate_and_eligibility(self):
+        pop = _population((2015, "P1", "WR"))
+        wp = _weekly_player_metric(
+            [(2015, "P1", wk, "AAA", 3, 15.0) for wk in AAA_2015_WEEKS], ["targets", "receiving_yards"]
+        )
+        out = build_active_game_efficiency_traits(pop, wp, n=4, position="WR", metric_name="receiving")
+        row = out.iloc[0]
+        assert row["active_final_n_games"] == 4
+        assert row["active_final_n_opportunity"] == 12
+        assert row["active_final_n_production"] == 60.0
+        assert row["active_final_n_efficiency_rate"] == 5.0
+        assert row["active_final_n_efficiency_volume_eligible_exploratory"] == False  # noqa: E712
+
+    def test_zero_opportunity_rate_null_counts_visible(self):
+        pop = _population((2015, "P1", "WR"))
+        wp = _weekly_player_metric([(2015, "P1", 1, "AAA", 0, 0.0)], ["targets", "receiving_yards"])
+        out = build_active_game_efficiency_traits(pop, wp, n=4, position="WR", metric_name="receiving")
+        row = out.iloc[0]
+        assert row["active_final_n_opportunity"] == 0.0
+        assert pd.isna(row["active_final_n_efficiency_rate"])
+
+    def test_population_row_count_preserved(self):
+        pop = _population((2015, "P1", "WR"), (2015, "P2", "WR"))
+        wp = _weekly_player_metric(
+            [(2015, "P1", wk, "AAA", 3, 15.0) for wk in AAA_2015_WEEKS], ["targets", "receiving_yards"]
+        )
+        out = build_active_game_efficiency_traits(pop, wp, n=4, position="WR", metric_name="receiving")
+        assert len(out) == 2  # P2 preserved with zero real rows
+
+
+class TestEfficiencyConfigConsistency:
+    def test_every_efficiency_metric_has_both_volume_levels_and_primary_below_sensitivity(self):
+        from lib.dataset2.partial_season_traits import EFFICIENCY_METRICS
+
+        for key in EFFICIENCY_METRICS:
+            assert key in DATASET2_EFFICIENCY_VOLUME_EXPLORATORY, key
+            assert key in DATASET2_EFFICIENCY_VOLUME_SENSITIVITY, key
+            assert DATASET2_EFFICIENCY_VOLUME_EXPLORATORY[key] < DATASET2_EFFICIENCY_VOLUME_SENSITIVITY[key], key
