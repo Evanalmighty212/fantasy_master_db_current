@@ -22,7 +22,12 @@ import pandas as pd
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from lib.dataset2.common import build_team_game_index, real_reg_week_slots, season_length
+from lib.dataset2.common import (
+    build_team_game_index,
+    real_reg_week_slots,
+    season_length,
+    week1_kickoff_by_team,
+)
 
 
 class TestRealRegWeekSlots:
@@ -133,3 +138,112 @@ class TestBuildTeamGameIndex:
         w = pd.DataFrame([{"season": 2023, "week": 1, "team": "KC"}])
         with pytest.raises(ValueError, match="missing required columns"):
             build_team_game_index(w)
+
+
+def _schedule(rows):
+    """rows: (season, week, gameday, home_team, away_team) -- REG game_type."""
+    cols = ("season", "game_type", "week", "gameday", "home_team", "away_team")
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    return pd.DataFrame(
+        [
+            {"season": s, "game_type": "REG", "week": w, "gameday": g, "home_team": h, "away_team": a}
+            for s, w, g, h, a in rows
+        ]
+    )
+
+
+class TestHistoricalTeamCodeAliases:
+    """Protects week1_kickoff_by_team()'s real, verified franchise-
+    relocation alias resolution (Oakland->Las Vegas Raiders, St.
+    Louis->Los Angeles Rams, San Diego->Los Angeles Chargers) -- added
+    2026-07 after the real age (family #2) integration audit found 624
+    historical predictor-table rows with a real players.csv birth_date
+    match but no real Week-1 schedule match, and every one of them
+    resolved to exactly these 3 real relocations (see
+    research/dataset2/DATASET2_TRAIT_ANALYSIS_PIPELINE_PROPOSAL_2026_07.md
+    §11.7). This project's population always uses the CURRENT/
+    canonical team code (LV/LA/LAC) for every historical season; the
+    real nflverse schedule file uses whichever code was actually in
+    use at the time (OAK/STL/SD pre-relocation)."""
+
+    def test_relocation_case_resolves_to_historical_schedule_date(self):
+        # Real 2015 pattern: population says "LA" (this project's
+        # always-current convention) but the real 2015 schedule file
+        # itself says "STL" (the Rams hadn't moved yet) -- must still
+        # resolve to the real 2015 Week-1 kickoff date.
+        sched = _schedule([(2015, 1, "2015-09-13", "STL", "SEA")])
+        kickoff = week1_kickoff_by_team(sched, 2015)
+        assert kickoff["LA"] == pd.Timestamp("2015-09-13")
+        # The raw historical code itself must also still resolve (additive,
+        # never a replacement).
+        assert kickoff["STL"] == pd.Timestamp("2015-09-13")
+
+    def test_all_three_verified_relocations_resolve(self):
+        sched = _schedule(
+            [
+                (2019, 1, "2019-09-09", "OAK", "DEN"),  # Raiders, pre-move (moved 2020)
+                (2015, 1, "2015-09-13", "STL", "SEA"),  # Rams, pre-move (moved 2016)
+                (2016, 1, "2016-09-11", "SD", "KC"),  # Chargers, pre-move (moved 2017)
+            ]
+        )
+        assert week1_kickoff_by_team(sched, 2019)["LV"] == pd.Timestamp("2019-09-09")
+        assert week1_kickoff_by_team(sched, 2015)["LA"] == pd.Timestamp("2015-09-13")
+        assert week1_kickoff_by_team(sched, 2016)["LAC"] == pd.Timestamp("2016-09-11")
+
+    def test_post_relocation_season_needs_no_alias(self):
+        # From the real, verified cutoff season onward, the real
+        # schedule file itself already uses the current code directly
+        # -- no aliasing needed, and none must be silently applied.
+        sched = _schedule([(2020, 1, "2020-09-13", "LV", "CAR")])
+        kickoff = week1_kickoff_by_team(sched, 2020)
+        assert kickoff["LV"] == pd.Timestamp("2020-09-13")
+
+    def test_alias_is_season_aware_not_applied_outside_its_real_range(self):
+        # Real, found boundary: OAK's real alias range is 1999-2019
+        # ONLY. A synthetic "OAK" row in season 2020 (never real --
+        # the real 2020 schedule never has an "OAK" row at all) must
+        # NOT be silently canonicalized to "LV" -- proves the alias
+        # table is keyed by season, not just by code.
+        sched = _schedule([(2020, 1, "2020-09-13", "OAK", "CAR")])
+        kickoff = week1_kickoff_by_team(sched, 2020)
+        assert "LV" not in kickoff
+        assert kickoff["OAK"] == pd.Timestamp("2020-09-13")  # raw code itself still resolves
+
+    def test_unverified_nonmatching_team_remains_absent_never_guessed(self):
+        # Real, found case: MIA and TB's real Week-1 game in the 2017
+        # season was postponed league-wide (Hurricane Irma) and never
+        # replayed as a real Week 1 game -- there is no real Week-1
+        # kickoff for either team that season. This is genuine missing
+        # data, not a team-code mismatch, and must NEVER be guessed at
+        # via the alias table (neither team is in it).
+        sched = _schedule([(2017, 1, "2017-09-10", "KC", "NE")])  # some other real Week-1 game
+        kickoff = week1_kickoff_by_team(sched, 2017)
+        assert "MIA" not in kickoff
+        assert "TB" not in kickoff
+
+    def test_no_unrelated_team_season_changed(self):
+        # A normal, non-relocated team's real kickoff must be entirely
+        # unaffected by the alias machinery.
+        sched = _schedule(
+            [
+                (2015, 1, "2015-09-13", "STL", "SEA"),
+                (2015, 1, "2015-09-13", "KC", "HOU"),
+            ]
+        )
+        kickoff = week1_kickoff_by_team(sched, 2015)
+        assert kickoff["KC"] == pd.Timestamp("2015-09-13")
+        assert kickoff["HOU"] == pd.Timestamp("2015-09-13")
+        assert "SD" not in kickoff and "LAC" not in kickoff  # no cross-alias leakage
+
+    def test_deterministic_across_repeated_calls(self):
+        sched = _schedule(
+            [
+                (2015, 1, "2015-09-13", "STL", "SEA"),
+                (2016, 1, "2016-09-11", "SD", "KC"),
+                (2019, 1, "2019-09-09", "OAK", "DEN"),
+            ]
+        )
+        first = {s: week1_kickoff_by_team(sched, s) for s in (2015, 2016, 2019)}
+        second = {s: week1_kickoff_by_team(sched, s) for s in (2015, 2016, 2019)}
+        assert first == second

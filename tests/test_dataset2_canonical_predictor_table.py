@@ -90,6 +90,23 @@ def _snap_counts(rows):
     )
 
 
+_SCHEDULE_COLUMNS = ("season", "game_type", "week", "gameday", "home_team", "away_team")
+
+
+def _schedule(rows):
+    """rows: (season, week, gameday, home_team, away_team) -- REG game_type,
+    matching build_experience_age_draft_traits()'s only real filter
+    (kickoff_lookup_table() in lib/dataset2/common.py)."""
+    if not rows:
+        return pd.DataFrame(columns=_SCHEDULE_COLUMNS)
+    return pd.DataFrame(
+        [
+            {"season": s, "game_type": "REG", "week": w, "gameday": g, "home_team": h, "away_team": a}
+            for s, w, g, h, a in rows
+        ]
+    )
+
+
 _DEPTH_CHART_COLUMNS = ("season", "club_code", "week", "game_type", "formation", "gsis_id", "position", "depth_team")
 
 
@@ -105,12 +122,14 @@ def _depth_chart(rows):
     )
 
 
-def _build(pop, players, weekly, snaps=None, dc=None, window_ns=(4,)):
+def _build(pop, players, weekly, snaps=None, dc=None, schedule=None, window_ns=(4,)):
     if snaps is None:
         snaps = _snap_counts([])
     if dc is None:
         dc = _depth_chart([])
-    return build_canonical_predictor_table(pop, players, weekly, weekly, snaps, dc, window_ns=window_ns)
+    if schedule is None:
+        schedule = _schedule([])  # empty by default -> real, disclosed all-null age columns
+    return build_canonical_predictor_table(pop, players, weekly, weekly, snaps, dc, schedule, window_ns=window_ns)
 
 
 class TestGrainAudits:
@@ -280,18 +299,48 @@ class TestMissingnessAndNormalization:
         assert pd.isna(row["srcB_prior_season_offense_snaps"])
 
     def test_deferred_families_inventory_has_a_real_reason_each(self):
-        assert len(DEFERRED_FAMILIES) >= 3
+        # Family #2 (age) was removed from this tuple 2026-07 -- see
+        # test_family_2_no_longer_in_deferred_families -- leaving
+        # Source C and family #88's workload sub-signal.
+        assert len(DEFERRED_FAMILIES) >= 2
         for entry in DEFERRED_FAMILIES:
             assert entry["reason"]
             assert len(entry["reason"]) > 20  # a real explanation, not a placeholder
 
-    def test_no_age_columns_present(self):
+    def test_age_columns_computed_from_real_schedule(self):
+        # Family #2 (age) was moved from deferred to included 2026-07
+        # once schedules.csv was fetched/pinned -- see
+        # canonical_predictor_table.py's module docstring's AGE
+        # INCLUSION section. A real schedule_df with a real Week-1
+        # game for this player's team/season must produce a real,
+        # non-null age value, computed the same way
+        # experience_age_draft.py's own tests already prove.
         pop = _population((2015, "P1", "RB", "AAA", 16, 10.0, 20, 5))
         players = _players(("P1", "PfrP1", "1995-01-01", 2010, 70, 210, 2010, 3, 80, "AAA"))
         weekly = _weekly(_rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA"))
-        out, registry, deferred = _build(pop, players, weekly)
-        excluded = {"fam2_age_at_week1_years", "fam2_age_x_experience", "fam2_age_position_z"}
-        assert not (excluded & set(out.columns))
+        schedule = _schedule([(2015, 1, "2015-09-13", "AAA", "ZZZ")])
+        out, registry, deferred = _build(pop, players, weekly, schedule=schedule)
+        row = out[out["prediction_season"] == 2015].iloc[0]
+        expected_age = (pd.Timestamp("2015-09-13") - pd.Timestamp("1995-01-01")).days / 365.25
+        assert row["fam2_age_at_week1_years"] == pytest.approx(expected_age)
+        assert row["fam2_age_x_experience"] == pytest.approx(expected_age * row["fam1_experience_years"])
+        assert {"fam2_age_at_week1_years", "fam2_age_x_experience", "fam2_age_position_z"} <= set(out.columns)
+
+    def test_age_null_when_team_has_no_week1_game_in_schedule(self):
+        # Real, disclosed missingness (never guessed): a team absent
+        # from schedule_df's real Week-1 rows for that season leaves
+        # age null, same MISSINGNESS POLICY as every other family here.
+        pop = _population((2015, "P1", "RB", "AAA", 16, 10.0, 20, 5))
+        players = _players(("P1", "PfrP1", "1995-01-01", 2010, 70, 210, 2010, 3, 80, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA"))
+        out, registry, deferred = _build(pop, players, weekly)  # default empty schedule
+        row = out[out["prediction_season"] == 2015].iloc[0]
+        assert pd.isna(row["fam2_age_at_week1_years"])
+        assert pd.isna(row["fam2_age_x_experience"])
+        assert pd.isna(row["fam2_age_position_z"])
+
+    def test_family_2_no_longer_in_deferred_families(self):
+        assert not any(entry["family_number"] == "2" for entry in DEFERRED_FAMILIES)
 
     def test_no_workload_qualified_placeholder_column(self):
         pop = _population((2015, "P1", "RB", "AAA", 16, 10.0, 20, 5))

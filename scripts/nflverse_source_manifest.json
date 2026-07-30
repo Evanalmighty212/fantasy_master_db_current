@@ -286,6 +286,15 @@
     "sha256": "f5f3db462b7306470cf69f35515234de8835c2c9881c8b885c77d7ad4f4da925",
     "upstream_updated_at": "2026-07-24T10:12:57Z"
   },
+  "schedules": {
+    "asset_id": 495643391,
+    "asset_url": "https://api.github.com/repos/nflverse/nflverse-data/releases/assets/495643391",
+    "retrieved_at": "2026-07-30T20:10:49.594119+00:00",
+    "row_count": 7548,
+    "schema_version": "nflverse_schedules_v1",
+    "sha256": "252ef81b77d8503e5f67b017006fd32b0c47937271ce881424c94bc3e57f1f62",
+    "upstream_updated_at": "2026-07-30T17:16:26Z"
+  },
   "schema_version": "nflverse_stats_player_v1",
   "seasons": {
     "2006": {

@@ -61,6 +61,58 @@ def validate_columns(df: pd.DataFrame, required, label: str) -> None:
         raise ValueError(f"{label} is missing required columns: {missing}")
 
 
+# Real, VERIFIED historical NFL franchise relocations where the real
+# nflverse schedule file's own historical team code differs from this
+# project's population team code for the SAME franchise in the SAME
+# real season -- confirmed 2026-07 by auditing every population team
+# code with no real Week-1 schedule match across all seasons (found
+# exactly 5 unmatched codes: LV/LA/LAC, always relocation-driven, plus
+# MIA/TB in 2017 specifically -- a real, unrelated case, see below).
+# Season ranges are the real, non-overlapping eras each historical code
+# was actually used in schedule_df, verified directly against every
+# real season the code appears in (never assumed/approximated):
+#   OAK appears in schedule_df for 1999-2019 only, LV for 2020+ only.
+#   STL appears in schedule_df for 1999-2015 only, LA for 2016+ only.
+#   SD  appears in schedule_df for 1999-2016 only, LAC for 2017+ only.
+# This project's population team column always uses the CURRENT code
+# (LV/LA/LAC) for every historical season -- never the historical code
+# -- so this table only needs to translate schedule_df's historical
+# code into the population's current code at lookup time.
+#
+# NOT a relocation case, deliberately NOT in this table: MIA and TB
+# have real, genuine null Week-1 kickoffs for the 2017 season only --
+# their real Week 1 game was postponed league-wide due to Hurricane
+# Irma and never replayed as a real "Week 1" game (their real first
+# games of that season were Week 2). This is real missing schedule
+# data, not a team-code mismatch -- resolving it would mean guessing a
+# kickoff date that was never real, which this module's own
+# MISSINGNESS POLICY (see experience_age_draft.py) explicitly forbids.
+HISTORICAL_TEAM_CODE_ALIASES = (
+    # (current/population code, historical/schedule code, first_season, last_season_inclusive)
+    ("LV", "OAK", 1999, 2019),  # Oakland -> Las Vegas Raiders (moved 2020)
+    ("LA", "STL", 1999, 2015),  # St. Louis -> Los Angeles Rams (moved 2016)
+    ("LAC", "SD", 1999, 2016),  # San Diego -> Los Angeles Chargers (moved 2017)
+)
+
+
+def _canonicalize_historical_team_code(team: str, season: int) -> str:
+    """If `team` is a real, verified historical schedule code for
+    `season` (see HISTORICAL_TEAM_CODE_ALIASES), returns this
+    project's current/population code for the same real franchise --
+    otherwise returns `team` unchanged. Deterministic (a pure function
+    of `team` and `season`, no randomness/iteration-order dependence)
+    and season-aware (only fires within each alias's own real,
+    verified season range -- e.g. "OAK" in 2020 is NOT translated,
+    since the real Raiders schedule code by then was already "LV").
+    Used ONLY inside week1_kickoff_by_team()'s own per-season kickoff
+    lookup -- never mutates schedule_df or population's own `team`
+    column, and never touches any OTHER canonical team identity."""
+    for current_code, historical_code, first_season, last_season in HISTORICAL_TEAM_CODE_ALIASES:
+        if team == historical_code and first_season <= season <= last_season:
+            return current_code
+    return team
+
+
 def week1_kickoff_by_team(schedule_df: pd.DataFrame, season: int) -> dict:
     """Real per-team Week-1 REG-season kickoff date for `season`, keyed
     by team code -- same convention already proven in
@@ -71,15 +123,31 @@ def week1_kickoff_by_team(schedule_df: pd.DataFrame, season: int) -> dict:
     that as "kickoff date unknown" (null downstream), not an error.
     Extracted 2026-07 when a second Dataset 2 module
     (depth_chart_traits.py) needed exactly this logic, after
-    experience_age_draft.py already had it."""
+    experience_age_draft.py already had it.
+
+    Each real Week-1 game's raw team code is kept in the returned dict
+    AS-IS, and ALSO registered under its real, verified current/
+    population code if the two differ for this season (see
+    HISTORICAL_TEAM_CODE_ALIASES/_canonicalize_historical_team_code()
+    above) -- additive, never a replacement, so either convention
+    resolves to the same real date. Any other unmatched code (e.g. a
+    team with a real, genuine schedule gap that season) is simply
+    absent, exactly as before -- never guessed."""
     week1 = schedule_df[
         (schedule_df["season"] == season) & (schedule_df["game_type"] == "REG") & (schedule_df["week"] == 1)
     ]
     kickoff = {}
     for _, row in week1.iterrows():
         gameday = pd.to_datetime(row["gameday"])
-        kickoff[row["home_team"]] = gameday
-        kickoff[row["away_team"]] = gameday
+        raw_home, raw_away = row["home_team"], row["away_team"]
+        kickoff[raw_home] = gameday
+        kickoff[raw_away] = gameday
+        canon_home = _canonicalize_historical_team_code(raw_home, season)
+        canon_away = _canonicalize_historical_team_code(raw_away, season)
+        if canon_home != raw_home:
+            kickoff[canon_home] = gameday
+        if canon_away != raw_away:
+            kickoff[canon_away] = gameday
     return kickoff
 
 

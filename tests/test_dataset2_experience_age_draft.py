@@ -125,6 +125,30 @@ class TestAgeAtWeek1:
         out = ead.build_experience_age_draft_traits(pop, players, SCHEDULE)
         assert pd.isna(out.loc[0, "age_at_week1_years"])
 
+    def test_relocated_franchise_resolves_age_via_real_historical_schedule_code(self):
+        """Real, found case (2026-07 age-integration audit): this
+        project's population always labels the Rams "LA" even for
+        historical pre-relocation seasons, but the real 2015 schedule
+        file itself says "STL" (the real code in use that season, the
+        Rams did not move to LA until 2016). age_at_week1_years must
+        still resolve to the real 2015 Week-1 kickoff date via
+        lib.dataset2.common's historical-team-code alias -- not go
+        null just because the two conventions disagree. See
+        tests/test_dataset2_common.py::TestHistoricalTeamCodeAliases
+        for the underlying alias-resolution unit tests."""
+        pop = _population_df({"season": 2015, "player_id": "00-1", "position": "WR", "team": "LA"})
+        players = _players_df(
+            {"gsis_id": "00-1", "birth_date": "1993-01-01", "rookie_season": 2013, "height": 72, "weight": 200,
+             "draft_year": 2013, "draft_round": 3, "draft_pick": 80, "draft_team": "LA"},
+        )
+        schedule = _schedule_df(
+            {"season": 2015, "game_type": "REG", "week": 1, "gameday": "2015-09-13", "home_team": "STL", "away_team": "SEA"},
+        )
+        out = ead.build_experience_age_draft_traits(pop, players, schedule)
+        expected_age = (pd.Timestamp("2015-09-13") - pd.Timestamp("1993-01-01")).days / 365.25
+        assert out.loc[0, "age_at_week1_years"] == pytest.approx(expected_age, abs=1e-9)
+        assert not pd.isna(out.loc[0, "age_x_experience"])
+
 
 class TestDraftCapitalNaming:
     def test_output_uses_nfl_draft_prefix(self):

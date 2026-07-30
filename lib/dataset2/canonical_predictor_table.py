@@ -19,6 +19,11 @@ WHAT'S INCLUDED, per instruction -- only implemented, approved,
 preseason-facing traits, no null placeholders for anything not yet
 built:
 - Families #1 (NFL experience) and #1's position-relative z-score
+- Family #2 (age curve: `fam2_age_at_week1_years`,
+  `fam2_age_x_experience`, `fam2_age_position_z`) -- added 2026-07
+  once schedules.csv was fetched and pinned via the established
+  GitHub Actions path (see AGE INCLUSION below; this family was
+  deferred in the prior round for exactly this reason, now resolved)
 - Family #4 (NFL draft capital)
 - Family #6, body-size portion (height/weight/BMI)
 - Family #7 (prior-season finish: overall, positional, PPG)
@@ -45,16 +50,27 @@ built:
 - Family #88, durability portion (`body_size_position_z` only --
   `workload_qualified` is EXCLUDED, see DEFERRED FAMILIES below)
 
-AGE (FAMILY #2) IS EXCLUDED THIS ROUND -- its real prerequisite
-(`schedules.csv`, needed for real per-team Week-1 kickoff dates) is
-STILL not cached in this environment (confirmed absent again this
-round, same real gap the 2026-07 integration audit and the canonical-
-table proposal both already disclosed). `age_at_week1_years`,
-`age_x_experience`, and `age_position_z` would be 100% null if
-included -- per instruction, this module does NOT create a null
-placeholder column for an unmet prerequisite. `experience_years`
-(family #1) and `experience_position_z` do NOT depend on schedule data
-and ARE included. See DEFERRED_FAMILIES.
+AGE (FAMILY #2) INCLUSION -- per explicit instruction (2026-07), age
+was moved from deferred to Wave 1. Its real prerequisite
+(`schedules.csv`, needed for real per-team Week-1 kickoff dates) was
+fetched and pinned via the established GitHub Actions/nflverse_source.py
+path (see `scripts/ci_fetch_schedules.py`,
+`scripts/nflverse_source_manifest.json`'s `"schedules"` entry) --
+7,548 real games, seasons 1999-2026, sha256-verified against the
+pinned manifest hash. `build_canonical_predictor_table()`'s caller now
+passes this real `schedule_df` through to
+`build_experience_age_draft_traits()` (previously an empty placeholder
+DataFrame -- see git history for the prior, disclosed-gap version of
+this module). `fam2_age_at_week1_years`, `fam2_age_x_experience`, and
+`fam2_age_position_z` are computed from it exactly like every other
+family #1/#4/#6 column (preseason-safe by construction, no `_prior_`
+lag needed -- see NAMING below) and carry real, disclosed missingness
+(no players.csv birth_date match, or no resolvable real Week-1 game
+for that player's team/season, -> null; never imputed or guessed --
+see `_build_fam1_4_6_layer()`'s own docstring and
+`experience_age_draft.py`'s MISSINGNESS POLICY). `experience_years`
+(family #1) and `experience_position_z` never depended on schedule
+data and were already included in every prior round.
 
 FAMILY #10's 2025 real depth-chart schema branch is likewise excluded
 for the same reason (its own preseason-snapshot selection needs real
@@ -158,18 +174,18 @@ PLAYERS_REQUIRED_COLUMNS = ("gsis_id", "pfr_id", "birth_date", "rookie_season", 
 
 SCHEMA2025_EMPTY_COLUMNS = ("dt", "team", "gsis_id", "pos_grp", "pos_abb", "pos_rank")
 SCHEDULE_EMPTY_COLUMNS = ("season", "game_type", "week", "gameday", "home_team", "away_team")
+# Same column set, used to validate the REAL schedule_df passed into
+# build_canonical_predictor_table() for family #2 (age) -- see that
+# function and module docstring's AGE INCLUSION section.
+SCHEDULE_REQUIRED_COLUMNS = SCHEDULE_EMPTY_COLUMNS
 
 # Approved, implemented families this table cannot include this round
 # -- a real reason each, never silently omitted. See module docstring.
+# Family #2 (age) was REMOVED from this tuple 2026-07 once
+# schedules.csv was fetched/pinned and wired in -- see module
+# docstring's AGE INCLUSION section. Do not re-add it here without a
+# new real reason.
 DEFERRED_FAMILIES = (
-    {
-        "family_number": "2",
-        "family_name": "Age curve (age_at_week1_years, age_x_experience, age_position_z)",
-        "reason": "Real prerequisite (schedules.csv, needed for real per-team Week-1 "
-        "kickoff dates) is not cached in this environment -- confirmed absent again "
-        "this round. Including these columns would mean 100% null, which this table "
-        "does not do for an unmet prerequisite.",
-    },
     {
         "family_number": "12+ (Source C / participation)",
         "family_name": "Route/participation-derived predictors",
@@ -209,8 +225,10 @@ _POSITION_TOKENS = ("qb", "rb", "wr", "te")
 # ABOUT the team's QB slot being tied), but per fragility_traits.py's
 # own docstring it is broadcast to EVERY skill-position player on that
 # team, not QB-only. Verified this is the ONLY real exception by
-# checking every one of the real 435 columns produced by the 2026-07
-# real-data run against this inference function -- no other column
+# checking every one of the real 438 columns produced by the 2026-07
+# real-data run (435 before family #2/age was added later that same
+# round, all 3 age columns correctly infer "ALL" -- no position token
+# in their names) against this inference function -- no other column
 # both (a) contains a position-token segment and (b) is actually
 # scoped wider than that position.
 _POSITION_SCOPE_OVERRIDES = {
@@ -256,19 +274,23 @@ def _registry_row(canonical_column, family_number, family_name, source, earliest
     }
 
 
-def _build_fam1_4_6_layer(population: pd.DataFrame, players_df: pd.DataFrame, min_season: int, max_season: int):
-    """Families #1 (experience, position-relative z-score), #4 (draft
-    capital), #6 body-size portion -- preseason-safe BY CONSTRUCTION
-    (own `season` already is prediction_season, no lag). Age columns
-    (family #2) are computed internally by
-    build_experience_age_draft_traits() but DROPPED here -- see module
-    docstring's AGE EXCLUSION."""
-    empty_schedule = pd.DataFrame(columns=SCHEDULE_EMPTY_COLUMNS)
-    raw = build_experience_age_draft_traits(population, players_df, empty_schedule)
+def _build_fam1_4_6_layer(exp_age_draft_raw: pd.DataFrame, min_season: int, max_season: int):
+    """Families #1 (experience, position-relative z-score), #2 (age
+    curve, real per-team Week-1 kickoff date -- see module docstring's
+    AGE INCLUSION), #4 (draft capital), #6 body-size portion -- all
+    preseason-safe BY CONSTRUCTION (own `season` already is
+    prediction_season, no lag). `exp_age_draft_raw` must already be
+    build_experience_age_draft_traits()'s real output (built ONCE by
+    the caller against the real schedule_df, not recomputed here) --
+    see build_canonical_predictor_table()."""
+    raw = exp_age_draft_raw
 
     rename = {
         "experience_years": "fam1_experience_years",
         "experience_position_z": "fam1_experience_position_z",
+        "age_at_week1_years": "fam2_age_at_week1_years",
+        "age_x_experience": "fam2_age_x_experience",
+        "age_position_z": "fam2_age_position_z",
         "nfl_draft_year": "fam4_nfl_draft_year",
         "nfl_draft_round": "fam4_nfl_draft_round",
         "nfl_draft_pick": "fam4_nfl_draft_pick",
@@ -290,6 +312,24 @@ def _build_fam1_4_6_layer(population: pd.DataFrame, players_df: pd.DataFrame, mi
             min_season, max_season, "float64",
             "No players.csv match, or single-row position group -> null",
             "Same as prediction_season", "experience_position_z",
+        ),
+        _registry_row(
+            rename["age_at_week1_years"], "2", "Age curve", "players.csv + schedules.csv",
+            min_season, max_season, "float64",
+            "No players.csv birth_date match, or no resolvable real Week-1 game for that "
+            "player's team/season -> null", "Same as prediction_season", "age_at_week1_years",
+        ),
+        _registry_row(
+            rename["age_x_experience"], "2", "Age curve (age x experience interaction)", "players.csv + schedules.csv",
+            min_season, max_season, "float64",
+            "Either age_at_week1_years or experience_years null -> null",
+            "Same as prediction_season", "age_x_experience",
+        ),
+        _registry_row(
+            rename["age_position_z"], "2", "Age curve (position z-score)", "players.csv + schedules.csv",
+            min_season, max_season, "float64",
+            "No age_at_week1_years, or single-row position group -> null",
+            "Same as prediction_season", "age_position_z",
         ),
     ]
     for field, canon in (("draft_year", "fam4_nfl_draft_year"), ("draft_round", "fam4_nfl_draft_round"), ("draft_pick", "fam4_nfl_draft_pick"), ("draft_team", "fam4_nfl_draft_team")):
@@ -543,6 +583,7 @@ def build_canonical_predictor_table(
     weekly_reg_only: pd.DataFrame,
     snap_counts_all: pd.DataFrame,
     depth_chart_pre2025_df: pd.DataFrame,
+    schedule_df: pd.DataFrame,
     window_ns=DEFAULT_WINDOW_NS,
 ):
     """
@@ -563,6 +604,14 @@ def build_canonical_predictor_table(
     captured), NOT a fabricated/guessed value.
 
     `master_population` must have MASTER_POPULATION_REQUIRED_COLUMNS.
+    `schedule_df` must have SCHEDULE_REQUIRED_COLUMNS -- the real
+    nflverse `games.csv` (season/game_type/week/gameday/home_team/
+    away_team), used for family #2's real per-team Week-1 kickoff date
+    (see module docstring's AGE INCLUSION). Passing an empty
+    placeholder (`pd.DataFrame(columns=SCHEDULE_REQUIRED_COLUMNS)`) is
+    still valid and produces real, disclosed all-null age columns --
+    but this function itself never constructs that placeholder; the
+    caller decides.
     `weekly_all_season_types` is the FULL real Source A weekly file
     (REG + POST rows both present -- usage_traits.py filters REG
     internally). `weekly_reg_only` is the SAME real source PRE-FILTERED
@@ -583,6 +632,7 @@ def build_canonical_predictor_table(
     """
     validate_columns(master_population, MASTER_POPULATION_REQUIRED_COLUMNS, "master_population")
     validate_columns(players_df, PLAYERS_REQUIRED_COLUMNS, "players_df")
+    validate_columns(schedule_df, SCHEDULE_REQUIRED_COLUMNS, "schedule_df")
 
     population = master_population[list(MASTER_POPULATION_REQUIRED_COLUMNS)].drop_duplicates(
         subset=["season", "player_id"]
@@ -592,7 +642,13 @@ def build_canonical_predictor_table(
 
     registry_rows = []
 
-    fam1_4_6, reg = _build_fam1_4_6_layer(population, players_df, min_season, max_season)
+    # Built ONCE against the real schedule_df and shared by both the
+    # fam1/2/4/6 layer and fam88's body-size-position-z (which only
+    # needs the BMI columns, not age itself, but takes the same raw
+    # frame rather than recomputing it a second time).
+    exp_age_draft_raw = build_experience_age_draft_traits(population, players_df, schedule_df)
+
+    fam1_4_6, reg = _build_fam1_4_6_layer(exp_age_draft_raw, min_season, max_season)
     registry_rows += reg
     fam7, reg = _build_fam7_layer(population, min_season, max_season)
     registry_rows += reg
@@ -605,8 +661,6 @@ def build_canonical_predictor_table(
     fam10, fam86, reg = _build_fam10_86_layer(population, depth_chart_pre2025_df, min_season, max_season)
     registry_rows += reg
 
-    empty_schedule = pd.DataFrame(columns=SCHEDULE_EMPTY_COLUMNS)
-    exp_age_draft_raw = build_experience_age_draft_traits(population, players_df, empty_schedule)
     fam88, reg = _build_fam88_layer(exp_age_draft_raw, min_season, max_season)
     registry_rows += reg
 
