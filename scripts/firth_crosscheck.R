@@ -34,12 +34,24 @@ fixtures <- list(
 results <- data.frame()
 
 for (fixture_name in names(fixtures)) {
+  cat("Fitting fixture:", fixture_name, "\n")
   terms <- fixtures[[fixture_name]]
   data_path <- file.path(fixtures_dir, paste0("fixture_", fixture_name, ".csv"))
   df <- read.csv(data_path)
 
   formula_str <- paste("y ~", paste(terms, collapse = " + "))
   fit <- logistf(as.formula(formula_str), data = df, pl = TRUE)
+
+  # Real logistf object fields, verified against the package docs (not
+  # assumed from memory) before this fix: coefficients, ci.lower,
+  # ci.upper, prob, iter, conv all exist; `maxit` does NOT (a prior
+  # version of this script read fit$maxit for a convergence flag --
+  # that field doesn't exist on the fit object, `fit$iter[1] < fit$maxit`
+  # evaluated against NULL and crashed the whole script before any
+  # results were written). Convergence status (fit$conv) is reported as
+  # a plain string -- its exact internal shape isn't load-bearing for
+  # the coefficient/CI/p-value comparison this script exists to produce.
+  conv_str <- paste(fit$conv, collapse = ";")
 
   # logistf's own coefficient vector includes "(Intercept)" first,
   # then each term in formula order -- matches
@@ -59,7 +71,7 @@ for (fixture_name in names(fixtures)) {
       r_ci_lower_profile = fit$ci.lower[i],
       r_ci_upper_profile = fit$ci.upper[i],
       r_lr_pvalue = fit$prob[i],
-      r_converged = fit$iter[1] < fit$maxit
+      r_conv = conv_str
     )
     results <- rbind(results, row)
   }
