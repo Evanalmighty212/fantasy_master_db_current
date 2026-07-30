@@ -21,6 +21,30 @@ the Stop point.
 efficiency sample-eligibility, and three-tier role classification, all
 approved).
 
+**Status update (2026-07, commit `b821118`): artifact 2 (canonical
+outcome table) is now built** —
+`lib/dataset2/canonical_outcome_table.py`,
+`scripts/build_dataset2_canonical_outcome_table.py`, real output:
+11,175 rows, one row per (`outcome_season`, `player_id`). **What is
+implemented**: the Star outcome (`star_outcome_eligible`,
+`star_by_value_label`, `sbv_score_available`) and the full
+eligibility/reason-code infrastructure for all three Dataset 2B outcome
+dimensions (primary bust, strict-hybrid bust, historical-sensitivity
+bust, and the extended underperformance diagnostic) — real counts:
+`star_outcome_eligible` 8,537; `bust_primary_eligible` 2,677;
+`bust_historical_sensitivity_eligible` 3,198;
+`underperformance_diagnostic_eligible` 2,711 (see
+`DATASET2_BUST_LABEL_OPERATIONALIZATION_PROPOSAL_2026_07.md` §0 for why
+this is 2,711, not the 2,728 originally estimated). **What is NOT yet
+implemented**: `bust_primary_label`, `bust_strict_label`, and
+`bust_historical_sensitivity_label` are reserved columns, always null
+this round (`implementation_status = reserved_not_computed`,
+`usable_as_target = False` in the data dictionary) — no percentile
+cutoff or absolute floor has been approved yet. See
+`DATASET2_BUST_LABEL_OPERATIONALIZATION_PROPOSAL_2026_07.md` for the
+real-data-backed candidate formulas under review. **Artifact 3
+(analysis view) is still not built.**
+
 ---
 
 ## 0. What was inspected

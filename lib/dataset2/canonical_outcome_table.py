@@ -53,21 +53,38 @@ decisions -- explicitly NOT identical to one another:
    -- raw P vs. a real, non-extrapolated E_P. Computed BEFORE any
    production-gate check (per instruction) for
    adp_scored/minimal_market_cost_scored/below_production_gate-with-
-   real-ADP. **REAL DISCREPANCY FOUND AND DISCLOSED, not silently
-   forced to match an earlier estimate**: of the 1,381
-   below_production_gate real-ADP rows, 17 have an `adp_round` beyond
-   the real fitted E_P lookup's coverage for that (season, position)
-   cell -- the SAME real "out of range" condition already found for 2
-   Star-ineligible rows, just never previously checked for this
-   population (SBV's own pipeline never computes E_P for gate-failing
-   rows at all, so this gap was invisible until this round's
-   extension). Per instruction ("do not extrapolate... unless a
-   defensible lookup extension is separately approved"), these 17
-   rows are NOT extrapolated around -- they get the same
-   `expected_production_lookup_out_of_range` reason as the original 2.
-   REAL eligible count is therefore **2,711** (1,293 + 54 + 1,364), not
-   2,728 (1,293 + 54 + 1,381) -- the 17-row gap is a genuine finding,
-   not an error to paper over.
+   real-ADP. **Three counts, kept distinct, none silently forced to
+   match another**:
+   - **2,728 = theoretically eligible**: 1,347 scored rows + 1,381
+     below_production_gate rows with real fantasy ADP. This is the
+     population the extension instruction described -- every row that
+     HAS both a real acquisition cost and measurable realized
+     production.
+   - **2,711 = computationally eligible under the current fitted E_P
+     lookup**: of the 2,728 above, 17 below_production_gate real-ADP
+     rows have an `adp_round` beyond the real fitted E_P lookup's
+     coverage for that (season, position) cell -- the SAME real "out
+     of range" condition already found for 2 Star-ineligible rows
+     (`unscoreable_expected_production_out_of_range`), just never
+     previously checked for this population (SBV's own pipeline never
+     computes E_P for gate-failing rows at all, so this gap was
+     invisible until this round's extension). Per instruction ("do not
+     extrapolate... unless a defensible lookup extension is separately
+     approved"), these 17 rows are NOT extrapolated around. **2,711 is
+     the real value of `underperformance_diagnostic_eligible.sum()`.**
+   - **17 = ineligible only for lookup-coverage reasons**: real ADP
+     exists, production is measurable, but the fitted lookup has no
+     cell for that (season, position, round) -- reason code
+     `expected_production_lookup_out_of_range`, kept a DISTINCT reason
+     from `no_usable_fantasy_acquisition_cost` (below), which covers a
+     much larger, structurally different group: the 5,809
+     `below_production_gate` rows with NO real ADP at all (never
+     resolved a fantasy cost in the first place, so there was never a
+     round to look up).
+   These two ineligibility reasons must never share one string --
+   conflating "no cost signal exists" with "a cost signal exists but
+   the model doesn't cover it" was a real bug caught and fixed in this
+   round (see `_diagnostic_reason()`).
 
 NAMING: `outcome_season` (not `season`), matching the predictor
 table's `prediction_season` convention of an explicit, unambiguous id
@@ -311,7 +328,7 @@ def build_canonical_outcome_table(
         # round genuinely falls outside the fitted lookup's coverage for
         # that (season, position) cell.
         if not row["has_real_market_adp"]:
-            return "no_real_fantasy_adp_below_production_gate"
+            return "no_usable_fantasy_acquisition_cost"
         if pd.isna(row["expected_production"]):
             return "expected_production_lookup_out_of_range"
         return "production_composite_unavailable"
