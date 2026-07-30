@@ -13,14 +13,23 @@ Built on the canonical analysis view at commit `04eaa4b`
 (`data/exports/dataset2_analysis_view.parquet`, 11,784 rows, 459
 columns, 431-column predictor whitelist, 6-target registry).
 
-**Revision note**: this replaces the first version of this document.
-The structural inventory (§1) was directionally approved; §2 onward is
-substantially revised per instruction — ADP as a mandatory control,
-expanded position handling, rare-outcome bias reduction, outcome-free
-predictor clustering (extended beyond correlation), five-number
-multiple-comparison reporting, explicit minimum evidence gates,
-player/season dependence handling, incremental-usefulness diagnostics,
-strengthened holdout protection, and a formal advancement standard.
+**Revision note (second revision)**: §1.5 (predictor clustering) is
+now fully replaced. The originally-approved methodology (commit
+`e648dcf`) produced a 69-member cluster driven by shared
+eligibility/gating similarity and single-linkage chaining, per review.
+The revised methodology (§1.5.1-1.5.4) adds a semantic pre-filter
+parsed from the family #9 naming convention (concept = position ×
+metric_category × volume-or-efficiency, computed BEFORE any statistic
+runs), excludes eligibility columns from every similarity edge,
+replaces raw boolean agreement with prevalence-aware Jaccard(positive)
++ phi, and replaces connected-components with complete linkage. Real
+result: 131 clusters, 0 exceeding 10 members — the 69-member cluster is
+fully resolved. Two real bugs were caught and fixed during this
+verification, both disclosed in §1.5.3 (a semantic bug that would have
+wrongly attached a threshold flag to an unrelated efficiency measure,
+and a determinism bug from Python's hash-randomized set iteration).
+Everything else (§2 onward) is unchanged from the prior revision
+(commit `e648dcf`, directionally approved).
 
 ---
 
@@ -43,58 +52,153 @@ Full detail unchanged from the approved round — see the prior version
 of §1 in git history (commit history for this file) for the complete
 discussion; this revision's new material starts at §1.5.
 
-### 1.5 Outcome-free predictor clustering (extended per instruction)
+### 1.5 Outcome-free predictor clustering — REVISED (resolves the 69-member cluster)
 
-**Every edge type below reads only predictor columns and predictor
-column NAMES — never a target, eligibility, or label column.** Four
-real, disclosed edge types, unioned via union-find over the 425
-non-constant predictor columns:
+**The prior version's clustering was flawed in exactly the way review
+flagged: it let shared applicability/eligibility create similarity
+edges, and its connected-components (single-linkage) merge let
+distant, unrelated members chain together through intermediate ones.**
+This section replaces it entirely. Methodology, findings, and the full
+resolution below; implementation:
+`research/dataset2/trait_analysis_pipeline_predictor_inventory.py`.
 
-| Edge type | What it detects | Real count |
-|---|---|---|
-| 1. Continuous-continuous Pearson `\|r\|>=0.95` | Statistical near-duplication (§1) | 270 edges |
-| 2. **Boolean-boolean agreement `>=95%`** (on jointly-non-null rows, `n>=30` required) | Two boolean columns that are almost always the same value | 140 edges (9,045 pairs checked) |
-| 3. **Known family #9 tier vocabulary** | `_role_present` / `_meaningful_role` / `_strong_lead_role` are progressively stricter thresholds on ONE underlying continuous share/rate — documented by this project's own three-tier framework (`partial_season_traits.py`), not merely inferred | 39 stems merged |
-| 4. **Known trailing-window variants** | Same position+metric across `final_4`/`final_6`/`final_8`/`first_half`/`second_half` — the same underlying stat over overlapping game spans, known by construction | 123 stems merged |
+#### 1.5.1 Semantic structure, parsed from the family #9 naming convention
 
-**Real result: 425 non-constant columns collapse to 76 clusters** — a
-82.1% reduction. Cluster sizes: 29 singletons, 24 clusters of 2-5, 15
-of 6-10, 8 larger than 10 (largest: 69 members).
+Every family #9 column (385 of 431 whitelist columns) is parsed —
+**before any statistic runs** — into: `basis` (team-game vs.
+active-game), `window` (`final_4`/`final_6`/`final_8`/`first_half`/
+`second_half`), `position`, `metric_category` (e.g. `rushing`,
+`receiving`, `passing`, `snap`), `metric_type` (the specific
+measurement — `opportunity`, `production`, `efficiency_rate`,
+`role_present`, etc.), and `kind` — one of:
 
-**Real caveat, disclosed not hidden**: the largest cluster (69 members)
-is dominated by edge type 2 (boolean agreement) merging many
-`*_volume_eligible_exploratory`/`*_volume_eligible_sensitivity`/
-`*_role_present`-style flags across DIFFERENT metrics that happen to
-share the same underlying sample-size GATING condition (e.g., "did
-this player have enough active games in the window") rather than
-genuinely redundant CONTENT. This is a real limitation of a pure
-agreement-rate heuristic — it can merge traits whose ELIGIBILITY
-overlaps without their SIGNAL being the same question. **Proposed
-mitigation**: before Phase 2, a manual review pass on any cluster
-larger than 10 members, confirming the boolean-agreement edges within
-it are genuine content redundancy and not shared-gating coincidence;
-oversized clusters failing this check are split before representative
-selection. This review touches only predictor structure, never
-outcomes.
+- **`content`** (220 columns) — a real, continuous measurement.
+- **`role_tier`** (117 columns) — `role_present`/`meaningful_role`/
+  `strong_lead_role`: threshold flags derived from ONE underlying
+  continuous measure, known by construction (this project's own
+  three-tier framework), never independently inferred.
+- **`eligibility`** (88 columns) — `*_volume_eligible_exploratory`/
+  `*_volume_eligible_sensitivity`/`has_snap_coverage`/
+  `sample_qualified_*`: gating flags, **excluded from every
+  statistical similarity edge, always** — reported as associated
+  metadata on their concept's cluster, never merged in as content.
 
-**Representative selection rule** (priority order, all outcome-free,
-per instruction):
-1. Highest applicable coverage within the trait's own position scope
-   (§1.2).
-2. Prefer a continuous source measure over a mechanically-derived
-   threshold flag (the `_role_present`/`_meaningful_role`/
-   `_strong_lead_role` suffix family) — the underlying share/rate
-   carries strictly more information than any one threshold cut of it.
-3. Broader historical season coverage (more distinct real seasons
-   with a non-null value).
-4. Fewer compounded assumptions / more direct/interpretable — operationalized
-   as the shorter of the two column names as a real, mechanical proxy
-   (a raw metric name is reliably shorter than its per-game/
-   per-team-game-normalized or tier-derived variant in this project's
-   established naming convention — verified true for every real
-   near-duplicate pair inspected).
+Parser validated with **zero unparsed leftovers** against all 386 real
+`fam9_*` whitelist columns before being trusted for anything.
 
-Full cluster membership + chosen representative:
+**A `metric_family` split (volume vs. efficiency) was added within
+`metric_category` after a real check caught a genuine error** (§1.5.3)
+— "how much opportunity/role a player had" and "how efficient they
+were with it" are different football questions that happen to share a
+`(position, metric_category)` stem; they must not be treated as one
+concept.
+
+**`concept_key = (position, metric_category, metric_family)`** is the
+ONLY basis on which two columns are even considered for a similarity
+check — different base metrics (e.g. rushing vs. receiving) can never
+merge regardless of any statistical coincidence, satisfying the
+instruction directly.
+
+#### 1.5.2 Revised similarity measures and linkage
+
+- **Continuous-continuous**: Pearson `|r| >= 0.95`, computed ONLY on
+  jointly-non-null rows within the same `concept_key`, `n >= 50`
+  documented minimum overlap (5x this project's existing
+  `DATASET2_ANALYSIS_MIN_CELL_SAMPLE_SIZE=10` floor — a pairwise
+  similarity decision needs a larger floor than a single reported
+  cell).
+- **Boolean-boolean** (non-fam9 content booleans, e.g. `fam86_*`
+  indicators): **Jaccard on POSITIVE cases only `>=0.70` AND phi
+  (Pearson on the 0/1 encoding) `>=0.85`, BOTH required**, same `n>=50`
+  minimum, same `concept_key` restriction (family-based for non-fam9
+  columns, plus 2 manually-verified real cross-family links —
+  `fam10_starter_group_size`~`fam86_wr_starter_group_size`, r=1.0000,
+  literally the same real football fact from two family modules).
+  Raw agreement was explicitly replaced — it is dominated by shared
+  `False`, exactly the failure mode instruction named.
+- **Linkage: COMPLETE, not connected components.** Within each
+  `concept_key` group, `scipy`'s complete-linkage hierarchical
+  clustering is cut at the distance matching the similarity threshold
+  — this GUARANTEES every resulting cluster's WORST internal pairwise
+  similarity still clears the bar. This is the direct structural fix:
+  the original cluster was a single-linkage chain (A~B~C~D~...) whose
+  distant members were never actually similar to each other; complete
+  linkage cannot produce that.
+- Missingness-pattern similarity is never itself a similarity edge —
+  it is reported separately (§1.4's coverage/concentration fields), as
+  metadata about a column, never as evidence two columns measure the
+  same thing.
+
+#### 1.5.3 A real bug caught by verification before trusting the result
+
+Before finalizing, representative-to-member similarity was checked
+directly rather than assumed. **Real finding**: `role_present`
+correlates at **r=0.82** with the `opportunity` measure in its own
+concept but only **r=-0.02** (no relationship at all) with
+`efficiency_rate` — yet the first version of this clustering had
+merged them into ONE cluster, because `(position, metric_category)`
+alone doesn't distinguish "how much role/opportunity" from "how
+efficient." Fixed by adding the `metric_family` split (§1.5.1) so
+role-tier flags only ever attach to the volume/opportunity measure
+they are actually constructed from. This is exactly the kind of
+verification this review round asked for, and it caught a real error
+the first version would have silently carried into representative
+selection.
+
+**A second real bug was caught and fixed during this round's own
+development**: Python's per-process hash randomization for strings
+made raw `set` iteration non-deterministic, producing two DIFFERENT
+apparent results (0 vs. 3 clusters over 10 members) from two runs of
+otherwise-identical code before the fix. All iteration is now via
+`sorted()`; determinism verified by running the script twice and
+diffing byte-identical output before any number below was trusted.
+
+#### 1.5.4 Real, corrected result
+
+**425 non-constant columns → 131 clusters.** Sizes: 78 singletons, 39
+of size 2-5, 14 of size 6-10, **0 exceeding 10 members** — the
+69-member cluster is fully resolved, not merely shrunk.
+
+| Metric | Value |
+|---|---|
+| Content columns clustered | 220 |
+| Role-tier columns attached by known construction | 117 |
+| Eligibility columns excluded from all edges, attached as metadata | 88 |
+| Pairs statistically checked (post semantic pre-filter) | 1,027 |
+| Distinct semantic concepts | 34 |
+| Largest real cluster | 10 members (8 clusters tied at this size) |
+
+**Audit for every cluster exceeding 10 members: none exist.** The
+8 clusters at the real maximum (10 members) are all the SAME
+well-formed pattern — one real football concept (e.g. "WR receiving
+opportunity") merging its `team`/`active` basis × `final_6`/`final_8`
+window variants plus their attached role tiers. Worked example
+(`data/exports/dataset2_trait_pipeline_predictor_clusters.csv`,
+cluster containing `fam9_team_final_6_wr_receiving_opportunity`):
+
+| Field | Value |
+|---|---|
+| Concept | `(WR, receiving, volume)` |
+| Size | 10 |
+| Members | `{team,active}` × `{final_6,final_8}` × `{opportunity, opportunity_per_team_game, role_present, meaningful_role, strong_lead_role}` (window/basis-appropriate subset) |
+| Eligibility metadata attached (excluded from edges) | the corresponding `efficiency_volume_eligible_*` flags for this concept — reported, never merged in |
+| Recommended representative | `fam9_team_final_6_wr_receiving_opportunity` — the raw continuous measure, per priority 1 (coverage) AND priority 5 (continuous over threshold flag) agreeing this time |
+| Any edge removed as eligibility-driven? | Yes — by construction, eligibility columns never entered a similarity edge in the first place |
+
+**Representative selection real result**: after the `metric_family`
+fix, **zero clusters** select a threshold flag as representative — the
+continuous source measure wins every time, resolving the earlier
+close-call tension this same audit process surfaced (§1.5.3's fix
+addressed the root cause rather than needing a tie-break override).
+
+**Representative selection rule** (unchanged priority order, all
+outcome-free, per instruction): (1) highest applicable coverage within
+the trait's own position scope (§1.2); (2) prefer a continuous source
+measure over a mechanically-derived threshold flag; (3) broader
+historical season coverage; (4)/(5) fewer compounded assumptions,
+proxied by shorter column name.
+
+Full cluster membership + chosen representative + eligibility metadata:
 `data/exports/dataset2_trait_pipeline_predictor_clusters.csv`.
 
 ---
@@ -326,9 +430,9 @@ validation design are separate, future decisions.
 |---|---|---|
 | **Raw trait-target combinations** | 431 × 4 = 1,724 | Full whitelist × all 4 targets |
 | **Testable combinations after evidence gates** (§5) | Computed per target once Phase 1 actually runs (cannot be stated without touching outcome eligibility per trait — genuinely unknown until Phase 1) | Gate gate application is itself part of Phase 1, not precomputable outcome-free |
-| **Predictor clusters** | 76 (+ any splits from the §1.5 oversized-cluster review) | Outcome-free, computed this round |
-| **Primary FDR tests** | ≤ 76 × 4 = 304 nominal, reduced further per target by §5's gates | Cluster representatives only |
-| **Within-cluster sensitivity tests** | The remaining 425−76=349 non-representative members, tested only as secondary formulation/threshold sensitivities AFTER their cluster's representative already cleared Phase 2 | Never independently entered into the FDR budget |
+| **Predictor clusters** | **131** (revised §1.5 methodology — semantic pre-filter + complete linkage; the original review's 69-member cluster fully resolved, 0 clusters now exceed 10 members) | Outcome-free, computed this round |
+| **Primary FDR tests** | ≤ 131 × 4 = 524 nominal, reduced further per target by §5's gates | Cluster representatives only |
+| **Within-cluster sensitivity tests** | The remaining 425−131=294 non-representative members, tested only as secondary formulation/threshold sensitivities AFTER their cluster's representative already cleared Phase 2 | Never independently entered into the FDR budget |
 
 **Procedure**: Benjamini-Hochberg FDR control, **q=0.10**, applied to
 the cluster-REPRESENTATIVE primary tests only (§1.5's representative
@@ -432,10 +536,11 @@ final candidate list for Dataset 3, with the full standardized output
 
 **This document stops before Phase 1 begins.** No trait has been
 tested against any of the 4 targets. The real work performed this
-round (like last round) is entirely structural/outcome-free: the
-extended predictor clustering (§1.5, 76 clusters) and the targets' own
-aggregate discovery/holdout base counts (§4 — properties of the
-targets alone, not of any trait-target association). Artifacts:
+round is entirely structural/outcome-free: the revised, audited
+predictor clustering (§1.5, 131 clusters, 0 exceeding 10 members) and
+the targets' own aggregate discovery/holdout base counts (§4 —
+properties of the targets alone, not of any trait-target association).
+Artifacts:
 `data/exports/dataset2_trait_pipeline_predictor_inventory.csv`,
 `data/exports/dataset2_trait_pipeline_near_duplicate_pairs.csv`,
 `data/exports/dataset2_trait_pipeline_predictor_clusters.csv`.
