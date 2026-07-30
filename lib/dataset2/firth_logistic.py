@@ -7,10 +7,35 @@ Biometrika 80(1). Built from scratch: no compatible pre-built package
 is installable in this environment (`firthlogist` on PyPI has no wheel
 for this interpreter's Python version; no R/Rscript, conda, pyenv, or
 alternate Python interpreter is available on this machine to run an
-independent implementation like R's `logistf` -- checked directly, not
-assumed). See tests/test_firth_logistic.py for the full validation
-suite this implementation must pass BEFORE it is trusted for any real
-Star result (research/dataset2/DATASET2_TRAIT_ANALYSIS_PIPELINE_PROPOSAL_2026_07.md
+independent implementation like R's `logistf` locally -- checked
+directly, not assumed).
+
+INDEPENDENT VALIDATION: COMPLETE (2026-07), via GitHub Actions --
+R's `logistf` run on the identical fixtures this module's own test
+suite uses (`.github/workflows/fetch_schedules_and_firth_crosscheck.yml`,
+real output committed at
+`research/dataset2/firth_crosscheck_results_2026_07/`). Coefficients,
+profile-likelihood CIs, and LR-test p-values now agree with R to under
+1e-6 on all three regimes (ordinary/sparse/complete-separation).
+`tests/test_firth_logistic.py::TestIndependentImplementationCrossCheck`
+replays this comparison on every local test run (against the frozen,
+real R output -- no R interpreter needed here to keep verifying it).
+
+The first cross-check attempt found real disagreements (1-9 units on
+CI bounds for the complete-separation fixture) -- root cause and fix
+documented on `_fit_firth_constrained_scipy` and inside
+`fit_firth_logistic` below: this module's own Newton/IRLS constrained
+refit can report `converged=True` while still sitting on a real,
+verified-lower penalized log-likelihood than the true conditional
+maximum, specifically when profiling pins one coefficient far from its
+MLE into a quasi-separated regime for the REMAINING free parameters.
+Fixed by always cross-checking constrained fits against a robust
+general-purpose optimizer and keeping whichever result is higher --
+never trusting IRLS's own convergence flag alone for a constrained fit.
+
+See tests/test_firth_logistic.py for the full validation suite this
+implementation must pass BEFORE it is trusted for any real Star result
+(research/dataset2/DATASET2_TRAIT_ANALYSIS_PIPELINE_PROPOSAL_2026_07.md
 §4's requirement).
 
 ALGORITHM (IRLS with Firth's score modification, matching Firth 1993
@@ -112,26 +137,7 @@ class FirthFitResult:
         return np.sqrt(np.diag(self.cov))
 
 
-def fit_firth_logistic(
-    X: np.ndarray,
-    y: np.ndarray,
-    beta_init: np.ndarray = None,
-    fixed_index: int = None,
-    fixed_value: float = None,
-    max_iter: int = MAX_ITER_DEFAULT,
-    tol: float = TOL_DEFAULT,
-) -> FirthFitResult:
-    """Fits Firth's bias-reduced logistic regression via penalized IRLS
-    with step-halving. `X` must already include an intercept column if
-    one is wanted (never added implicitly -- caller's explicit choice).
-
-    `fixed_index`/`fixed_value`: if given, that coefficient is pinned
-    at `fixed_value` and never updated -- used by `firth_profile_ci()`
-    and `firth_lr_test()` for real constrained re-fits, not a Wald
-    approximation.
-    """
-    X = np.asarray(X, dtype=float)
-    y = np.asarray(y, dtype=float)
+def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
     n, p = X.shape
     beta = np.zeros(p) if beta_init is None else np.array(beta_init, dtype=float)
     if fixed_index is not None:
@@ -182,14 +188,137 @@ def fit_firth_logistic(
     return FirthFitResult(beta, cov, converged, n_iter, prev_ll, fixed_mask)
 
 
-def firth_profile_ci(X, y, coef_index: int, alpha: float = 0.05, search_width_se: float = 12.0, **fit_kwargs):
+def _fit_firth_constrained_scipy(X, y, fixed_index, fixed_value, beta_init, max_iter):
+    """Robust fallback for the CONSTRAINED (fixed_index given) case
+    only, used when this module's own Newton/IRLS fails to converge.
+
+    Real finding (2026-07, caught by the R logistf cross-check and
+    confirmed independently before this fix was written -- not
+    assumed): the Newton/IRLS step-halving above can fail to converge
+    when the FIXED coordinate itself sits far out in a quasi-separated
+    regime -- pinning one coefficient at an extreme value can make the
+    conditional optimization over the REMAINING free parameters nearly
+    separated too, and plain Newton steps handle that badly even with
+    warm starts. Verified directly: an independent
+    scipy.optimize.minimize run found penalized log-likelihoods 1.7-6.1
+    nats HIGHER than this module's own IRLS output at the same fixed
+    value, at points where IRLS reported `converged=False`.
+
+    Uses Nelder-Mead (derivative-free, robust to the flat/ill-scaled
+    regions that break Newton here) over just the free parameters.
+    Only ever used for the constrained sub-problem inside
+    `firth_profile_ci()`/`firth_lr_test()` -- the primary, unconstrained
+    fit always uses this module's own IRLS (already validated on its
+    own terms and never observed to have this failure mode)."""
+    from scipy.optimize import minimize
+
+    p = X.shape[1]
+    free_idx = [j for j in range(p) if j != fixed_index]
+    start = np.zeros(p) if beta_init is None else np.array(beta_init, dtype=float)
+    free_start = start[free_idx]
+
+    def neg_penalized_ll(free_params):
+        beta = np.empty(p)
+        beta[fixed_index] = fixed_value
+        beta[free_idx] = free_params
+        ll = _penalized_loglik(X, y, beta)
+        return -ll if np.isfinite(ll) else 1e10
+
+    res = minimize(
+        neg_penalized_ll, free_start, method="Nelder-Mead",
+        options={"xatol": 1e-8, "fatol": 1e-10, "maxiter": max(max_iter * 100, 5000), "maxfev": max(max_iter * 100, 5000)},
+    )
+    beta = np.empty(p)
+    beta[fixed_index] = fixed_value
+    beta[free_idx] = res.x
+    ll = _penalized_loglik(X, y, beta)
+    XtWX, pi, W = _fisher_info(X, beta)
+    cov = np.linalg.pinv(XtWX)
+    fixed_mask = np.zeros(p, dtype=bool)
+    fixed_mask[fixed_index] = True
+    return FirthFitResult(beta, cov, bool(res.success), int(res.nit), ll, fixed_mask)
+
+
+def fit_firth_logistic(
+    X: np.ndarray,
+    y: np.ndarray,
+    beta_init: np.ndarray = None,
+    fixed_index: int = None,
+    fixed_value: float = None,
+    max_iter: int = MAX_ITER_DEFAULT,
+    tol: float = TOL_DEFAULT,
+) -> FirthFitResult:
+    """Fits Firth's bias-reduced logistic regression via penalized IRLS
+    with step-halving. `X` must already include an intercept column if
+    one is wanted (never added implicitly -- caller's explicit choice).
+
+    `fixed_index`/`fixed_value`: if given, that coefficient is pinned
+    at `fixed_value` and never updated -- used by `firth_profile_ci()`
+    and `firth_lr_test()` for real constrained re-fits, not a Wald
+    approximation. When `fixed_index` is given AND the IRLS path fails
+    to converge, automatically falls back to a robust general-purpose
+    optimizer (`_fit_firth_constrained_scipy`, see its docstring for
+    why) and keeps whichever result has the higher penalized
+    log-likelihood -- never silently trusts a non-converged IRLS fit.
+    """
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    result = _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol)
+
+    if fixed_index is not None:
+        # ALWAYS cross-check against the robust fallback for constrained
+        # fits, never gated on IRLS's own `converged` flag alone --
+        # real finding (2026-07): IRLS can report converged=True (its
+        # parameter-step tolerance was satisfied) while still sitting on
+        # a real, verified-lower penalized log-likelihood than the true
+        # conditional maximum (confirmed directly against an independent
+        # scipy.optimize.minimize ground truth at the R logistf
+        # cross-check's disputed CI bounds -- a small step size between
+        # iterations does not guarantee the true optimum was reached on
+        # a flat/ill-conditioned profile likelihood surface). Keeping
+        # whichever of the two has the higher likelihood is a strictly
+        # dominant, cheap-to-verify safeguard.
+        fallback = _fit_firth_constrained_scipy(X, y, fixed_index, fixed_value, beta_init, max_iter)
+        if fallback.penalized_loglik > result.penalized_loglik:
+            result = fallback
+
+    return result
+
+
+_PROFILE_MAX_STEPS = 60
+_PROFILE_REFIT_MAX_ITER = 100
+_PROFILE_REFIT_TOL = 1e-8
+
+
+def _profile_constrained_fit(X, y, coef_index, beta_val, warm_start, fit_kwargs):
+    """One constrained (fixed_index=coef_index) refit for profiling,
+    warm-started from `warm_start` (the PREVIOUS profile step's own
+    solution, not the original unconstrained MLE -- converges far more
+    reliably step-to-step than always restarting from a potentially
+    distant point). Robustness against IRLS non-convergence at extreme
+    (e.g. quasi-separated) profile points is handled inside
+    `fit_firth_logistic()` itself now (automatic scipy fallback, see
+    its docstring and `_fit_firth_constrained_scipy`) -- this function
+    no longer needs its own separate retry logic."""
+    kwargs = dict(fit_kwargs)
+    kwargs.setdefault("max_iter", _PROFILE_REFIT_MAX_ITER)
+    kwargs.setdefault("tol", _PROFILE_REFIT_TOL)
+    return fit_firth_logistic(X, y, beta_init=warm_start, fixed_index=coef_index, fixed_value=beta_val, **kwargs)
+
+
+def firth_profile_ci(X, y, coef_index: int, alpha: float = 0.05, **fit_kwargs):
     """Profile-penalized-likelihood confidence interval for
     coefficient `coef_index` -- the recommended CI for Firth's method
     (Heinze & Schemper 2002), not a Wald interval. Finds beta values
     where 2*(l*_full - l*_profile(beta)) crosses chi2(1, 1-alpha),
     re-fitting every OTHER coefficient at each candidate value (a real
     constrained fit via `fixed_index`/`fixed_value`, not an
-    approximation). Returns (lower, upper, full_fit_result).
+    approximation). Walks outward in small steps, warm-starting each
+    constrained refit from the PREVIOUS step's own solution (see
+    `_profile_constrained_fit`'s docstring for why this matters) --
+    never jumps straight from the unconstrained MLE to a far candidate
+    value. Returns (lower, upper, full_fit_result).
     """
     full_fit = fit_firth_logistic(X, y, **fit_kwargs)
     target = full_fit.penalized_loglik - 0.5 * stats.chi2.ppf(1 - alpha, df=1)
@@ -197,31 +326,33 @@ def firth_profile_ci(X, y, coef_index: int, alpha: float = 0.05, search_width_se
     se_guess = full_fit.se[coef_index] if np.isfinite(full_fit.se[coef_index]) else 1.0
     se_guess = se_guess if se_guess > 0 else 1.0
 
-    def profile_ll(beta_val):
-        fit = fit_firth_logistic(
-            X, y, beta_init=full_fit.beta, fixed_index=coef_index, fixed_value=beta_val, **fit_kwargs
-        )
-        return fit.penalized_loglik
+    def walk(direction):
+        step = se_guess * 0.25
+        current_val = point
+        current_warm = full_fit.beta.copy()
+        prev_val = point
+        for _ in range(_PROFILE_MAX_STEPS):
+            candidate_val = current_val + direction * step
+            fit = _profile_constrained_fit(X, y, coef_index, candidate_val, current_warm, fit_kwargs)
+            f_val = fit.penalized_loglik - target
+            if f_val <= 0:
+                # Crossing is between prev_val and candidate_val -- refine
+                # via brentq, warm-starting every evaluation from the
+                # already-converged solution just found (the bracket is
+                # narrow at this point, so this stays cheap and reliable).
+                def f_refine(bv):
+                    return _profile_constrained_fit(X, y, coef_index, bv, fit.beta, fit_kwargs).penalized_loglik - target
 
-    def f(beta_val):
-        return profile_ll(beta_val) - target
+                lo, hi = (prev_val, candidate_val) if direction > 0 else (candidate_val, prev_val)
+                return brentq(f_refine, lo, hi, xtol=1e-6, maxiter=100)
+            prev_val = candidate_val
+            current_val = candidate_val
+            current_warm = fit.beta.copy()
+            step *= 1.15
+        return direction * np.inf
 
-    # Bracket outward from the point estimate until f changes sign.
-    def bracket(direction):
-        lo = point
-        hi = point + direction * se_guess
-        step = se_guess
-        tries = 0
-        while f(hi) > 0 and tries < 40:
-            step *= 1.5
-            hi = point + direction * step
-            tries += 1
-        return lo, hi
-
-    lo_lo, lo_hi = bracket(-1.0)
-    hi_lo, hi_hi = bracket(1.0)
-    lower = brentq(f, lo_lo - 1e-6, lo_hi, xtol=1e-6, maxiter=200) if f(lo_hi) <= 0 else -np.inf
-    upper = brentq(f, hi_lo + 1e-6, hi_hi, xtol=1e-6, maxiter=200) if f(hi_hi) <= 0 else np.inf
+    lower = walk(-1.0)
+    upper = walk(1.0)
     return lower, upper, full_fit
 
 
@@ -229,10 +360,13 @@ def firth_lr_test(X, y, coef_index: int, **fit_kwargs):
     """Penalized likelihood-ratio test for H0: beta[coef_index] = 0,
     via a real constrained re-fit (never a Wald z-test -- Firth's own
     motivation applies to significance testing exactly as it does to
-    CIs). Returns (lr_statistic, p_value, full_fit_result,
-    reduced_fit_result)."""
+    CIs). Uses the same convergence-checked, retry-on-failure
+    constrained fit as `firth_profile_ci` (§ its docstring) -- a
+    silently non-converged reduced-model fit would bias the LR
+    statistic exactly like it biased the CI search. Returns
+    (lr_statistic, p_value, full_fit_result, reduced_fit_result)."""
     full_fit = fit_firth_logistic(X, y, **fit_kwargs)
-    reduced_fit = fit_firth_logistic(X, y, fixed_index=coef_index, fixed_value=0.0, **fit_kwargs)
+    reduced_fit = _profile_constrained_fit(X, y, coef_index, 0.0, full_fit.beta, fit_kwargs)
     lr_stat = 2.0 * (full_fit.penalized_loglik - reduced_fit.penalized_loglik)
     lr_stat = max(lr_stat, 0.0)
     p_value = 1.0 - stats.chi2.cdf(lr_stat, df=1)

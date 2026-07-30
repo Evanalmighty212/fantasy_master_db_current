@@ -1,0 +1,10 @@
+fixture,term,r_coef,r_ci_lower_profile,r_ci_upper_profile,r_lr_pvalue,r_conv
+complete_separation,intercept,-4.154148,-8.970451,-2.297519,2.088441e-12,TRUE
+complete_separation,x_noise,0.154947,-4.454235,4.950893,9.174815e-01,TRUE
+complete_separation,x_separating,7.980177,5.380940,21.645973,0.000000e+00,TRUE
+ordinary,intercept,-0.309363,-0.357907,-0.260982,0.000000e+00,TRUE
+ordinary,x1,0.777743,0.724051,0.832193,0.000000e+00,TRUE
+ordinary,x2,-0.517370,-0.568354,-0.466891,0.000000e+00,TRUE
+sparse,intercept,-4.963329,-5.365612,-4.606489,0.000000e+00,TRUE
+sparse,x1_continuous,0.540420,0.265254,0.817215,1.144811e-04,TRUE
+sparse,x2_boolean,0.437041,-0.127874,0.983141,1.271000e-01,TRUE

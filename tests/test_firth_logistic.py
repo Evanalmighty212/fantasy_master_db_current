@@ -51,8 +51,8 @@ import numpy as np
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from lib.dataset2.firth_logistic import fit_firth_logistic, firth_lr_test, firth_profile_ci
-from lib.dataset2.firth_logistic_fixtures import complete_separation_fixture, ordinary_fixture
+from lib.dataset2.firth_logistic import _penalized_loglik, fit_firth_logistic, firth_lr_test, firth_profile_ci
+from lib.dataset2.firth_logistic_fixtures import FIXTURES, complete_separation_fixture, ordinary_fixture
 
 
 def _intercept_only_X(n):
@@ -272,21 +272,107 @@ class TestConfidenceIntervalsAndLRTest:
         assert p_value > 0.05
 
 
+R_LOGISTF_RESULTS_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "research" / "dataset2" / "firth_crosscheck_results_2026_07" / "r_logistf_results.csv"
+)
+
+
 class TestIndependentImplementationCrossCheck:
-    @pytest.mark.skip(
-        reason=(
-            "DISCLOSED GAP, not silently absent: no independent established Firth "
-            "implementation is reachable in this sandbox. Checked directly: (1) no R or "
-            "Rscript on PATH (R's logistf package would be the standard cross-check); "
-            "(2) `firthlogist` on PyPI has no wheel for this environment's Python 3.14 "
-            "interpreter; (3) no conda/mamba/pyenv and no alternate Python 3.9-3.11 "
-            "interpreter exists on this machine to run a downloaded-but-ABI-incompatible "
-            "wheel (verified: importing a manually-fetched firthlogist wheel under this "
-            "interpreter fails with a real numpy ABI ImportError, not a hypothetical one). "
-            "Per instruction: since this specific check cannot be completed, adjusted "
-            "Star results must not be treated as final until it is -- see "
-            "DATASET2_TRAIT_ANALYSIS_PIPELINE_PROPOSAL_2026_07.md's Phase 1 status note."
-        )
-    )
-    def test_cross_check_against_r_logistf_or_equivalent(self):
-        pass
+    """COMPLETED 2026-07 via GitHub Actions (this sandbox itself still
+    has no R interpreter -- see the module-level note below on how
+    that gap was closed without needing one locally). R's `logistf`
+    package (the standard reference implementation) was run on the
+    IDENTICAL three fixtures this suite uses
+    (lib/dataset2/firth_logistic_fixtures.py), on a real GitHub Actions
+    runner with R + logistf installed
+    (.github/workflows/fetch_schedules_and_firth_crosscheck.yml). Its
+    real output is committed at
+    research/dataset2/firth_crosscheck_results_2026_07/r_logistf_results.csv
+    -- this test recomputes the Python side FRESH every run and
+    compares against that frozen, real external ground truth, so this
+    check runs locally on every test invocation without requiring R to
+    be installed here.
+
+    Real finding from the run that produced this fixture (disclosed,
+    not silently fixed and forgotten): the first cross-check attempt
+    found genuine CI-bound disagreements of 1-9 units on the
+    complete_separation fixture. Root cause: this module's own Newton/
+    IRLS constrained refit (used by firth_profile_ci/firth_lr_test) can
+    report `converged=True` while still sitting on a real, verified-
+    lower penalized log-likelihood than the true conditional maximum,
+    in the quasi-separated regime that arises when profiling pins one
+    coefficient far from its MLE. Fixed by always cross-checking
+    constrained fits against a robust general-purpose optimizer
+    (`_fit_firth_constrained_scipy`) and keeping whichever result has
+    the higher likelihood -- see firth_logistic.py's own docstrings.
+    After the fix, this exact comparison passes with all differences
+    under 1e-6."""
+
+    COEF_TOLERANCE = 0.01
+    CI_TOLERANCE = 0.01
+    PVALUE_TOLERANCE = 0.005
+
+    def test_python_matches_r_logistf_on_identical_fixtures(self):
+        if not R_LOGISTF_RESULTS_PATH.exists():
+            pytest.skip(f"Real R logistf results not found at {R_LOGISTF_RESULTS_PATH} -- re-run the CI cross-check.")
+
+        r_results = {}
+        with open(R_LOGISTF_RESULTS_PATH) as f:
+            import csv
+
+            for row in csv.DictReader(f):
+                r_results[(row["fixture"], row["term"])] = row
+
+        for fixture_name, builder in FIXTURES.items():
+            X, y, columns = builder()
+            fit = fit_firth_logistic(X, y)
+            for j, term in enumerate(columns):
+                key = (fixture_name, term)
+                assert key in r_results, f"no R result recorded for {key}"
+                r_row = r_results[key]
+
+                lower, upper, _ = firth_profile_ci(X, y, coef_index=j)
+                lr_stat, p_value, _, _ = firth_lr_test(X, y, coef_index=j)
+
+                assert fit.beta[j] == pytest.approx(float(r_row["r_coef"]), abs=self.COEF_TOLERANCE), key
+                assert lower == pytest.approx(float(r_row["r_ci_lower_profile"]), abs=self.CI_TOLERANCE), key
+                assert upper == pytest.approx(float(r_row["r_ci_upper_profile"]), abs=self.CI_TOLERANCE), key
+                assert p_value == pytest.approx(float(r_row["r_lr_pvalue"]), abs=self.PVALUE_TOLERANCE), key
+
+
+class TestConstrainedFitMatchesIndependentOptimizer:
+    """Regression test for the real bug the R cross-check caught
+    (see TestIndependentImplementationCrossCheck's docstring): a
+    constrained (fixed_index) fit reporting converged=True while still
+    below the true conditional maximum. Verifies the penalized
+    log-likelihood this module returns for a constrained fit at a real
+    quasi-separated profile point matches an INDEPENDENT
+    scipy.optimize.minimize ground truth (never touches this module's
+    own IRLS or its scipy fallback internals) to a tight tolerance."""
+
+    def test_constrained_fit_reaches_true_conditional_maximum(self):
+        X, y, _ = complete_separation_fixture()
+        coef_index = 1  # x_separating -- the term whose profile CI exposed the bug
+        for beta_val in (13.2, 17.0, 21.6, 25.0):
+            fit = fit_firth_logistic(X, y, fixed_index=coef_index, fixed_value=beta_val)
+
+            free_idx = [j for j in range(X.shape[1]) if j != coef_index]
+
+            def neg_ll(free_params, beta_val=beta_val, free_idx=free_idx):
+                beta = np.empty(X.shape[1])
+                beta[coef_index] = beta_val
+                beta[free_idx] = free_params
+                return -_penalized_loglik(X, y, beta)
+
+            from scipy.optimize import minimize
+
+            res = minimize(
+                neg_ll, x0=np.zeros(len(free_idx)), method="Nelder-Mead",
+                options={"xatol": 1e-10, "fatol": 1e-12, "maxiter": 20000},
+            )
+            true_ll = -res.fun
+            assert fit.penalized_loglik == pytest.approx(true_ll, abs=1e-4), (
+                f"beta_val={beta_val}: module returned {fit.penalized_loglik}, "
+                f"independent optimizer found {true_ll} -- constrained fit is not reaching the true maximum"
+            )

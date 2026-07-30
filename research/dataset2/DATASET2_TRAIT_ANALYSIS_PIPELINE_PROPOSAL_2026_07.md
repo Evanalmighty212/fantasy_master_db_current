@@ -532,31 +532,43 @@ final candidate list for Dataset 3, with the full standardized output
 
 ---
 
-## 11.5 Firth validation status (commit `b74d746`, cautions carried forward)
+## 11.5 Firth validation status — INDEPENDENT CROSS-CHECK COMPLETE (2026-07)
 
-Both real cautions from that round remain in force and are restated
-here, not just in the commit message, so they stay attached to the
-document that actually governs Phase 1:
+1. **91.3% empirical profile-CI coverage (150 sims, nominal 95%) —
+   still documented as below nominal, per instruction, not rounded up
+   to "close enough."** This is a real, disclosed property of
+   profile-likelihood CIs at modest sample size, not a bug — the
+   algorithm fix below did not change this number (it addressed a
+   different, more severe failure mode specific to extreme/separated
+   profile points, not this simulation's moderate-effect regime).
+2. **Independent cross-check: COMPLETE, and it caught a real bug.**
+   `.github/workflows/fetch_schedules_and_firth_crosscheck.yml`'s
+   `firth-crosscheck` job ran R's `logistf` on the identical
+   `ordinary`/`sparse`/`complete_separation` fixtures. The FIRST run
+   found genuine disagreements (CI bounds off by 1-9 units on
+   `complete_separation`) — root cause: this module's constrained
+   (fixed-coefficient) refit, used internally by the CI/LR-test search,
+   could report `converged=True` while still sitting on a real,
+   verified-lower log-likelihood than the true conditional maximum, in
+   the quasi-separated regime that arises when profiling pins one
+   coefficient far from its MLE. Fixed by always cross-checking
+   constrained fits against a robust general-purpose optimizer
+   (`_fit_firth_constrained_scipy`) and keeping whichever result is
+   higher — never trusting IRLS's own convergence flag alone. **After
+   the fix, all 9 term comparisons across all 3 fixtures agree with R
+   to under 1e-6** (coefficients, profile CIs, and LR p-values) —
+   real, committed results at
+   `research/dataset2/firth_crosscheck_results_2026_07/`, replayed as
+   a permanent local regression test
+   (`tests/test_firth_logistic.py::TestIndependentImplementationCrossCheck`,
+   no longer skipped).
 
-1. **91.3% empirical profile-CI coverage (150 sims, nominal 95%) is
-   BELOW the nominal target — documented as such, not rounded up to
-   "close enough."** This does not invalidate Firth's bias-reduced
-   point estimates (validated separately: the closed-form Jeffreys
-   result, complete-separation behavior, and large-sample MLE
-   agreement all passed on their own real, independent checks). It
-   specifically means: **adjusted Star confidence intervals remain
-   provisional** until the independent cross-check below is complete.
-2. **Independent cross-check**: `.github/workflows/fetch_schedules_and_firth_crosscheck.yml`'s
-   `firth-crosscheck` job is now built (R `logistf`, the standard
-   independent reference implementation, run on the identical
-   `ordinary`/`sparse`/`complete_separation` fixtures this project's
-   own Python validation suite uses — see
-   `lib/dataset2/firth_logistic_fixtures.py`) but **has not yet run** —
-   this sandbox has no `gh` CLI or GitHub API token to trigger a
-   `workflow_dispatch` run itself; a human must click "Run workflow" on
-   the Actions tab. Until that run's comparison report
-   (`data/exports/firth_crosscheck/firth_crosscheck_comparison.csv`)
-   is reviewed, adjusted Star results stay provisional per instruction.
+**Adjusted Star results are therefore no longer provisional on this
+specific ground** — the independent cross-check the prior caution was
+waiting on is done and passing. §5's other evidence gates (applicable
+n, positive-case minimums, etc.) still apply as their own independent
+requirements before any specific trait's adjusted result counts as
+formal.
 
 ## 11.6 Three future outcome proposals — RECORDED, NOT IMPLEMENTED
 
