@@ -325,6 +325,71 @@ useful for Dataset 3 later:
 
 ---
 
+## Predictor-clustering discovery/holdout boundary -- APPROVED 2026-07
+
+**Methodology status: APPROVED (Evan, 2026-07). Implementation status:
+NOT YET IMPLEMENTED.** This section records the decision itself; it
+does not describe running code, and no predictor-inventory, cluster,
+or representative-selection artifact currently reflects it. Do not
+read anything below as a claim about the current implementation's
+behavior -- see `research/dataset2/DATASET2_TRAIT_ANALYSIS_PIPELINE_PROPOSAL_2026_07.md`
+for what the pipeline actually does today.
+
+**Discovery-fit population**: prediction seasons 2006-2020, inclusive.
+Every decision-bearing predictor-inventory, similarity, near-duplicate,
+redundancy, clustering, and representative-selection computation must
+be fit exclusively on this population.
+
+**Protected evaluation holdout**: prediction seasons 2021-2025,
+inclusive. Must never influence cluster membership, similarity
+estimates, or representative selection while this methodology is
+locked -- reserved for Phase 1 evaluation.
+
+**2026 application rows**: excluded from clustering calibration
+entirely because they are the future application cohort, not
+historical discovery observations. They remain available in the
+canonical predictor table for producing 2026 predictions.
+
+**Population selection must be outcome-independent, structurally, not
+just behaviorally.** Eligibility for the discovery-fit population
+depends solely on `prediction_season`. It must never consult
+`outcome_join_status` or any outcome, target, label, or
+outcome-eligibility field -- even where the resulting row set would
+happen to be identical either way. This is a stronger requirement than
+"produces the same rows today": the selection mechanism itself must be
+incapable of depending on outcome availability, so a future change to
+outcome coverage can never silently reshape the discovery-fit
+population.
+
+**Full-range diagnostics may exist alongside the discovery-fit
+artifacts, but under a separately identified name, and must never
+influence Phase 1 development or feature decisions.** A full-range
+(2006-2025) descriptive view of predictor structure is allowed to
+exist as a diagnostic; it is not a substitute for, and must not be
+silently blended with, the discovery-fit clustering used to select
+Phase 1 candidates.
+
+**Future production refit (not authorized now)**: after final Phase 1
+evaluation and methodology lock, a separately identified production
+refit may use data through 2025 to inform actual 2026 predictions.
+That refit is a distinct, future decision -- its existence is
+anticipated here only so the discovery-fit naming doesn't have to be
+revisited later; it is explicitly not authorized or implemented by
+this section.
+
+**Distinct from Dataset 3's own tentative temporal split.**
+`docs/PREDICTION_SPECIFICATION.md` section 6 proposes a *different*,
+still-unresolved train/validate/test boundary (2006-2018 / 2019-2021 /
+2022-2024) for the eventual Dataset 3 model itself -- a separate
+decision, for a separate purpose (model evaluation, not predictor
+redundancy screening), with different cut points and terminal seasons.
+Dataset 2's approved 2006-2020 discovery boundary governs Dataset 2
+predictor analysis and Phase 1. Dataset 3's tentative split remains a
+separate unresolved decision that must be finalized before Dataset 3
+model development or evaluation, not before Dataset 2 Phase 1.
+
+---
+
 ## Predictive usefulness summary (the actual deliverable)
 
 Dataset 2 ultimately exists to answer one question per trait: **should

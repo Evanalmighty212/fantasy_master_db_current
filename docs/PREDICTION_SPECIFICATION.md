@@ -300,4 +300,13 @@ pattern-hunting that might not connect to a well-defined target.
    headline metric (ROC-AUC, F1, calibration-first) -- see section 5.
 5. The train/validate/test season boundaries themselves (2006-2018 /
    2019-2021 / 2022-2024, proposed) -- reasonable defaults, not derived
-   from anything requiring this exact split.
+   from anything requiring this exact split. **Not resolved or
+   superseded by** the separate, APPROVED Dataset 2 predictor-clustering
+   discovery/holdout boundary (2006-2020 discovery-fit / 2021-2025
+   protected holdout -- see `docs/LEAGUE_WINNER_TRAITS_SPEC.md`'s
+   "Predictor-clustering discovery/holdout boundary" section, 2026-07).
+   That decision governs Dataset 2 predictor analysis and Phase 1.
+   Dataset 3 uses different cut points and terminal seasons for a
+   separate purpose; its tentative split remains unresolved and must
+   be finalized before Dataset 3 model development or evaluation, not
+   before Dataset 2 Phase 1.
