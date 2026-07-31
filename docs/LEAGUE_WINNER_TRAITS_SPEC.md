@@ -323,6 +323,41 @@ useful for Dataset 3 later:
    Component 1 -- a trait must never have access to information that
    wouldn't genuinely have been available at decision time.
 
+### Approved player-season position and team authority
+
+**Methodology status: APPROVED by Evan (2026-07). Implementation
+status: NOT YET IMPLEMENTED.** Dataset 2 must use the separately
+governed, preseason-frozen `canonical_fantasy_position` defined in
+[`MATCHING_ARCHITECTURE.md`](MATCHING_ARCHITECTURE.md) for
+position-specific predictor construction and normalization. Player
+identity, ADP-source position, official/team-listed position, and
+actual usage roles remain separate fields; a disagreement among them
+must never redirect an ADP row to a different player identity.
+
+For a lagged predictor, position authority follows the season the
+fact describes: a prior-season position-normalized value uses that
+observation season's canonical fantasy position, while a
+prediction-season position or interaction uses the canonical fantasy
+position frozen before that prediction season's Week 1. Actual
+targets, carries, attempts, and snaps remain their real usage values
+and are not erased or reclassified merely to make them agree with the
+single canonical fantasy position.
+
+Raw provider team values are provenance only. A separately named,
+season-accurate canonical team must govern team matching, team-change
+logic, schedule/depth-chart/snap joins, and player-facing output.
+Historical franchise aliases must be applied consistently at those
+joins without overwriting the raw value, and a real in-season trade
+must remain distinguishable from a franchise rename or stale provider
+metadata.
+
+Any corrected canonical position or team input that changes a
+published LWI score, Stars-by-Value label, bust/Star outcome, or
+downstream outcome receives the explicitly approved new
+historical-label/reproducibility revision. The underlying formulas are
+unchanged; the revision records that the regenerated output was built
+from corrected inputs.
+
 ---
 
 ## Predictor-clustering discovery/holdout boundary -- APPROVED 2026-07

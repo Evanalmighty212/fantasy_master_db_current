@@ -141,6 +141,38 @@ downstream modeling rule. `label = 0` (a real negative, including
 `below_production_gate`) is a true, informative example and must be
 kept.
 
+### Approved position/team input-governance revision
+
+**Methodology status: APPROVED by Evan (2026-07). Implementation
+status: NOT YET IMPLEMENTED.** Stars-by-Value and every downstream
+Dataset 3 outcome or model must use the separately governed,
+preseason-frozen `canonical_fantasy_position` defined in
+[`MATCHING_ARCHITECTURE.md`](MATCHING_ARCHITECTURE.md). ADP-source
+position governs positional ADP ranking and acquisition-cost provenance
+unless that ADP-source value is itself shown erroneous. Canonical
+fantasy position governs positional finish, replacement, production,
+gates and thresholds, LWI position-relative components,
+Stars-by-Value/bust production cells, and Dataset 2 position-normalized
+traits. When ADP-source and canonical position differ, the discrepancy
+must be explicitly adjudicated and documented; a mismatched positional
+ADP rank and production cohort must never be used silently. Raw ADP
+position, raw results position, official/team-listed position, and
+actual usage roles remain separate evidence. A position disagreement
+must never redirect an ADP row to a different player identity.
+
+Raw provider team values likewise remain unchanged provenance. A
+separately named, season-accurate canonical team governs identity
+corroboration, team logic, joins, and player-facing output; historical
+franchise aliases, real transactions, and stale provider metadata must
+remain distinguishable.
+
+When corrected canonical position or team inputs change a previously
+published Stars-by-Value label or downstream outcome, the regenerated
+label receives an explicit new historical-label/reproducibility
+revision. This does not change the Stars-by-Value formula or its
+thresholds. It prevents outputs built from different input facts from
+appearing interchangeable merely because the formula is unchanged.
+
 ---
 
 ## 2. What counts as a "league winner"? (the classification threshold)

@@ -48,6 +48,37 @@ LWI = 46% ADP Value
   `lwi_eligibility_flag` explaining why (`no_adp_match` or
   `insufficient_games`), not a score computed from insufficient data.
 
+### Approved input-governance revision (not yet implemented)
+
+**Methodology status: APPROVED by Evan (2026-07). Implementation
+status: NOT YET IMPLEMENTED.** The LWI formula and weights are
+unchanged. After implementation, every position-relative LWI step
+will use the separately governed, preseason-frozen
+`canonical_fantasy_position` defined in
+[`MATCHING_ARCHITECTURE.md`](MATCHING_ARCHITECTURE.md), rather than
+treating the results source's position as authoritative. The raw ADP
+position, raw results position, official/team-listed position, and
+actual usage roles remain separately preserved evidence.
+
+ADP-source position governs positional ADP ranking and acquisition-cost
+provenance unless that ADP-source value is itself shown erroneous.
+Canonical fantasy position governs positional finish, replacement,
+production, gates and thresholds, LWI position-relative components,
+Stars-by-Value/bust production cells, and Dataset 2 position-normalized
+traits. When ADP-source and canonical position differ, the discrepancy
+must be explicitly adjudicated and documented; a mismatched positional
+ADP rank and production cohort must never be used silently. Mixing a WR
+ADP rank with a TE results cohort, as happened for N'Keal Harry in
+2019-2020, is invalid even when the player identity itself is known
+exactly.
+
+Corrected inputs that change a previously published LWI score receive
+an explicit new historical-label/reproducibility revision. This is
+input-data versioning, not a formula change: the formula's version and
+the corrected-input revision must remain distinguishable so two
+outputs cannot appear comparable merely because their weights and
+thresholds are identical.
+
 ---
 
 ## Undrafted player representation

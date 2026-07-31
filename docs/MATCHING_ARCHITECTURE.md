@@ -17,6 +17,76 @@ exists so that inference is principled and auditable, not ad hoc.
 
 ---
 
+## Approved next architecture: separate identity, position, and team authority
+
+**Methodology status: APPROVED by Evan (2026-07). Implementation
+status: NOT YET IMPLEMENTED.** The matching strategy documented below
+describes the current live code until the approved implementation is
+reviewed and committed. No current generated artifact should be
+described as already implementing this section.
+
+Player identity, fantasy position, team identity, and football usage
+are different facts and must not be collapsed into one field:
+
+- **Player identity** answers which real person an ADP row describes.
+  It is governed by a stable player ID resolved against a player/roster
+  directory before the results join. Position disagreement is
+  corroborating or review evidence only; it must never redirect the
+  ADP row to a different player. A resolved player with no season
+  results row remains `identity_resolved_no_results_row`, rather than
+  being reassigned to a similar observed name. The real 2021 Michael
+  Thomas-to-Mike Thomas failure is the regression case this rule must
+  prevent.
+- **ADP-source position** is the position printed by the contemporaneous
+  ADP source. It is preserved unchanged for provenance and governs
+  positional ADP ranking unless that source value is separately shown
+  to be erroneous.
+- **Official/team position** is the contemporaneous NFL/team-listed
+  position. It is preserved separately as evidence and is not assumed
+  to equal fantasy eligibility for a legitimate hybrid.
+- **Canonical fantasy position** is one separately governed,
+  preseason-frozen position per player-season. It governs positional
+  finish, replacement comparison, LWI, Stars-by-Value/bust position
+  cells, and position-specific Dataset 2 traits. It must be knowable
+  before that season's Week 1; an in-season conversion cannot be
+  backdated into a preseason predictor.
+- **Usage roles** preserve the actual passing, rushing, receiving,
+  return, and snap evidence as nonexclusive facts. Designed carries do
+  not by themselves convert a receiver such as Deebo Samuel or Percy
+  Harvin into a running back.
+
+Canonical fantasy position follows this authority order: verified
+contemporaneous fantasy/ADP position when available and
+football-coherent; otherwise a documented official/team position
+established by the preseason cutoff; otherwise a predeclared named
+fantasy authority. A materially conflicting case stays explicitly
+unresolved until Evan decides -- the results-source position is never
+a silent fallback presented as adjudication.
+
+The approved player-season treatments are:
+
+| Player | Canonical fantasy position treatment |
+|---|---|
+| N'Keal Harry | WR for 2019-2022 only. No approved correction for 2023 or 2024. |
+| Cordarrelle Patterson | WR for 2013-2019; RB from 2021 onward. For 2020, use RB only if a contemporaneous preseason fantasy-position authority corroborates it; otherwise unresolved. |
+| Dexter McCluster | WR in 2011; RB in 2012 and 2014-2016; WR in 2013. |
+| Ty Montgomery | WR in 2016; RB from 2017 onward. |
+| Terrelle Pryor | QB for 2011-2013; WR from 2015 onward. |
+| Deebo Samuel and Percy Harvin | WR; rushing remains usage, not a position conversion. |
+| Taysom Hill | 2023 unresolved pending a named fantasy-position authority. No other Hill season is decided by this entry. |
+
+Team fields follow the same separation. The provider's raw team value
+must be retained unchanged as source provenance. A separately named,
+season-accurate **canonical team** governs matching, team logic, joins,
+and player-facing output. Canonical team construction must distinguish
+historical franchise-code aliases (for example OAK/LV, STL/LA, and
+SD/LAC) from a real player transaction and from a provider field that
+was retrospectively updated. FFC raw team metadata is therefore never
+silently overwritten and must not become an automatic identity
+tie-breaker before its season accuracy is established.
+
+---
+
 ## Normalization rules
 
 Two separate normalization functions exist, deliberately not shared:
