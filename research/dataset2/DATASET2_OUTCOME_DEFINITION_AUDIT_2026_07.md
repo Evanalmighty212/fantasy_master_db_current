@@ -311,9 +311,11 @@ much smaller, more homogeneous tail.
 
 ## 6. Predictor-clustering sensitivity — near-neighbor report and overlap-floor sweep
 
-### 6a. 0.90-0.95 near-neighbor report (real, computed)
+### 6a. Historical 0.90-0.95 near-neighbor report (superseded population)
 
-Real Pearson correlation pairs among the 216 continuous whitelist
+This subsection preserves the original outcome-matched diagnostic; it
+is not the current Dataset 2 clustering population. Real Pearson
+correlation pairs among the then-current 216 continuous whitelist
 columns with `0.90 <= |r| < 0.95` (just below the existing
 `NEAR_DUPLICATE_CORR_THRESHOLD = 0.95` used for both the near-duplicate
 report and clustering's own similarity edges), computed over the same
@@ -340,13 +342,13 @@ ad hoc query, not yet wired into
 0.95 to 0.90 would roughly double the pairs considered "near-duplicate"
 (274 -> 583 cumulative) and — since clustering's own complete-linkage
 similarity edges reuse this same threshold for continuous columns —
-would very likely merge some of today's 133 clusters together
+would very likely merge some of the then-current 133 clusters together
 (plausible candidates: the fam9 window-variant families already
 identified above, and the fam1/fam2 position-z pair). This was NOT
 re-run as a full clustering pass this round (see 6b) — only the raw
 pair list at the lower threshold was computed.
 
-### 6b. Overlap-floor clustering sensitivity at 30/50/100 — REAL RESULT
+### 6b. Historical overlap-floor clustering sensitivity at 30/50/100
 
 **Definition, precise**: `MIN_OVERLAP_N` is the minimum number of
 shared applicable player-season observations required before a
@@ -390,37 +392,30 @@ about the 133-cluster/0-over-10 result. The committed script's own
 ran against a monkeypatched, in-memory copy of the module global, for
 this descriptive comparison alone.
 
-**SUPERSEDED (2026-07, Source A coverage remediation)**: the 133-cluster
-figure above predates both family #18/#88 (built after this audit) and
-the Source A targets/receiving-air-yards coverage remediation (149
-target-derived columns forced null for prediction seasons 2007-2009 —
-see `research/dataset2/SOURCE_A_TARGETS_COVERAGE_REMEDIATION_AUDIT_2026_07.md`).
-Re-run against the current, remediated predictor table: **144 clusters**,
-0 exceeding 10 members, `MIN_OVERLAP_N` 30/50/100 membership still
-identical at all three floors (stability holds). The 0.90-0.95
-near-neighbor band also shifted: 478 pairs (vs. 266 at `|r|>=0.95`),
-computed the same way as §6a below but against the remediated table's
-213 continuous whitelist columns. Full comparison table, including the
-isolated pre-remediation baseline (138 clusters, computed this round by
-temporarily reverting the remediation code to separate its effect from
-the unrelated family #18/#88 growth) and the interpretation of why
-cluster count rose, is in
+**CURRENT (2026-07, discovery-fit implementation and Source A
+remediation)**: the 133-cluster result above and the later
+full-range/outcome-matched 144-cluster diagnostic are both superseded
+for decision-bearing Dataset 2 clustering. The implemented
+calibration reads the canonical predictor table and selects only the
+8,161 rows in prediction seasons 2006-2020. On the current remediated
+state it produces **143 clusters** from 227 content columns, 0
+exceeding 10 members; exact membership is identical at
+`MIN_OVERLAP_N` 30, 50, and 100. The unrestricted continuous bands
+contain 476 pairs at `0.90 <= |r| < 0.95` and 278 at `|r| >= 0.95`
+among 213 eligible continuous columns. The direct discovery-fit
+pre/post Source A comparison and its transition matrix are in
 `research/dataset2/DATASET2_TRAIT_ANALYSIS_PIPELINE_PROPOSAL_2026_07.md`
-§11.8. Not re-executed as a fresh 30/50/100 sweep narrative here to
-avoid duplicating that section — see §11.8 for the authoritative
-current numbers.
+§11.8.
 
 ---
 
 ## 7. Scope note
 
-Every number above was computed directly against the real, current
-(post-age-rebuild, post-team-code-crosswalk) canonical predictor and
-outcome tables. Nothing here changes `bust_primary_label`,
+The original audit numbers above were computed directly against the
+then-current post-age-rebuild, post-team-code-crosswalk predictor and
+outcome tables; the explicitly marked current clustering addendum was
+recomputed under the later discovery-fit implementation. Nothing here
+changes `bust_primary_label`,
 `bust_strict_below_replacement_label`, `star_by_value_label`, the
-predictor whitelist, or the cluster assignments — this is a read-only
-audit layer on top of the frozen Wave 1 state. No commit has been made
-for this round's work; this document,
-`research/dataset2/bust_percentile_band_audit_2026_07.py`, and
-`research/dataset2/overlap_floor_clustering_sensitivity_2026_07.py`
-are all new, uncommitted files.
+predictor whitelist, or cluster assignments; this remains a
+documentation and read-only audit layer over the implemented state.

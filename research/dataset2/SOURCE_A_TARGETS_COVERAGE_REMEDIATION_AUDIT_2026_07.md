@@ -158,16 +158,17 @@ implementation detail for the next round, not resolved here.**
 
 ## 4. Downstream clustering and export impact
 
-**Yes, real downstream impact, not yet regenerated:**
+**SUPERSEDED planning snapshot — real downstream impact, not yet
+regenerated at the time of this section:**
 
-- All 149 affected columns (5 srcA + 144 fam9) are members of the
-  current 434-column predictor whitelist and were real inputs to the
+- All 149 affected columns (5 srcA + 144 fam9) were members of the
+  then-current 434-column predictor whitelist and were real inputs to the
   clustering run in `data/exports/dataset2_trait_pipeline_predictor_clusters.csv`
   (133 clusters, 0 exceeding 10 members) and the near-duplicate report
   (`data/exports/dataset2_trait_pipeline_near_duplicate_pairs.csv`,
   274 pairs at |r|>=0.95, plus the 309-pair 0.90-0.95 band from
   `research/dataset2/DATASET2_OUTCOME_DEFINITION_AUDIT_2026_07.md` §6a).
-  Both were computed against the CURRENT (partially wrong) values for
+  Both were computed against the THEN-CURRENT (partially wrong) values for
   1,544 real rows -- correlation/Jaccard/phi similarity for any pair
   involving one of these 149 columns is provisional until the
   remediation lands and the inventory/clustering script is re-run.
@@ -281,27 +282,32 @@ including boolean-flag `<NA>`-not-`False` checks, prediction-season-2010
 resumption, multi-team-aggregation-after-mask, row-order independence,
 and the 149-column inventory regression test itself).
 
-**Downstream regeneration (§4's action items 1-5, all completed this
-round)**: analysis view rebuilt (outcome counts reconfirmed unchanged:
-`bust_primary_label` positive=522, `bust_strict_below_replacement_label`
-positive=103, `star_by_value_label` positive=76 -- outcome table was
-never opened by this remediation); Wave 1 predictor inventory,
-near-duplicate report, and frozen clustering output all rebuilt
-(deterministic, byte-identical across two runs); `MIN_OVERLAP_N`
-30/50/100 sensitivity re-swept (membership still identical at all three
-floors -- stability holds); 0.90-0.95 near-neighbor band recomputed.
-**Real effect on clustering**: cluster count rose from 138 (the
-isolated pre-remediation, post-family-18/88 baseline, recomputed this
-round by temporarily reverting the remediation code to separate its
-effect from the unrelated interim family growth) to 144 -- an expected
-consequence of correctly nulling previously-invalid values that had
-been inflating overlap and correlation among target-derived Family #9
-columns, not a clustering-methodology change. Full comparison table and
+**Downstream regeneration (§4's action items 1-5)**: the historical
+full-range/outcome-matched regeneration originally recorded here is
+superseded for decision-bearing clustering by the approved
+discovery-fit implementation in commits `648ccad` and `7a64231`.
+Current inventory, near-duplicate, and frozen clustering artifacts are
+fit only on the 8,161 canonical predictor rows in prediction seasons
+2006-2020 and are deterministic across two runs.
+
+**Discovery-fit Source A effect, recomputed directly**: the
+pre-remediation canonical predictor table was rebuilt from commit
+`ce904af`; the current table supplies the post-remediation state. Both
+were filtered solely to prediction seasons 2006-2020 and clustered
+with the same current implementation. Cluster count rose from 135 to
+143; exact membership within each state is unchanged at overlap floors
+30, 50, and 100. Among 213 continuous columns, `|r| >= 0.95` pairs
+changed from 294 to 278 and `0.90 <= |r| < 0.95` pairs from 327 to
+476. The 268 band-changing pairs all touched at least one remediated
+column. This is an expected consequence of removing invalid values,
+not a clustering-methodology change. Full transition accounting and
 interpretation:
 `research/dataset2/DATASET2_TRAIT_ANALYSIS_PIPELINE_PROPOSAL_2026_07.md`
 §11.8. `research/dataset2/bust_percentile_band_audit_2026_07.py`'s
 output was, as predicted in §4 item 6, NOT regenerated (outcome-only,
 unaffected).
 
-Committed locally as two commits (coverage-remediation code/tests;
-regenerated artifacts and doc updates), per instruction -- not pushed.
+The earlier 138-to-144 statement in this audit described a different,
+non-authoritative population and is retained only in repository
+history; it must not be presented as the current Dataset 2
+discovery-fit result.

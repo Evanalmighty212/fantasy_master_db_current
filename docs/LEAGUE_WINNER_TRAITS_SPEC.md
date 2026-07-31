@@ -328,12 +328,12 @@ useful for Dataset 3 later:
 ## Predictor-clustering discovery/holdout boundary -- APPROVED 2026-07
 
 **Methodology status: APPROVED (Evan, 2026-07). Implementation status:
-NOT YET IMPLEMENTED.** This section records the decision itself; it
-does not describe running code, and no predictor-inventory, cluster,
-or representative-selection artifact currently reflects it. Do not
-read anything below as a claim about the current implementation's
-behavior -- see `research/dataset2/DATASET2_TRAIT_ANALYSIS_PIPELINE_PROPOSAL_2026_07.md`
-for what the pipeline actually does today.
+IMPLEMENTED.** Commit `7a64231` makes the canonical predictor table
+the sole clustering source and applies the season-only discovery-fit
+selector below. The predictor inventory, near-duplicate, cluster, and
+overlap-floor artifacts were regenerated under that implementation in
+2026-07; their current decision-bearing population is prediction
+seasons 2006-2020.
 
 **Discovery-fit population**: prediction seasons 2006-2020, inclusive.
 Every decision-bearing predictor-inventory, similarity, near-duplicate,
