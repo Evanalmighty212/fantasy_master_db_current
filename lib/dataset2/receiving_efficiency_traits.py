@@ -41,7 +41,7 @@ exact worked case):
   discrete break. Forced NULL for `prediction_season` 2007-2009 (see
   `_apply_targets_coverage_floor()` below) -- NOT computed from the
   real but unreliable underlying counts, per this project's flag-and-
-  exclude policy. See `config.DATASET2_TARGETS_UNRELIABLE_OBSERVATION_SEASONS`.
+  exclude policy. See `config.DATASET2_SOURCE_A_TARGETS_UNRELIABLE_OBSERVATION_SEASONS`.
 - `prior_season_receiving_yards_per_target` = `prior_season_receiving_yards
   / prior_season_targets`. Same real confounds as catch rate, AND the
   same real 2006-2008 `targets`-unreliability coverage floor applies
@@ -110,7 +110,7 @@ import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from lib.dataset2.common import validate_columns
-from config import DATASET2_TARGETS_UNRELIABLE_OBSERVATION_SEASONS
+from config import DATASET2_SOURCE_A_TARGETS_UNRELIABLE_OBSERVATION_SEASONS
 
 # The real, audited-unreliable OBSERVATION seasons translated to the
 # PREDICTION seasons they get lagged into (prediction_season ==
@@ -118,7 +118,7 @@ from config import DATASET2_TARGETS_UNRELIABLE_OBSERVATION_SEASONS
 # keyed by prediction_season (see build_receiving_efficiency_traits()'s
 # own docstring), so this is the set actually checked against `season`.
 _TARGETS_UNRELIABLE_PREDICTION_SEASONS = frozenset(
-    s + 1 for s in DATASET2_TARGETS_UNRELIABLE_OBSERVATION_SEASONS
+    s + 1 for s in DATASET2_SOURCE_A_TARGETS_UNRELIABLE_OBSERVATION_SEASONS
 )
 
 RECEIVING_EFFICIENCY_REQUIRED_COLUMNS = (
@@ -171,7 +171,7 @@ def build_receiving_efficiency_traits(preseason_usage_df: pd.DataFrame) -> pd.Da
 
     # Real, audited coverage floor -- `targets` is essentially
     # untracked in the real 2006-2008 raw source (see module docstring
-    # and config.DATASET2_TARGETS_UNRELIABLE_OBSERVATION_SEASONS).
+    # and config.DATASET2_SOURCE_A_TARGETS_UNRELIABLE_OBSERVATION_SEASONS).
     # Forced null unconditionally for the affected prediction seasons,
     # even where the real (unreliable) counts would otherwise produce
     # a computable value -- never silently ships a real-but-wrong

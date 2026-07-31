@@ -1020,29 +1020,46 @@ DATASET2_FAM88_HEAVY_TOUCH_WORKLOAD_THRESHOLD = 350
 
 
 # Real, audited data-quality boundary (2026-07, family #18
-# receiving-efficiency work): `targets` in the raw nflverse weekly
-# file (data/raw/nflverse/annual/stats_player_week_{season}.csv) is
-# essentially UNTRACKED for these real OBSERVATION seasons -- verified
-# directly, not assumed: 99.5-99.6% of real player-weeks with a real
-# reception (receptions > 0) show `targets == 0` in each of these three
+# receiving-efficiency work, WIDENED 2026-07 by the Source A
+# remediation audit): `targets` AND `receiving_air_yards` in the raw
+# nflverse weekly file (data/raw/nflverse/annual/stats_player_week_{season}.csv)
+# are essentially UNTRACKED for these real OBSERVATION seasons --
+# verified directly, not assumed: 99.5-99.7% of real player-weeks with
+# a real reception (receptions > 0) show `targets == 0` (99.5-99.6%)
+# AND `receiving_air_yards == 0` (99.6-99.7%) in each of these three
 # seasons (a real recording gap, not a real football outcome -- a
-# catch requires a target by definition), vs. a clean 0.0% in EVERY
-# season 2009 onward -- a sharp, discrete break, not a gradual decline.
-# `receptions` and `receiving_yards_after_catch` are NOT affected
-# (their own audits found full, clean 2006-2025 coverage -- see
-# lib/dataset2/usage_traits.py's own module docstring). STATUS:
-# confirmed via direct real-data audit, not a research judgment call.
-# Applies to any predictor whose real value is LAGGED FROM one of
-# these seasons, i.e. `prediction_season == observation_season + 1`.
-# Scoped this round to family #18's `catch_rate`/
-# `receiving_yards_per_target` (both targets-denominated) -- see
-# lib/dataset2/receiving_efficiency_traits.py. NOT yet applied to the
-# pre-existing `srcA_prior_season_targets`/`target_share`/`wopr`
-# canonical columns (built in an earlier round, same real underlying
-# gap, not in this round's approved scope) -- a real, disclosed, open
-# item for a future round's explicit decision, not silently carried
-# forward as fixed.
-DATASET2_TARGETS_UNRELIABLE_OBSERVATION_SEASONS = (2006, 2007, 2008)
+# catch requires a target by definition), vs. a clean 0.0%/1.8-3.2%
+# respectively in EVERY season 2009 onward -- a sharp, discrete break,
+# not a gradual decline. `passing_air_yards` (the real team-week
+# denominator `air_yards_share` divides by) is INDEPENDENTLY CLEAN
+# across every season (0.2-1.0% real zero rate throughout) -- checked
+# directly, not assumed, but this does NOT save `air_yards_share`
+# itself, since its NUMERATOR (`receiving_air_yards`) is the broken
+# side. `receptions`, `receiving_yards`, `receiving_yards_after_catch`,
+# and `carries` are NOT affected (their own audits found full, clean
+# 2006-2025 coverage -- see lib/dataset2/usage_traits.py's own module
+# docstring). STATUS: confirmed via direct real-data audit, not a
+# research judgment call. Applies to any predictor whose real value is
+# LAGGED FROM one of these seasons, i.e.
+# `prediction_season == observation_season + 1`. Full dependency
+# inventory (149 columns: 5 srcA + 144 family #9 RB/WR/TE receiving
+# opportunity/efficiency/role columns) audited and remediated 2026-07
+# via a single centralized coverage mask -- see
+# lib/dataset2/canonical_predictor_table.py's own
+# `SOURCE_A_TARGETS_UNRELIABLE_COLUMNS`/`apply_source_coverage_null_mask()`
+# and research/dataset2/SOURCE_A_TARGETS_COVERAGE_REMEDIATION_AUDIT_2026_07.md.
+# Family #18's `catch_rate`/`receiving_yards_per_target` were remediated
+# in an earlier round via their own dedicated logic in
+# lib/dataset2/receiving_efficiency_traits.py (unchanged, NOT covered
+# by the centralized mask below, to avoid double-transforming an
+# already-correct result).
+DATASET2_SOURCE_A_TARGETS_UNRELIABLE_OBSERVATION_SEASONS = (2006, 2007, 2008)
+
+# Machine-readable coverage-reason tag for the same real gap -- used
+# by the centralized mask so every nulled cell's cause is auditable
+# back to this one, real, documented finding (never a bare/unexplained
+# null).
+DATASET2_SOURCE_A_TARGETS_COVERAGE_REASON = "source_a_targets_and_receiving_air_yards_unreliable_2006_2008"
 
 
 # --- 2025 MFL ADP: canonical raw value + QB/TE sensitivity-ordering field ---

@@ -23,6 +23,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from lib.dataset2.common import (
+    apply_source_coverage_null_mask,
     build_team_game_index,
     real_reg_week_slots,
     season_length,
@@ -247,3 +248,58 @@ class TestHistoricalTeamCodeAliases:
         first = {s: week1_kickoff_by_team(sched, s) for s in (2015, 2016, 2019)}
         second = {s: week1_kickoff_by_team(sched, s) for s in (2015, 2016, 2019)}
         assert first == second
+
+
+class TestApplySourceCoverageNullMask:
+    """Protects apply_source_coverage_null_mask() -- the CENTRALIZED
+    coverage-remediation mechanism added 2026-07 for the Source A
+    targets/receiving_air_yards 2006-2008 gap (see
+    lib/dataset2/canonical_predictor_table.py's own
+    SOURCE_A_TARGETS_UNRELIABLE_SRC_COLUMNS/_fam9_targets_dependent_columns()
+    and research/dataset2/SOURCE_A_TARGETS_COVERAGE_REMEDIATION_AUDIT_2026_07.md),
+    but written generically since this helper is meant to be reused by
+    any future source-coverage remediation, not re-derived."""
+
+    def test_float_column_masked_to_nan_for_affected_seasons(self):
+        df = pd.DataFrame({"prediction_season": [2007, 2008, 2010], "x": [1.0, 2.0, 3.0]})
+        out = apply_source_coverage_null_mask(df, ["x"], (2007, 2008), "prediction_season")
+        assert pd.isna(out.loc[0, "x"])
+        assert pd.isna(out.loc[1, "x"])
+        assert out.loc[2, "x"] == 3.0
+
+    def test_boolean_column_masked_to_na_not_false(self):
+        df = pd.DataFrame({"prediction_season": [2007, 2010]})
+        df["flag"] = pd.array([True, False], dtype="boolean")
+        out = apply_source_coverage_null_mask(df, ["flag"], (2007,), "prediction_season")
+        assert pd.isna(out.loc[0, "flag"])
+        assert out["flag"].dtype == "boolean"
+        assert out.loc[1, "flag"] == False  # noqa: E712 -- real, unaffected value untouched
+
+    def test_unaffected_seasons_untouched(self):
+        df = pd.DataFrame({"prediction_season": [2006, 2009, 2010], "x": [1.0, 2.0, 3.0]})
+        out = apply_source_coverage_null_mask(df, ["x"], (2007, 2008, 2009), "prediction_season")
+        assert out.loc[0, "x"] == 1.0  # 2006 -- not in the affected prediction-season set
+        assert pd.isna(out.loc[1, "x"])  # 2009 -- affected
+        assert out.loc[2, "x"] == 3.0  # 2010 -- resumes valid
+
+    def test_multiple_columns_masked_together(self):
+        df = pd.DataFrame({"prediction_season": [2008, 2010], "a": [1.0, 2.0], "b": [10.0, 20.0]})
+        out = apply_source_coverage_null_mask(df, ["a", "b"], (2008,), "prediction_season")
+        assert pd.isna(out.loc[0, "a"]) and pd.isna(out.loc[0, "b"])
+        assert out.loc[1, "a"] == 2.0 and out.loc[1, "b"] == 20.0
+
+    def test_raises_on_missing_season_column(self):
+        df = pd.DataFrame({"x": [1.0]})
+        with pytest.raises(ValueError, match="not in df.columns"):
+            apply_source_coverage_null_mask(df, ["x"], (2007,), "prediction_season")
+
+    def test_raises_on_missing_target_column(self):
+        df = pd.DataFrame({"prediction_season": [2007]})
+        with pytest.raises(ValueError, match="columns not in df"):
+            apply_source_coverage_null_mask(df, ["does_not_exist"], (2007,), "prediction_season")
+
+    def test_no_row_count_or_row_order_change(self):
+        df = pd.DataFrame({"prediction_season": [2010, 2007, 2009], "x": [1.0, 2.0, 3.0]})
+        out = apply_source_coverage_null_mask(df, ["x"], (2007, 2009), "prediction_season")
+        assert list(out["prediction_season"]) == [2010, 2007, 2009]
+        assert len(out) == 3

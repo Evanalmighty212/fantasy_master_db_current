@@ -20,6 +20,7 @@ import pandas as pd
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+from lib.dataset2 import canonical_predictor_table as cpt
 from lib.dataset2.canonical_predictor_table import DEFERRED_FAMILIES, build_canonical_predictor_table
 
 AAA_2015_WEEKS = [wk for wk in range(1, 18) if wk != 9]
@@ -628,3 +629,220 @@ class TestDeterminism:
         assert list(out1.columns) == list(out2.columns)
         pd.testing.assert_frame_equal(out1, out2)
         assert list(reg1["canonical_column"]) == list(reg2["canonical_column"])
+
+
+# Real, hardcoded, INDEPENDENTLY-written expected column list for the
+# Source A targets/receiving_air_yards coverage remediation (2026-07)
+# -- see research/dataset2/SOURCE_A_TARGETS_COVERAGE_REMEDIATION_AUDIT_2026_07.md.
+# Deliberately NOT reusing canonical_predictor_table.py's own generator
+# function to build this list -- an inventory regression test that
+# compared the generator against itself could never catch a real drift
+# in the generator's own logic. window_ns=(4,) here (matching this
+# file's own default test window) -- 5 srcA + (8 team-basis + 8
+# active-basis) x 3 positions x 1 window = 5 + 48 = 53.
+_EXPECTED_SOURCE_A_TARGETS_UNRELIABLE_COLUMNS_WINDOW_4 = {
+    "srcA_prior_season_targets",
+    "srcA_prior_season_receiving_air_yards",
+    "srcA_prior_season_target_share",
+    "srcA_prior_season_air_yards_share",
+    "srcA_prior_season_wopr",
+} | {
+    f"fam9_{basis}_final_4_{pos}_{suffix}"
+    for pos in ("rb", "wr", "te")
+    for basis, suffix in (
+        [("team", s) for s in (
+            "receiving_opportunity", "receiving_opportunity_per_team_game", "receiving_efficiency_rate",
+            "receiving_efficiency_volume_eligible_exploratory", "receiving_efficiency_volume_eligible_sensitivity",
+            "receiving_role_present", "receiving_meaningful_role", "receiving_strong_lead_role",
+        )]
+        + [("active", s) for s in (
+            "receiving_opportunity", "receiving_opportunity_per_active_game", "receiving_efficiency_rate",
+            "receiving_efficiency_volume_eligible_exploratory", "receiving_efficiency_volume_eligible_sensitivity",
+            "receiving_role_present", "receiving_meaningful_role", "receiving_strong_lead_role",
+        )]
+    )
+}
+
+
+class TestSourceATargetsCoverageRemediation:
+    """Protects the 2026-07 Source A targets/receiving_air_yards
+    coverage remediation -- research/dataset2/SOURCE_A_TARGETS_COVERAGE_REMEDIATION_AUDIT_2026_07.md.
+    Real observation seasons 2006-2008 have unreliable `targets`/
+    `receiving_air_yards`; every canonical column derived from either
+    is FORCED NULL for prediction_season 2007-2009."""
+
+    @staticmethod
+    def _fixture():
+        """WR "PW" and RB "PR" with real receiving/rushing/snap
+        activity across observation seasons 2006-2009 (prediction
+        seasons 2007-2010) -- RB "PR" is traded from "KC" to "SF"
+        mid-way through observation season 2008 to also exercise
+        multi-team aggregation under the mask. window_ns=(4,) (this
+        file's default)."""
+        pop = _population(
+            (2006, "PW", "WR", "AAA", 16, 8.0, 40, 10),
+            (2007, "PW", "WR", "AAA", 16, 8.0, 40, 10),
+            (2008, "PW", "WR", "AAA", 16, 8.0, 40, 10),
+            (2009, "PW", "WR", "AAA", 16, 8.0, 40, 10),
+            (2010, "PW", "WR", "AAA", 16, 8.0, 40, 10),
+            (2007, "PR", "RB", "KC", 16, 9.0, 30, 8),
+            (2008, "PR", "RB", "KC", 16, 9.0, 30, 8),
+            (2009, "PR", "RB", "SF", 16, 9.0, 30, 8),
+        )
+        players = _players(
+            ("PW", "PfrPW", "1994-01-01", 2005, 72, 195, 2005, 3, 80, "AAA"),
+            ("PR", "PfrPR", "1993-01-01", 2005, 70, 210, 2005, 4, 100, "KC"),
+        )
+        weeks = AAA_2014_WEEKS  # any real 16-week list; season-agnostic
+        weekly_rows = []
+        # WR "PW": real receiving activity every observation season 2006-2009.
+        for season in (2006, 2007, 2008, 2009):
+            weekly_rows += [
+                (season, "PW", wk, "AAA", "REG", 5, 0, 0.0, 10.0, 6.0, 0.0, 0.0, 0.0, 1.0, 0, 8.0, 3, 4)
+                for wk in weeks
+            ]
+        # RB "PR": real rushing AND receiving activity. 2007 with KC
+        # only; 2008 split KC (weeks 1-8) -> SF (weeks 9-16), a real
+        # mid-season trade landing in an AFFECTED observation season.
+        weekly_rows += [
+            (2007, "PR", wk, "KC", "REG", 2, 12, 48.0, 8.0, 4.0, 0.0, 0.0, 1.0, 0.4, 0, 9.0, 1, 2)
+            for wk in weeks
+        ]
+        weekly_rows += [
+            (2008, "PR", wk, "KC", "REG", 2, 12, 48.0, 8.0, 4.0, 0.0, 0.0, 1.0, 0.4, 0, 9.0, 1, 2)
+            for wk in weeks[:8]
+        ]
+        weekly_rows += [
+            (2008, "PR", wk, "SF", "REG", 2, 10, 40.0, 8.0, 4.0, 0.0, 0.0, 1.0, 0.4, 0, 9.0, 1, 2)
+            for wk in weeks[8:]
+        ]
+        weekly = _weekly(weekly_rows)
+        snaps = _snap_counts(
+            [(2007, wk, "KC", "PfrPR", 30, 0.5) for wk in weeks]
+            + [(2008, wk, "KC", "PfrPR", 30, 0.5) for wk in weeks[:8]]
+            + [(2008, wk, "SF", "PfrPR", 28, 0.47) for wk in weeks[8:]]
+        )
+        return pop, players, weekly, snaps
+
+    def test_srcA_columns_nulled_for_affected_prediction_seasons(self):
+        pop, players, weekly, snaps = self._fixture()
+        out, registry, deferred = _build(pop, players, weekly, snaps=snaps)
+        affected = out[(out["player_id"] == "PW") & (out["prediction_season"].isin((2007, 2008, 2009)))]
+        for col in (
+            "srcA_prior_season_targets", "srcA_prior_season_receiving_air_yards",
+            "srcA_prior_season_target_share", "srcA_prior_season_air_yards_share", "srcA_prior_season_wopr",
+        ):
+            assert affected[col].isna().all(), col
+
+    def test_fam9_receiving_columns_nulled_for_affected_seasons(self):
+        pop, players, weekly, snaps = self._fixture()
+        out, registry, deferred = _build(pop, players, weekly, snaps=snaps)
+        affected = out[(out["player_id"] == "PW") & (out["prediction_season"].isin((2007, 2008, 2009)))]
+        for col in _EXPECTED_SOURCE_A_TARGETS_UNRELIABLE_COLUMNS_WINDOW_4:
+            if col.startswith("srcA_"):
+                continue
+            assert affected[col].isna().all(), col
+
+    def test_boolean_flags_are_na_not_false_in_affected_seasons(self):
+        pop, players, weekly, snaps = self._fixture()
+        out, registry, deferred = _build(pop, players, weekly, snaps=snaps)
+        row = out[(out["player_id"] == "PW") & (out["prediction_season"] == 2008)].iloc[0]
+        bool_cols = [
+            "fam9_team_final_4_wr_receiving_role_present",
+            "fam9_team_final_4_wr_receiving_meaningful_role",
+            "fam9_team_final_4_wr_receiving_strong_lead_role",
+            "fam9_team_final_4_wr_receiving_efficiency_volume_eligible_exploratory",
+            "fam9_team_final_4_wr_receiving_efficiency_volume_eligible_sensitivity",
+        ]
+        for col in bool_cols:
+            assert out[col].dtype == "boolean", col
+            assert pd.isna(row[col]), col  # real NA, never a guessed False
+
+    def test_prediction_season_2010_resumes_valid_values(self):
+        pop, players, weekly, snaps = self._fixture()
+        out, registry, deferred = _build(pop, players, weekly, snaps=snaps)
+        row = out[(out["player_id"] == "PW") & (out["prediction_season"] == 2010)].iloc[0]
+        # prediction_season 2010 is lagged from observation season
+        # 2009 -- OUTSIDE the audited 2006-2008 unreliable range.
+        assert not pd.isna(row["srcA_prior_season_targets"])
+        assert row["srcA_prior_season_targets"] == 5 * len(AAA_2014_WEEKS)
+        assert not pd.isna(row["fam9_team_final_4_wr_receiving_opportunity"])
+        assert not pd.isna(row["fam9_team_final_4_wr_receiving_efficiency_rate"])
+
+    def test_receiving_production_receptions_yac_intact_in_affected_seasons(self):
+        pop, players, weekly, snaps = self._fixture()
+        out, registry, deferred = _build(pop, players, weekly, snaps=snaps)
+        row = out[(out["player_id"] == "PW") & (out["prediction_season"] == 2008)].iloc[0]
+        assert not pd.isna(row["srcA_prior_season_receptions"])
+        assert not pd.isna(row["srcA_prior_season_receiving_yards"])
+        assert not pd.isna(row["fam18_prior_season_yac_per_reception"])
+        assert not pd.isna(row["fam9_team_final_4_wr_receiving_production"])
+
+    def test_rushing_snap_points_traits_intact_in_affected_seasons(self):
+        # prediction_season 2008 (lagged from observation season 2007,
+        # single-team KC all season -- NOT the traded 2008 season) so
+        # team-basis metrics are real "applicable", not real
+        # "unavailable_traded" (a separate, pre-existing, unrelated
+        # real design -- see TestGrainAudits::test_traded_player_retained_with_applicable_status_semantics).
+        pop, players, weekly, snaps = self._fixture()
+        out, registry, deferred = _build(pop, players, weekly, snaps=snaps)
+        row = out[(out["player_id"] == "PR") & (out["prediction_season"] == 2008)].iloc[0]
+        for col in (
+            "fam9_team_final_4_rb_rushing_opportunity",
+            "fam9_team_final_4_rb_rushing_production",
+            "fam9_team_final_4_rb_rushing_efficiency_rate",
+            "fam9_team_final_4_rb_rushing_role_present",
+            "fam9_team_final_4_rb_snap_offense_snaps",
+            "fam9_team_final_4_rb_snap_offense_snap_share",
+            "fam9_team_final_4_rb_snap_role_present",
+            "fam9_team_final_4_points_per_team_game",
+            "fam9_team_final_4_points_per_active_game",
+            "srcA_prior_season_carries",
+        ):
+            assert not pd.isna(row[col]), col
+
+    def test_traded_player_multiteam_aggregation_still_works_after_mask(self):
+        pop, players, weekly, snaps = self._fixture()
+        out, registry, deferred = _build(pop, players, weekly, snaps=snaps)
+        assert out.duplicated(subset=["prediction_season", "player_id"]).sum() == 0
+        row = out[(out["player_id"] == "PR") & (out["prediction_season"] == 2009)].iloc[0]
+        # real 2008 season: 12 carries/week x 8 KC weeks + 10 carries/week x 8 SF weeks
+        assert row["srcA_prior_season_carries"] == 12 * 8 + 10 * 8
+        # but the targets-dependent receiving opportunity for that same
+        # (traded, but still 2008-observation-season) row must be null.
+        assert pd.isna(row["fam9_team_final_4_rb_receiving_opportunity"])
+
+    def test_no_duplicate_columns_or_merge_suffixes(self):
+        pop, players, weekly, snaps = self._fixture()
+        out, registry, deferred = _build(pop, players, weekly, snaps=snaps)
+        assert len(out.columns) == len(set(out.columns))
+        assert not any(c.endswith("_x") or c.endswith("_y") for c in out.columns)
+
+    def test_row_order_independence(self):
+        pop, players, weekly, snaps = self._fixture()
+        shuffled_weekly = weekly.sample(frac=1, random_state=42).reset_index(drop=True)
+        out1, reg1, _ = _build(pop, players, weekly, snaps=snaps)
+        out2, reg2, _ = _build(pop, players, shuffled_weekly, snaps=snaps)
+        out1 = out1.sort_values(["prediction_season", "player_id"]).reset_index(drop=True)
+        out2 = out2.sort_values(["prediction_season", "player_id"]).reset_index(drop=True)
+        pd.testing.assert_frame_equal(out1, out2)
+
+    def test_column_inventory_matches_audit_expected_149_set(self):
+        """Regression guard: if a FUTURE change adds a new window_n, a
+        new position, or a new targets-dependent fam9 suffix without
+        updating the centralized generator, this test (comparing an
+        INDEPENDENTLY hardcoded expected set against the real,
+        implemented generator output) must fail loudly rather than
+        silently letting a new target-derived field escape the
+        coverage rule."""
+        implemented = set(cpt.SOURCE_A_TARGETS_UNRELIABLE_SRC_COLUMNS) | set(
+            cpt._fam9_targets_dependent_columns((4,))
+        )
+        assert implemented == _EXPECTED_SOURCE_A_TARGETS_UNRELIABLE_COLUMNS_WINDOW_4
+        assert len(implemented) == 53  # 5 srcA + 48 fam9 (window_ns=(4,) only)
+
+    def test_full_window_set_matches_audited_149_total(self):
+        implemented_full = set(cpt.SOURCE_A_TARGETS_UNRELIABLE_SRC_COLUMNS) | set(
+            cpt._fam9_targets_dependent_columns((4, 6, 8))
+        )
+        assert len(implemented_full) == 149

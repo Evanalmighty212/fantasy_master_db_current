@@ -34,6 +34,8 @@ from lib.dataset2.partial_season_traits import (
     OPPORTUNITY_STATUS_PENDING,
     TEAM_GAME_STATUS_APPLICABLE,
     TEAM_GAME_STATUS_UNAVAILABLE_TRADED,
+    _role_tier_flags,
+    _volume_eligible_flag,
     build_active_game_efficiency_traits,
     build_active_game_final_n_traits,
     build_active_game_role_traits,
@@ -961,3 +963,41 @@ class TestRoleConfigConsistency:
 
     def test_snap_share_covers_every_offense_position(self):
         assert set(DATASET2_ROLE_THRESHOLDS_SNAP_SHARE.keys()) == {"QB", "RB", "WR", "TE"}
+
+
+class TestNullableFlagPropagation:
+    """Direct unit-level proof (added 2026-07 during the Source A
+    targets/receiving_air_yards coverage remediation) that neither
+    `_role_tier_flags()` nor `_volume_eligible_flag()` ever turns a
+    real null input into a real `False` -- both must produce `pd.NA`.
+    Previously only exercised indirectly through the higher-level
+    builder functions; this class isolates the exact concern."""
+
+    def test_role_tier_flags_null_rate_produces_na_not_false(self):
+        rate = pd.Series([None, 0.1, 0.6, 0.9])
+        present, meaningful, strong = _role_tier_flags(rate, (0.2, 0.5, 0.8))
+        assert pd.isna(present.iloc[0])
+        assert pd.isna(meaningful.iloc[0])
+        assert pd.isna(strong.iloc[0])
+        # real, known rates still resolve correctly, not swallowed by the null-safety
+        assert present.iloc[1] == False and meaningful.iloc[1] == False and strong.iloc[1] == False  # noqa: E712
+        assert present.iloc[2] == True and meaningful.iloc[2] == True and strong.iloc[2] == False  # noqa: E712
+        assert present.iloc[3] == True and meaningful.iloc[3] == True and strong.iloc[3] == True  # noqa: E712
+
+    def test_role_tier_flags_output_dtype_is_nullable_boolean(self):
+        rate = pd.Series([None, 0.5])
+        present, meaningful, strong = _role_tier_flags(rate, (0.2, 0.4, 0.6))
+        for flag in (present, meaningful, strong):
+            assert flag.dtype == "boolean"
+
+    def test_volume_eligible_flag_null_opportunity_produces_na_not_false(self):
+        opportunity = pd.Series([None, 5.0, 20.0])
+        flag = _volume_eligible_flag(opportunity, min_value=10.0)
+        assert pd.isna(flag.iloc[0])
+        assert flag.iloc[1] == False  # noqa: E712 -- real, known, below threshold
+        assert flag.iloc[2] == True  # noqa: E712 -- real, known, at/above threshold
+
+    def test_volume_eligible_flag_output_dtype_is_nullable_boolean(self):
+        opportunity = pd.Series([None, 15.0])
+        flag = _volume_eligible_flag(opportunity, min_value=10.0)
+        assert flag.dtype == "boolean"

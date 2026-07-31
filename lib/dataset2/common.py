@@ -12,6 +12,7 @@ had already happened once and was about to happen again.
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
@@ -248,3 +249,48 @@ def within_group_zscore(df: pd.DataFrame, value_col: str, group_col: str) -> pd.
     mean = grouped.transform("mean")
     std = grouped.transform("std").replace(0, float("nan"))
     return (df[value_col] - mean) / std
+
+
+def apply_source_coverage_null_mask(
+    df: pd.DataFrame, columns, affected_seasons, season_column: str, reason: str = None
+) -> pd.DataFrame:
+    """CENTRALIZED source-coverage remediation -- forces every column
+    in `columns` to real null for every row where `df[season_column]`
+    is in `affected_seasons`, dtype-aware (pandas nullable "boolean"
+    columns get `pd.NA`, everything else gets `np.nan`) so a real
+    unsupported-coverage row is NEVER misread as a real `False` or a
+    real `0.0`. Extracted 2026-07 for the Source A
+    targets/receiving_air_yards 2006-2008 remediation
+    (research/dataset2/SOURCE_A_TARGETS_COVERAGE_REMEDIATION_AUDIT_2026_07.md)
+    specifically so a single, auditable mechanism governs every
+    affected column, rather than N separate hardcoded exceptions
+    scattered across N builder functions -- any FUTURE target-derived
+    predictor only needs to be added to its caller's own column list
+    passed into this function, never a new bespoke masking
+    implementation.
+
+    Mutates and returns `df` (same convention as `_cast_boolean_columns`
+    in canonical_predictor_table.py) -- callers that need the original
+    unmasked frame should pass a copy. `reason` is accepted for
+    call-site self-documentation only (e.g.
+    `config.DATASET2_SOURCE_A_TARGETS_COVERAGE_REASON`) -- not stored
+    on the frame itself, since this project's column registry (not the
+    data) is where a missingness reason is recorded per column (see
+    each `_registry_row()` call site's own `missingness_semantics`
+    field).
+
+    Raises loudly if `season_column` or any requested column is
+    missing -- never silently no-ops on a caller typo."""
+    if season_column not in df.columns:
+        raise ValueError(f"apply_source_coverage_null_mask: {season_column!r} not in df.columns")
+    missing = [c for c in columns if c not in df.columns]
+    if missing:
+        raise ValueError(f"apply_source_coverage_null_mask: columns not in df: {sorted(missing)}")
+
+    mask = df[season_column].isin(affected_seasons)
+    for col in columns:
+        if str(df[col].dtype) == "boolean":
+            df.loc[mask, col] = pd.NA
+        else:
+            df.loc[mask, col] = np.nan
+    return df

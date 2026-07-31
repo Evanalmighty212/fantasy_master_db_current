@@ -705,6 +705,23 @@ def build_team_game_half_split_traits(
     return out[list(TEAM_GAME_HALF_SPLIT_OUTPUT_COLUMNS)].reset_index(drop=True)
 
 
+def _volume_eligible_flag(opportunity: pd.Series, min_value: float) -> pd.Series:
+    """`opportunity >= min_value`, nullable-boolean-safe -- returns
+    real `True`/`False` only where `opportunity` itself is real and
+    known, `pd.NA` wherever `opportunity` is null. Deliberately NOT a
+    plain `opportunity >= min_value` comparison, which silently turns
+    a real null opportunity into `False` (the same real numpy/pandas
+    comparison quirk `_role_tier_flags()` above already guards
+    against -- extracted here 2026-07 during the Source A
+    targets/receiving_air_yards coverage remediation so
+    `*_efficiency_volume_eligible_exploratory`/`_sensitivity` get the
+    identical protection, never a second, less-safe implementation)."""
+    flag = pd.Series(pd.NA, index=opportunity.index, dtype="boolean")
+    known = opportunity.notna()
+    flag.loc[known] = opportunity.loc[known] >= min_value
+    return flag
+
+
 def _resolve_efficiency_metric(position: str, metric_name: str):
     key = (position, metric_name)
     if key not in EFFICIENCY_METRICS:
@@ -783,8 +800,12 @@ def build_team_game_efficiency_traits(
     out["team_final_n_efficiency_rate"] = out["team_final_n_production"] / out["team_final_n_opportunity"].replace(
         0, np.nan
     )
-    out["team_final_n_efficiency_volume_eligible_exploratory"] = out["team_final_n_opportunity"] >= exploratory_min
-    out["team_final_n_efficiency_volume_eligible_sensitivity"] = out["team_final_n_opportunity"] >= sensitivity_min
+    out["team_final_n_efficiency_volume_eligible_exploratory"] = _volume_eligible_flag(
+        out["team_final_n_opportunity"], exploratory_min
+    )
+    out["team_final_n_efficiency_volume_eligible_sensitivity"] = _volume_eligible_flag(
+        out["team_final_n_opportunity"], sensitivity_min
+    )
 
     out["position"] = position
     out["metric_name"] = metric_name
@@ -843,11 +864,11 @@ def build_active_game_efficiency_traits(
     out["active_final_n_efficiency_rate"] = out["active_final_n_production"] / out[
         "active_final_n_opportunity"
     ].replace(0, np.nan)
-    out["active_final_n_efficiency_volume_eligible_exploratory"] = (
-        out["active_final_n_opportunity"] >= exploratory_min
+    out["active_final_n_efficiency_volume_eligible_exploratory"] = _volume_eligible_flag(
+        out["active_final_n_opportunity"], exploratory_min
     )
-    out["active_final_n_efficiency_volume_eligible_sensitivity"] = (
-        out["active_final_n_opportunity"] >= sensitivity_min
+    out["active_final_n_efficiency_volume_eligible_sensitivity"] = _volume_eligible_flag(
+        out["active_final_n_opportunity"], sensitivity_min
     )
 
     out["position"] = position

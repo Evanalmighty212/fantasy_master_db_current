@@ -160,7 +160,7 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from lib.dataset2.common import validate_columns
+from lib.dataset2.common import apply_source_coverage_null_mask, validate_columns
 from lib.dataset2.depth_chart_traits import build_depth_chart_traits
 from lib.dataset2.experience_age_draft import build_experience_age_draft_traits
 from lib.dataset2.fragility_traits import build_durability_risk_traits, build_volume_fragility_traits, build_workload_core_traits
@@ -174,6 +174,7 @@ from lib.dataset2.prior_finish_traits import build_prior_finish_traits
 from lib.dataset2.prior_season_traits import build_prior_season_traits
 from lib.dataset2.snap_traits import build_preseason_snap_features, build_raw_player_game_snaps, build_season_snap_usage
 from lib.dataset2.usage_traits import build_preseason_usage_features, build_raw_season_usage
+from config import DATASET2_SOURCE_A_TARGETS_COVERAGE_REASON, DATASET2_SOURCE_A_TARGETS_UNRELIABLE_OBSERVATION_SEASONS
 
 MASTER_POPULATION_REQUIRED_COLUMNS = (
     "season",
@@ -686,6 +687,86 @@ def _build_fam18_layer(srcA_preseason: pd.DataFrame, min_season: int, max_season
     return out, registry
 
 
+# --- Source A targets/receiving_air_yards coverage remediation (2026-07) ---
+#
+# Full, audited dependency inventory:
+# research/dataset2/SOURCE_A_TARGETS_COVERAGE_REMEDIATION_AUDIT_2026_07.md.
+# `targets` and `receiving_air_yards` are essentially untracked in the
+# real raw nflverse weekly file for real OBSERVATION seasons 2006-2008
+# (see config.DATASET2_SOURCE_A_TARGETS_UNRELIABLE_OBSERVATION_SEASONS's
+# own docstring for the real audit numbers) -- every canonical column
+# whose real formula divides by, sums, or gates on either field is
+# FORCED NULL for `prediction_season` 2007-2009 via the ONE centralized
+# `apply_source_coverage_null_mask()` call in
+# `build_canonical_predictor_table()` below, never a scattered
+# per-column exception.
+#
+# Deliberately EXCLUDES `fam18_prior_season_catch_rate`/
+# `fam18_prior_season_receiving_yards_per_target` -- those were already
+# remediated by their OWN dedicated logic in
+# `lib/dataset2/receiving_efficiency_traits.py` (unchanged here, so
+# this centralized pass never double-transforms an already-correct
+# result; nulling an already-null cell would be a harmless no-op
+# either way, but exclusion keeps the two mechanisms cleanly separate
+# and independently auditable).
+SOURCE_A_TARGETS_UNRELIABLE_SRC_COLUMNS = (
+    "srcA_prior_season_targets",
+    "srcA_prior_season_receiving_air_yards",
+    "srcA_prior_season_target_share",
+    "srcA_prior_season_air_yards_share",
+    "srcA_prior_season_wopr",
+)
+
+# Family #9's real EFFICIENCY_METRICS mapping (lib/dataset2/partial_season_traits.py)
+# uses `targets` as the receiving-opportunity denominator for RB/WR/TE
+# receiving specifically (QB passing uses `attempts`, RB rushing uses
+# `carries` -- both unaffected, never included here). Every one of
+# these 8 suffixes, per basis, is built FROM that same real
+# `targets`-denominated opportunity value -- `_production` (receiving_yards,
+# NOT targets) is the one sibling column deliberately NOT listed, per
+# the audit.
+_FAM9_TARGETS_DEPENDENT_POSITIONS = ("rb", "wr", "te")
+_FAM9_TARGETS_DEPENDENT_TEAM_BASIS_SUFFIXES = (
+    "receiving_opportunity",
+    "receiving_opportunity_per_team_game",
+    "receiving_efficiency_rate",
+    "receiving_efficiency_volume_eligible_exploratory",
+    "receiving_efficiency_volume_eligible_sensitivity",
+    "receiving_role_present",
+    "receiving_meaningful_role",
+    "receiving_strong_lead_role",
+)
+_FAM9_TARGETS_DEPENDENT_ACTIVE_BASIS_SUFFIXES = (
+    "receiving_opportunity",
+    "receiving_opportunity_per_active_game",
+    "receiving_efficiency_rate",
+    "receiving_efficiency_volume_eligible_exploratory",
+    "receiving_efficiency_volume_eligible_sensitivity",
+    "receiving_role_present",
+    "receiving_meaningful_role",
+    "receiving_strong_lead_role",
+)
+
+
+def _fam9_targets_dependent_columns(window_ns):
+    """Generates the real, targets-dependent family #9 canonical
+    column names for exactly the `window_ns` this table was actually
+    built with -- NEVER a fixed/hardcoded list, so a future window_n
+    (or a test fixture's deliberately narrower `window_ns`) is
+    automatically covered without a human remembering to update a
+    second list by hand. 8 suffixes x 2 basis x 3 positions x
+    len(window_ns) columns -- 144 for the real, approved
+    `window_ns=(4, 6, 8)`."""
+    cols = []
+    for n in window_ns:
+        for pos in _FAM9_TARGETS_DEPENDENT_POSITIONS:
+            for suffix in _FAM9_TARGETS_DEPENDENT_TEAM_BASIS_SUFFIXES:
+                cols.append(f"fam9_team_final_{n}_{pos}_{suffix}")
+            for suffix in _FAM9_TARGETS_DEPENDENT_ACTIVE_BASIS_SUFFIXES:
+                cols.append(f"fam9_active_final_{n}_{pos}_{suffix}")
+    return cols
+
+
 def build_canonical_predictor_table(
     master_population: pd.DataFrame,
     players_df: pd.DataFrame,
@@ -877,6 +958,32 @@ def build_canonical_predictor_table(
     )
     out = out[["prediction_season", "player_id", "position", "observation_season"] + [c for c in column_order if c not in ("prediction_season", "player_id", "position", "observation_season")]]
     out = out.sort_values(["prediction_season", "player_id"]).reset_index(drop=True)
+
+    # --- Source A targets/receiving_air_yards coverage remediation ---
+    # ONE centralized, auditable mask -- see SOURCE_A_TARGETS_UNRELIABLE_SRC_COLUMNS/
+    # _fam9_targets_dependent_columns()'s own docstrings above for the
+    # full real dependency inventory and rationale.
+    source_a_targets_unreliable_prediction_seasons = tuple(
+        s + 1 for s in DATASET2_SOURCE_A_TARGETS_UNRELIABLE_OBSERVATION_SEASONS
+    )
+    source_a_targets_unreliable_columns = list(SOURCE_A_TARGETS_UNRELIABLE_SRC_COLUMNS) + _fam9_targets_dependent_columns(
+        window_ns
+    )
+    out = apply_source_coverage_null_mask(
+        out,
+        source_a_targets_unreliable_columns,
+        source_a_targets_unreliable_prediction_seasons,
+        "prediction_season",
+        reason=DATASET2_SOURCE_A_TARGETS_COVERAGE_REASON,
+    )
+    for row in registry_rows:
+        if row["canonical_column"] in source_a_targets_unreliable_columns:
+            row["missingness_semantics"] = (
+                row["missingness_semantics"]
+                + f"; ALSO forced null for prediction_season in {source_a_targets_unreliable_prediction_seasons} "
+                f"(real, audited Source A coverage gap -- reason: {DATASET2_SOURCE_A_TARGETS_COVERAGE_REASON!r}, "
+                "see research/dataset2/SOURCE_A_TARGETS_COVERAGE_REMEDIATION_AUDIT_2026_07.md)"
+            )
 
     registry_rows.insert(
         0,
