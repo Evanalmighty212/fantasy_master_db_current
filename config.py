@@ -1006,6 +1006,19 @@ DATASET2_ROLE_THRESHOLDS_SNAP_SHARE = {
 DATASET2_DEPTH_CHART_STRUCTURAL_STARTER_COUNT = {"QB": 1, "RB": 1, "WR": 3, "TE": 1}
 
 
+# Family #88's real, compact workload-core threshold ("prior 350+
+# touch season") -- STATUS: approved, sourced directly from the
+# pre-existing DATASET2_TRAIT_ROADMAP.md family #88 design (its own
+# stated sub-bullet), NOT fit or tuned against any Star/bust outcome --
+# this project's outcome-free predictor-construction firewall
+# (research/dataset2/DATASET2_OUTCOME_DEFINITION_AUDIT_2026_07.md)
+# applies here too. "Touches" = real carries + receptions (completed
+# touches), never carries + targets (targets is a separate real
+# OPPORTUNITY measure, not used in this threshold) -- see
+# lib/dataset2/fragility_traits.py::build_workload_core_traits().
+DATASET2_FAM88_HEAVY_TOUCH_WORKLOAD_THRESHOLD = 350
+
+
 # --- 2025 MFL ADP: canonical raw value + QB/TE sensitivity-ordering field ---
 # NOT under the SBV_* prefix: this feeds the whole master DB (both
 # LWI's overall_adp_model and SBV's expected-production fitting), not

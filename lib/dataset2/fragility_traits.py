@@ -81,19 +81,42 @@ competition" signal from family #12 (Competition quality, Tier 3,
 depends on #4+#10) -- #12 is not yet built, so this module builds ONLY
 the portion that depends on #10 alone, not the full family.
 
---- #88 (split, part): workload/durability risk, age/frame-only
-sub-signals (UNCHANGED by this revision) ---
+--- #88 (split, part): workload/durability risk -- age/frame portion
+(UNCHANGED by this revision) plus the compact PRIOR-SEASON workload
+core (NEW, 2026-07) ---
 
-Input: lib.dataset2.experience_age_draft.build_experience_age_draft_traits()'s
+Age/frame portion input: lib.dataset2.experience_age_draft.build_experience_age_draft_traits()'s
 own output (needs `position`, `body_size_bmi`).
 
 - `body_size_position_z`: BMI z-scored within position, mirroring the
   SAME within-group z-score pattern already approved for families #1/#2
   (`lib.dataset2.common.within_group_zscore()`).
-- `workload_qualified`: the literal string "pending" on every row,
-  same pattern as family #9's `opportunity_qualified` -- the workload
-  proxy this family's original sub-bullets need is not yet retained
-  (same Tier-2 dependency as #9/#16/#20). No threshold invented inline.
+
+Workload-core portion (`build_workload_core_traits()`, 2026-07): the
+literal `workload_qualified="pending"` placeholder this family
+previously carried (same pattern as family #9's `opportunity_qualified`)
+is REMOVED -- the real workload proxy it was waiting on is now built,
+using ONLY Source A (`lib.dataset2.usage_traits.py`), scoped to
+exactly the compact PRIOR-SEASON core approved 2026-07 (see
+research/dataset2/DATASET2_OUTCOME_DEFINITION_AUDIT_2026_07.md §1):
+
+- `prior_season_touches`: real ACTUAL touches, `carries + receptions`
+  -- the conventional fantasy-football definition. Deliberately NEVER
+  `carries + targets` (targets includes incompletions -- a real
+  OPPORTUNITY measure, not a completed touch; `targets` stays
+  available separately as its own canonical column,
+  `srcA_prior_season_targets`, never duplicated here).
+- `prior_season_heavy_touch_workload`: `prior_season_touches >=
+  config.DATASET2_FAM88_HEAVY_TOUCH_WORKLOAD_THRESHOLD` (350) -- the
+  ONE threshold flag from the roadmap's original family #88 design
+  that fits this round's compact, prior-season-only, Source-A-only
+  scope. Deliberately NOT built this round (see the audit doc's §1 and
+  this function's own docstring): "multiple 300+ touch seasons" (needs
+  multi-season history), "heavy playoff workload" (needs real
+  postseason data, out of scope for a REG-only module), and the
+  age/frame-compound flags ("age + high prior workload," "small frame
+  + workhorse role" -- cross-family compounds, not approved this
+  round).
 
 TEST SCOPE: tests/test_dataset2_fragility_traits.py proves
 implementation correctness against synthetic fixtures only.
@@ -112,6 +135,7 @@ import pandas as pd
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from lib.dataset2.common import validate_columns, within_group_zscore
 from lib.dataset2.depth_chart_traits import DEPTH_CHART_STATUS_STARTER
+from config import DATASET2_FAM88_HEAVY_TOUCH_WORKLOAD_THRESHOLD
 
 VOLUME_FRAGILITY_REQUIRED_COLUMNS = (
     "season",
@@ -146,10 +170,17 @@ DURABILITY_RISK_OUTPUT_COLUMNS = (
     "player_id",
     "position",
     "body_size_position_z",
-    "workload_qualified",
 )
 
-WORKLOAD_STATUS_PENDING = "pending"
+WORKLOAD_CORE_REQUIRED_COLUMNS = ("season", "player_id", "position", "prior_season_carries", "prior_season_receptions")
+
+WORKLOAD_CORE_OUTPUT_COLUMNS = (
+    "season",
+    "player_id",
+    "position",
+    "prior_season_touches",
+    "prior_season_heavy_touch_workload",
+)
 
 
 def _wr_league_starter_group_size_norm(out: pd.DataFrame) -> pd.Series:
@@ -218,12 +249,56 @@ def build_volume_fragility_traits(depth_chart_traits_df: pd.DataFrame) -> pd.Dat
 def build_durability_risk_traits(experience_age_draft_df: pd.DataFrame) -> pd.DataFrame:
     """#88 (split, part), age/frame-only portion. Builds directly on
     top of experience_age_draft_df -- covers the same population it
-    does. `workload_qualified` is always "pending" -- see module
-    docstring."""
+    does."""
     validate_columns(experience_age_draft_df, DURABILITY_RISK_REQUIRED_COLUMNS, "experience_age_draft_df")
 
     out = experience_age_draft_df.copy()
     out["body_size_position_z"] = within_group_zscore(out, "body_size_bmi", "position")
-    out["workload_qualified"] = WORKLOAD_STATUS_PENDING
 
     return out[list(DURABILITY_RISK_OUTPUT_COLUMNS)].reset_index(drop=True)
+
+
+def build_workload_core_traits(preseason_usage_df: pd.DataFrame) -> pd.DataFrame:
+    """#88 (split, part), compact PRIOR-SEASON workload-core portion --
+    approved 2026-07 (see module docstring). Builds on
+    lib.dataset2.usage_traits.py's own already-lagged, already-REG-only,
+    already-traded-player-aggregated Source A preseason features.
+    `preseason_usage_df` must be build_preseason_usage_features()'s own
+    output (or an equivalent frame with the same columns) -- this
+    function performs no aggregation of its own, only a same-row
+    arithmetic combination of two already-correct, already-lagged
+    inputs, so every one of usage_traits.py's own real guarantees
+    (REG-only, traded-player-correct, real-zero-vs-null) is inherited
+    automatically, not re-derived here.
+
+    `prior_season_touches`: real ACTUAL touches, `carries + receptions`
+    -- the conventional fantasy-football definition. Deliberately NEVER
+    `carries + targets` (targets includes incompletions -- a real
+    OPPORTUNITY measure, not a completed touch; `targets` stays
+    available separately as its own canonical column,
+    `srcA_prior_season_targets`, never duplicated here). NaN propagates
+    through the sum whenever EITHER input is null -- a rookie's first
+    real season has no season N-1 row at all, so
+    `prior_season_carries`/`prior_season_receptions` are null TOGETHER
+    (both derived from the same lag_join() key-miss, never partially
+    null), never zero-filled.
+
+    `prior_season_heavy_touch_workload`: True iff `prior_season_touches
+    >= config.DATASET2_FAM88_HEAVY_TOUCH_WORKLOAD_THRESHOLD` (350 --
+    the pre-existing, approved "prior 350+ touch season" design from
+    DATASET2_TRAIT_ROADMAP.md's family #88 section, not fit against any
+    outcome). Null wherever prior_season_touches is null -- cast to
+    pandas nullable "boolean" dtype so a real null is never misread as
+    False.
+    """
+    validate_columns(preseason_usage_df, WORKLOAD_CORE_REQUIRED_COLUMNS, "preseason_usage_df")
+
+    out = preseason_usage_df[list(WORKLOAD_CORE_REQUIRED_COLUMNS)].copy()
+    out["prior_season_touches"] = out["prior_season_carries"] + out["prior_season_receptions"]
+
+    has_touches = out["prior_season_touches"].notna()
+    flag = pd.Series(pd.NA, index=out.index, dtype="boolean")
+    flag.loc[has_touches] = out.loc[has_touches, "prior_season_touches"] >= DATASET2_FAM88_HEAVY_TOUCH_WORKLOAD_THRESHOLD
+    out["prior_season_heavy_touch_workload"] = flag
+
+    return out[list(WORKLOAD_CORE_OUTPUT_COLUMNS)].reset_index(drop=True)

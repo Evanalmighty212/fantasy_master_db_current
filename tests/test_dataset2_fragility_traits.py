@@ -250,13 +250,91 @@ class TestBodySizePositionZ:
         assert z["00-3"] == pytest.approx(1.0)
 
 
-class TestWorkloadQualifiedAlwaysPending:
-    def test_always_pending_literal(self):
+class TestDurabilityRiskNoWorkloadPlaceholder:
+    """The literal `workload_qualified="pending"` placeholder was
+    removed 2026-07 once the real compact workload core
+    (TestWorkloadCoreTraits below) was built -- see
+    build_durability_risk_traits()'s own docstring."""
+
+    def test_workload_qualified_column_no_longer_exists(self):
         df = _age_draft_df(
             {"season": 2020, "player_id": "00-1", "position": "WR", "body_size_bmi": 24.0},
         )
         out = ft.build_durability_risk_traits(df)
-        assert set(out["workload_qualified"].unique()) == {"pending"}
+        assert "workload_qualified" not in out.columns
+
+
+def _preseason_usage_df(*rows):
+    cols = ["season", "player_id", "position", "prior_season_carries", "prior_season_receptions"]
+    return pd.DataFrame(list(rows), columns=cols)
+
+
+class TestWorkloadCoreTraits:
+    """Protects build_workload_core_traits() -- family #88's compact
+    PRIOR-SEASON workload core, approved 2026-07 (see
+    research/dataset2/DATASET2_OUTCOME_DEFINITION_AUDIT_2026_07.md §1).
+    Real "touches" = carries + receptions, NEVER carries + targets
+    (targets is a separate real opportunity measure, deliberately not
+    an input to this function at all)."""
+
+    def test_touches_is_carries_plus_receptions(self):
+        df = _preseason_usage_df(
+            {"season": 2023, "player_id": "00-1", "position": "RB", "prior_season_carries": 200, "prior_season_receptions": 45},
+        )
+        out = ft.build_workload_core_traits(df)
+        assert out.loc[0, "prior_season_touches"] == 245
+
+    def test_zero_real_prior_season_touches_is_real_zero_not_null(self):
+        df = _preseason_usage_df(
+            {"season": 2023, "player_id": "00-1", "position": "QB", "prior_season_carries": 0.0, "prior_season_receptions": 0.0},
+        )
+        out = ft.build_workload_core_traits(df)
+        assert out.loc[0, "prior_season_touches"] == 0
+        assert out.loc[0, "prior_season_heavy_touch_workload"] == False  # noqa: E712 -- real False, not null
+
+    def test_missing_prior_history_is_null_not_zero(self):
+        """A rookie's first real season: usage_traits.py's own
+        lag_join() leaves BOTH prior_season_carries and
+        prior_season_receptions null together (no season N-1 row
+        exists at all) -- touches must propagate null, never silently
+        treat the missing inputs as zero."""
+        df = _preseason_usage_df(
+            {"season": 2023, "player_id": "00-rookie", "position": "RB", "prior_season_carries": np.nan, "prior_season_receptions": np.nan},
+        )
+        out = ft.build_workload_core_traits(df)
+        assert pd.isna(out.loc[0, "prior_season_touches"])
+        assert pd.isna(out.loc[0, "prior_season_heavy_touch_workload"])
+
+    def test_heavy_touch_workload_flag_at_real_threshold(self):
+        import config
+        assert config.DATASET2_FAM88_HEAVY_TOUCH_WORKLOAD_THRESHOLD == 350
+        df = _preseason_usage_df(
+            {"season": 2023, "player_id": "00-heavy", "position": "RB", "prior_season_carries": 300, "prior_season_receptions": 50},  # 350, exact boundary
+            {"season": 2023, "player_id": "00-light", "position": "RB", "prior_season_carries": 300, "prior_season_receptions": 49},  # 349, just under
+        )
+        out = ft.build_workload_core_traits(df).set_index("player_id")
+        assert out.loc["00-heavy", "prior_season_heavy_touch_workload"] == True  # noqa: E712
+        assert out.loc["00-light", "prior_season_heavy_touch_workload"] == False  # noqa: E712
+
+    def test_heavy_touch_workload_is_nullable_boolean_dtype(self):
+        df = _preseason_usage_df(
+            {"season": 2023, "player_id": "00-1", "position": "RB", "prior_season_carries": 300, "prior_season_receptions": 50},
+        )
+        out = ft.build_workload_core_traits(df)
+        assert out["prior_season_heavy_touch_workload"].dtype == "boolean"
+
+    def test_required_column_validation(self):
+        bad_df = pd.DataFrame({"season": [2023]})
+        with pytest.raises(ValueError, match="preseason_usage_df is missing required columns"):
+            ft.build_workload_core_traits(bad_df)
+
+    def test_one_row_per_input_row(self):
+        df = _preseason_usage_df(
+            {"season": 2023, "player_id": "00-1", "position": "RB", "prior_season_carries": 100, "prior_season_receptions": 20},
+            {"season": 2023, "player_id": "00-2", "position": "WR", "prior_season_carries": 0, "prior_season_receptions": 60},
+        )
+        out = ft.build_workload_core_traits(df)
+        assert len(out) == 2
 
 
 class TestRequiredColumnValidation:

@@ -47,8 +47,11 @@ built:
   EXCLUSION below)
 - Family #86 (volume-fragility split, the portion implemented on top
   of family #10)
-- Family #88, durability portion (`body_size_position_z` only --
-  `workload_qualified` is EXCLUDED, see DEFERRED FAMILIES below)
+- Family #88 -- age/frame portion (`body_size_position_z`) AND the
+  compact prior-season workload core (`fam88_prior_season_touches`,
+  `fam88_prior_season_heavy_touch_workload`, added 2026-07); the
+  remainder (multi-season touch history, postseason workload,
+  age/frame-compound flags) is EXCLUDED, see DEFERRED FAMILIES below
 
 AGE (FAMILY #2) INCLUSION -- per explicit instruction (2026-07), age
 was moved from deferred to Wave 1. Its real prerequisite
@@ -83,8 +86,9 @@ dated coverage gap for its most recent season -- see
 `family_coverage_notes` in the column registry).
 
 DEFERRED FAMILIES -- approved but not includable this round, listed
-with a real reason, never approximated:
-- Family #2 (age) -- schedules.csv prerequisite not met (see above).
+with a real reason, never approximated (Family #2/age is NO LONGER
+deferred -- see AGE INCLUSION above; this list matches DEFERRED_FAMILIES
+below exactly):
 - Source C / family #12+ (participation-derived predictors) --
   lib.dataset2.participation_traits.py only produces RAW PLAY and
   NORMALIZED PLAYER-PLAY grain output; no player-SEASON aggregate
@@ -92,11 +96,14 @@ with a real reason, never approximated:
   reading that module directly this round -- its season/preseason
   aggregate layer was deliberately removed in an earlier round, see
   that module's own docstring).
-- Family #88's workload proxy (`workload_qualified`) -- always the
-  literal placeholder string `"pending"` in
-  lib.dataset2.fragility_traits.py's own output; not a real trait
-  value, so excluded rather than carried through as a column that
-  would always read the same non-informative string for every row.
+- Family #88's workload sub-signal REMAINDER -- multi-season touch
+  history ("multiple 300+ touch seasons"), real postseason workload
+  ("heavy playoff workload"), and age/frame-compound flags. The
+  COMPACT PRIOR-SEASON workload core (`fam88_prior_season_touches`,
+  `fam88_prior_season_heavy_touch_workload`) IS now built and included,
+  2026-07 -- the literal `"pending"` placeholder this family used to
+  carry is gone entirely, see
+  lib.dataset2.fragility_traits.py::build_workload_core_traits().
 - Dataset 2B (bust) outcome fields -- not a predictor family at all
   (belongs in the separate outcome table, artifact 2), reserved by
   name only per the proposal's §10, not built here.
@@ -148,7 +155,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from lib.dataset2.common import validate_columns
 from lib.dataset2.depth_chart_traits import build_depth_chart_traits
 from lib.dataset2.experience_age_draft import build_experience_age_draft_traits
-from lib.dataset2.fragility_traits import build_durability_risk_traits, build_volume_fragility_traits
+from lib.dataset2.fragility_traits import build_durability_risk_traits, build_volume_fragility_traits, build_workload_core_traits
 from lib.dataset2.partial_season_canonical import (
     DEFAULT_WINDOW_NS,
     build_family9_observation_wide,
@@ -194,11 +201,18 @@ DEFERRED_FAMILIES = (
         "lag into a preseason predictor. Confirmed by reading that module directly.",
     },
     {
-        "family_number": "88 (workload sub-signal)",
-        "family_name": "Workload/durability risk, opportunity-based portion (workload_qualified)",
-        "reason": "lib.dataset2.fragility_traits.py's own output is always the literal "
-        "placeholder string \"pending\" -- not a real trait value yet, so excluded "
-        "rather than carried through as a column that never varies.",
+        "family_number": "88 (workload sub-signal, remainder)",
+        "family_name": "Workload/durability risk -- multi-season touch history, real postseason "
+        "workload, and age/frame-compound flags (the literal \"pending\" placeholder itself is "
+        "GONE -- see below)",
+        "reason": "The compact PRIOR-SEASON workload core (fam88_prior_season_touches, "
+        "fam88_prior_season_heavy_touch_workload) IS now built and included, 2026-07 -- see "
+        "lib.dataset2.fragility_traits.py::build_workload_core_traits(). Still deferred, per "
+        "explicit instruction, and NOT approximated: \"multiple 300+ touch seasons\" (needs "
+        "multi-season history, out of this round's single-prior-season scope), \"heavy playoff "
+        "workload\" (needs real postseason data, out of scope for a REG-only module), and the "
+        "age/frame-compound flags (\"age + high prior workload,\" \"small frame + workhorse "
+        "role\" -- cross-family compounds, not approved this round).",
     },
 )
 
@@ -409,10 +423,18 @@ def _build_srcA_layer(population: pd.DataFrame, weekly_all_season_types: pd.Data
     """Source A prior-season usage, full real field set -- no single
     family number owns these (families #15/#17/#18/#20/#22 all draw
     from this same base), hence the cross-cutting `srcA_` prefix (see
-    module docstring's NAMING section)."""
+    module docstring's NAMING section). `receptions` added 2026-07 to
+    unlock family #88's compact workload core -- same SUM/lag treatment
+    as every other Source A field, no new semantics.
+
+    Also returns the un-renamed `preseason` frame itself (plain
+    `prior_season_*` column names) so family #88's own workload-core
+    layer can reuse it directly -- same reuse-not-recompute pattern
+    already used for Source B's `raw_games` (see
+    `_build_srcB_layer`/family #9's `fam9_raw_snaps` below)."""
     raw_season = build_raw_season_usage(population, weekly_all_season_types)
     preseason = build_preseason_usage_features(raw_season)
-    fields = ("targets", "carries", "receiving_yards", "receiving_air_yards", "passing_epa", "rushing_epa", "receiving_epa", "target_share", "air_yards_share", "wopr")
+    fields = ("targets", "carries", "receiving_yards", "receiving_air_yards", "passing_epa", "rushing_epa", "receiving_epa", "receptions", "target_share", "air_yards_share", "wopr")
     rename = {f"prior_season_{f}": f"srcA_prior_season_{f}" for f in fields}
     out = preseason[["season", "player_id"] + list(rename.keys())].rename(columns=rename)
     registry = [
@@ -424,7 +446,7 @@ def _build_srcA_layer(population: pd.DataFrame, weekly_all_season_types: pd.Data
         )
         for raw_col, canon in rename.items()
     ]
-    return out, registry
+    return out, preseason, registry
 
 
 def _build_srcB_layer(population: pd.DataFrame, snap_counts_all: pd.DataFrame, players_df: pd.DataFrame, min_season: int, max_season: int):
@@ -559,19 +581,50 @@ def _build_fam10_86_layer(population: pd.DataFrame, depth_chart_pre2025_df: pd.D
     return fam10_out, fam86_out, registry
 
 
-def _build_fam88_layer(experience_age_draft_raw: pd.DataFrame, min_season: int, max_season: int):
-    """Family #88, durability portion only -- `body_size_position_z`.
-    `workload_qualified` deliberately excluded, see DEFERRED_FAMILIES."""
+def _build_fam88_layer(experience_age_draft_raw: pd.DataFrame, srcA_preseason: pd.DataFrame, min_season: int, max_season: int):
+    """Family #88 -- age/frame portion (`fam88_body_size_position_z`,
+    unchanged) MERGED with the compact PRIOR-SEASON workload core added
+    2026-07 (`fam88_prior_season_touches`/`fam88_prior_season_heavy_touch_workload`,
+    see lib/dataset2/fragility_traits.py::build_workload_core_traits()'s
+    own docstring for the full real design and what's deliberately NOT
+    built this round). `srcA_preseason` must be `_build_srcA_layer()`'s
+    own un-prefixed `preseason` return value (plain `prior_season_*`
+    names) -- built ONCE and shared, never recomputed a second time."""
     raw = build_durability_risk_traits(experience_age_draft_raw)
-    out = raw[["season", "player_id", "body_size_position_z"]].rename(
+    age_frame_out = raw[["season", "player_id", "body_size_position_z"]].rename(
         columns={"body_size_position_z": "fam88_body_size_position_z"}
     )
+
+    workload = build_workload_core_traits(srcA_preseason)
+    workload_out = workload[["season", "player_id", "prior_season_touches", "prior_season_heavy_touch_workload"]].rename(
+        columns={
+            "prior_season_touches": "fam88_prior_season_touches",
+            "prior_season_heavy_touch_workload": "fam88_prior_season_heavy_touch_workload",
+        }
+    )
+    workload_out = _cast_boolean_columns(workload_out, ["fam88_prior_season_heavy_touch_workload"])
+
+    out = age_frame_out.merge(workload_out, on=["season", "player_id"], how="outer")
+
     registry = [
         _registry_row(
             "fam88_body_size_position_z", "88 (split, part)", "Workload/durability risk (age/frame portion)",
             "experience_age_draft.py output", min_season, max_season, "float64",
             "No BMI (no players.csv match) -> null", "Same as prediction_season", "body_size_position_z",
-        )
+        ),
+        _registry_row(
+            "fam88_prior_season_touches", "88 (split, part)", "Workload/durability risk (prior-season workload core)",
+            "Source A weekly (REG only), via usage_traits.py", min_season + 1, max_season, "float64",
+            "No season N-1 real row (rookie or gap year) -> null; real zero preserved when a real prior-season row "
+            "exists with zero real carries/receptions", "prediction_season - 1", "carries + receptions",
+        ),
+        _registry_row(
+            "fam88_prior_season_heavy_touch_workload", "88 (split, part)", "Workload/durability risk (prior-season workload core)",
+            "Source A weekly (REG only), via usage_traits.py", min_season + 1, max_season, "boolean (nullable)",
+            "Null wherever fam88_prior_season_touches is null (never guessed); threshold = "
+            "config.DATASET2_FAM88_HEAVY_TOUCH_WORKLOAD_THRESHOLD (350)", "prediction_season - 1",
+            "carries + receptions >= 350",
+        ),
     ]
     return out, registry
 
@@ -654,14 +707,14 @@ def build_canonical_predictor_table(
     registry_rows += reg
     fam8_39_44, reg = _build_fam8_39_44_layer(population, min_season, max_season)
     registry_rows += reg
-    srcA, reg = _build_srcA_layer(population, weekly_all_season_types, min_season, max_season)
+    srcA, srcA_preseason, reg = _build_srcA_layer(population, weekly_all_season_types, min_season, max_season)
     registry_rows += reg
     srcB, raw_matched_snaps, reg = _build_srcB_layer(population, snap_counts_all, players_df, min_season, max_season)
     registry_rows += reg
     fam10, fam86, reg = _build_fam10_86_layer(population, depth_chart_pre2025_df, min_season, max_season)
     registry_rows += reg
 
-    fam88, reg = _build_fam88_layer(exp_age_draft_raw, min_season, max_season)
+    fam88, reg = _build_fam88_layer(exp_age_draft_raw, srcA_preseason, min_season, max_season)
     registry_rows += reg
 
     # Family #9's own raw_snaps expects matched, renamed rows -- reuse

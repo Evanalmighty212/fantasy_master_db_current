@@ -41,20 +41,24 @@ def _players(*rows):
 def _weekly(rows):
     """rows: (season, player_id, week, team, season_type, targets, carries, rushing_yards,
     receiving_yards, receiving_air_yards, passing_air_yards, passing_epa, rushing_epa,
-    receiving_epa, attempts, fantasy_points_ppr)."""
+    receiving_epa, attempts, fantasy_points_ppr, receptions=0)."""
     cols = (
         "season", "player_id", "week", "team", "season_type", "targets", "carries", "rushing_yards",
         "receiving_yards", "receiving_air_yards", "passing_air_yards", "passing_epa", "rushing_epa",
-        "receiving_epa", "attempts", "fantasy_points_ppr",
+        "receiving_epa", "attempts", "fantasy_points_ppr", "receptions",
     )
     if not rows:
         return pd.DataFrame(columns=cols)
-    return pd.DataFrame([dict(zip(cols, r)) for r in rows])
+    # `receptions` is optional in each row tuple (defaults to 0) so
+    # existing 16-field fixtures throughout this file don't all need
+    # updating just to add family #88's new required input.
+    padded = [r if len(r) == len(cols) else tuple(r) + (0,) for r in rows]
+    return pd.DataFrame([dict(zip(cols, r)) for r in padded])
 
 
-def _rb_weekly_rows(season, player_id, weeks, team, carries=10, ppg=10.0):
+def _rb_weekly_rows(season, player_id, weeks, team, carries=10, ppg=10.0, receptions=2):
     return [
-        (season, player_id, wk, team, "REG", 2, carries, carries * 4.0, 10.0, 5.0, 0.0, 0.0, 1.0, 0.5, 0, ppg)
+        (season, player_id, wk, team, "REG", 2, carries, carries * 4.0, 10.0, 5.0, 0.0, 0.0, 1.0, 0.5, 0, ppg, receptions)
         for wk in weeks
     ]
 
@@ -348,6 +352,93 @@ class TestMissingnessAndNormalization:
         weekly = _weekly(_rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA"))
         out, registry, deferred = _build(pop, players, weekly)
         assert "fam88_workload_qualified" not in out.columns
+        assert "workload_qualified" not in out.columns
+
+    def test_fam88_workload_core_present_and_computed(self):
+        # Real 2014 season: P1 gets 10 carries/week + 2 receptions/week
+        # x 16 real weeks -- prior_season_touches for the 2015
+        # prediction_season row must equal the real 2014 total.
+        pop = _population(
+            (2014, "P1", "RB", "AAA", 16, 10.0, 20, 5),
+            (2015, "P1", "RB", "AAA", 15, 12.0, 15, 3),
+        )
+        players = _players(("P1", "PfrP1", "1995-01-01", 2010, 70, 210, 2010, 3, 80, "AAA"))
+        weekly = _weekly(
+            _rb_weekly_rows(2014, "P1", AAA_2014_WEEKS, "AAA", carries=10, receptions=2)
+            + _rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA")
+        )
+        out, registry, deferred = _build(pop, players, weekly)
+        row_2015 = out[out["prediction_season"] == 2015].iloc[0]
+        expected_carries = 10 * len(AAA_2014_WEEKS)
+        expected_receptions = 2 * len(AAA_2014_WEEKS)
+        assert row_2015["fam88_prior_season_touches"] == expected_carries + expected_receptions
+        assert row_2015["fam88_prior_season_heavy_touch_workload"] == (
+            (expected_carries + expected_receptions) >= 350
+        )
+
+    def test_fam88_workload_core_null_for_rookie_not_zero(self):
+        # rookie_season == prediction_season -> no real season N-1 row
+        # to lag from -- must be null, never a guessed zero.
+        pop = _population((2015, "P1", "RB", "AAA", 16, 10.0, 20, 5))
+        players = _players(("P1", "PfrP1", "1998-01-01", 2015, 70, 210, 2015, 4, 100, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA"))
+        out, registry, deferred = _build(pop, players, weekly)
+        row = out[out["prediction_season"] == 2015].iloc[0]
+        assert pd.isna(row["fam88_prior_season_touches"])
+        assert pd.isna(row["fam88_prior_season_heavy_touch_workload"])
+
+    def test_fam88_workload_core_traded_player_aggregates_across_teams(self):
+        # Real pattern: P1 traded mid-2014, real touches sum across
+        # BOTH teams into one real prior-season total, no duplicate
+        # (prediction_season, player_id) row created by the trade.
+        pop = _population(
+            (2014, "P1", "RB", "KC", 16, 8.0, 30, 8),
+            (2015, "P1", "RB", "SF", 15, 9.0, 25, 6),
+        )
+        players = _players(("P1", "PfrP1", "1992-01-01", 2010, 70, 210, 2010, 4, 100, "KC"))
+        weekly = _weekly(
+            _rb_weekly_rows(2014, "P1", AAA_2014_WEEKS[:8], "KC", carries=10, receptions=1)
+            + _rb_weekly_rows(2014, "P1", AAA_2014_WEEKS[8:], "SF", carries=8, receptions=1)
+            + _rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "SF")
+        )
+        out, registry, deferred = _build(pop, players, weekly)
+        assert out.duplicated(subset=["prediction_season", "player_id"]).sum() == 0
+        row_2015 = out[out["prediction_season"] == 2015].iloc[0]
+        n_kc, n_sf = len(AAA_2014_WEEKS[:8]), len(AAA_2014_WEEKS[8:])
+        expected = (10 * n_kc + 1 * n_kc) + (8 * n_sf + 1 * n_sf)
+        assert row_2015["fam88_prior_season_touches"] == expected
+
+    def test_srca_prior_season_receptions_present(self):
+        pop = _population(
+            (2014, "P1", "RB", "AAA", 16, 10.0, 20, 5),
+            (2015, "P1", "RB", "AAA", 16, 10.0, 20, 5),
+        )
+        players = _players(("P1", "PfrP1", "1995-01-01", 2010, 70, 210, 2010, 3, 80, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2014, "P1", AAA_2014_WEEKS, "AAA", receptions=3) + _rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA"))
+        out, registry, deferred = _build(pop, players, weekly)
+        row_2015 = out[out["prediction_season"] == 2015].iloc[0]
+        assert row_2015["srcA_prior_season_receptions"] == 3 * len(AAA_2014_WEEKS)
+        assert "srcA_prior_season_receptions" in set(registry["canonical_column"])
+
+    def test_fam88_columns_registered(self):
+        pop = _population((2015, "P1", "RB", "AAA", 16, 10.0, 20, 5))
+        players = _players(("P1", "PfrP1", "1995-01-01", 2010, 70, 210, 2010, 3, 80, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA"))
+        out, registry, deferred = _build(pop, players, weekly)
+        reg_idx = registry.set_index("canonical_column")
+        for col in ("fam88_prior_season_touches", "fam88_prior_season_heavy_touch_workload"):
+            assert col in reg_idx.index
+            row = reg_idx.loc[col]
+            assert row["family_number"] == "88 (split, part)"
+            assert row["missingness_semantics"]
+            assert row["dtype"]
+
+    def test_fam88_heavy_touch_workload_is_nullable_boolean(self):
+        pop = _population((2015, "P1", "RB", "AAA", 16, 10.0, 20, 5))
+        players = _players(("P1", "PfrP1", "1995-01-01", 2010, 70, 210, 2010, 3, 80, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2014, "P1", AAA_2014_WEEKS, "AAA") + _rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA"))
+        out, registry, deferred = _build(pop, players, weekly)
+        assert out["fam88_prior_season_heavy_touch_workload"].dtype == "boolean"
 
     def test_position_inapplicable_flag_reads_as_scoped_not_ordinary_missing(self):
         # A WR's QB-passing-role columns must be recognized as

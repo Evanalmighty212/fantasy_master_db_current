@@ -18,7 +18,12 @@ Built directly from the real, already-cached
 Unlocks the base variables for families #15 (target-earning ability),
 #17 (air-yard profile), #20 (carry profile), #22 (passing-game role
 for running backs), #18's core receiving-efficiency inputs, and #88's
-touch-count sub-signal.
+touch-count sub-signal (`receptions` added 2026-07 specifically to
+unlock family #88's compact workload core -- see
+`lib/dataset2/fragility_traits.py::build_workload_core_traits()` --
+real fantasy "touches" is `carries + receptions`, never `carries +
+targets`; `targets` remains a real, separate OPPORTUNITY measure
+(chances, including incompletions), not a completed touch).
 
 REQUIRED INPUT SCOPE, real finding: `weekly` must be the FULL raw
 weekly file, ALL positions, not pre-filtered to skill positions --
@@ -42,8 +47,10 @@ fail-loud convention exists to prevent.
 AGGREGATION METHOD PER FIELD -- verified against real 2023 data,
 not assumed:
 
-- `targets`, `carries`, `receiving_yards`, `receiving_air_yards`:
-  SUMMED across the season. Real counts/yardage, unambiguous.
+- `targets`, `carries`, `receiving_yards`, `receiving_air_yards`,
+  `receptions`: SUMMED across the season. Real counts/yardage,
+  unambiguous. `receptions` added 2026-07 -- same SUM treatment as
+  `targets`/`carries`, no new aggregation logic.
 - `passing_epa`, `rushing_epa`, `receiving_epa`: SUMMED. Verified real:
   these are per-week TOTALS (not per-play averages) already -- a
   player's weekly EPA scales with their real weekly volume (spot-
@@ -162,6 +169,7 @@ WEEKLY_REQUIRED_COLUMNS = (
     "passing_epa",
     "rushing_epa",
     "receiving_epa",
+    "receptions",
 )
 
 # Real counts/totals, summed across the season -- unambiguous.
@@ -173,6 +181,7 @@ SUM_FIELDS = (
     "passing_epa",
     "rushing_epa",
     "receiving_epa",
+    "receptions",
 )
 
 # Season-level shares/rates RECOMPUTED from real summed numerators and
