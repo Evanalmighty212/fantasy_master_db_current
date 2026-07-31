@@ -99,6 +99,18 @@ class TestPriorSeasonGamesPlayed:
         out = pst.build_prior_season_traits(pop)
         assert pd.isna(out.loc[0, "prior_season_games_played"])
 
+    def test_traded_player_18_game_fact_is_not_capped(self):
+        """Rashid Shaheed's verified 2025 extra-game case must remain
+        18 when carried into Dataset 2's raw prior-season games trait;
+        one team's 17-game schedule is not a player-season ceiling."""
+        pop = _population_df(
+            {"season": 2025, "player_id": "00-SHAHEED", "position": "WR", "team": "SEA", "ppg_ppr": 10.0, "games_played": 18},
+            {"season": 2026, "player_id": "00-SHAHEED", "position": "WR", "team": "SEA", "ppg_ppr": 10.0, "games_played": 17},
+        )
+        out = pst.build_prior_season_traits(pop)
+        row_2026 = out[out["season"] == 2026].iloc[0]
+        assert row_2026["prior_season_games_played"] == 18
+
 
 class TestChangedTeam:
     def test_same_team_is_zero(self):

@@ -119,6 +119,70 @@ class TestDuplicateWeekHandling:
         assert row["fantasy_points_ppr"] == 37.0  # 15 + 20 + 2, not double-counted
 
 
+class TestTradedPlayerExtraGameSeason:
+    """Regression coverage for Rashid Shaheed's verified 2025 case:
+    changing teams and avoiding both club byes can produce 18 real
+    involvement weeks even though each club plays only 17 games."""
+
+    def test_18_distinct_regular_season_weeks_are_preserved(self, tmp_path, monkeypatch):
+        rows = [
+            make_weekly_row(
+                2025,
+                week,
+                "00-SHAHEED",
+                "Traded Player",
+                "WR",
+                "NO" if week <= 9 else "SEA",
+                targets=1,
+                points=10.0,
+            )
+            for week in range(1, 19)
+        ]
+
+        with patch("nflverse_source.fetch_and_normalize", return_value=pd.DataFrame(rows)):
+            mod = load_module(tmp_path, monkeypatch)
+            mod.SEASONS = [2025]
+            season = mod.build_season_results()
+
+        row = season.loc[season["player_id"] == "00-SHAHEED"].iloc[0]
+        assert row["games_played"] == 18
+        assert row["ppg_ppr"] == 10.0
+        assert row["teams_all"] == "NO,SEA"
+
+        weekly = pd.read_csv(tmp_path / "data/raw/nflverse/weekly_results_ppr_2025_2025.csv")
+        assert len(weekly) == 18
+        assert not weekly.duplicated(["season", "player_id", "week"]).any()
+        assert weekly["week"].tolist() == list(range(1, 19))
+
+    def test_2021_plus_week_19_fails_loudly(self, tmp_path, monkeypatch):
+        rows = [make_weekly_row(2025, 19, "00-X", "Postseason Leak", "WR", "NO", targets=1)]
+        with patch("nflverse_source.fetch_and_normalize", return_value=pd.DataFrame(rows)):
+            mod = load_module(tmp_path, monkeypatch)
+            mod.SEASONS = [2025]
+            with pytest.raises(ValueError, match="1-18 from 2021 onward"):
+                mod.build_season_results()
+
+    def test_non_reg_row_fails_loudly(self, tmp_path, monkeypatch):
+        row = make_weekly_row(2025, 18, "00-X", "Postseason Leak", "WR", "NO", targets=1)
+        row["season_type"] = "POST"
+        with patch("nflverse_source.fetch_and_normalize", return_value=pd.DataFrame([row])):
+            mod = load_module(tmp_path, monkeypatch)
+            mod.SEASONS = [2025]
+            with pytest.raises(ValueError, match="contains non-REG rows"):
+                mod.build_season_results()
+
+    def test_duplicate_player_week_after_aggregation_fails_loudly(self, tmp_path, monkeypatch):
+        mod = load_module(tmp_path, monkeypatch)
+        duplicate = pd.DataFrame(
+            [
+                {"season": 2025, "player_id": "00-X", "week": 1},
+                {"season": 2025, "player_id": "00-X", "week": 1},
+            ]
+        )
+        with pytest.raises(ValueError, match="duplicate .* keys after aggregation"):
+            mod.validate_weekly_player_output(duplicate)
+
+
 def _write_position_overrides(tmp_path, *rows):
     """Writes data/manual/position_overrides.csv inside tmp_path (the
     redirected RAW_DIR-adjacent cwd from load_module) -- load_module's

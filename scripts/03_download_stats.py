@@ -116,7 +116,12 @@ sys.path.append(str(Path(__file__).resolve().parent))
 import pandas as pd
 
 import nflverse_source
-from config import SEASONS
+from config import (
+    SEASONS,
+    SBV_SEASON_LENGTH_16_GAME,
+    SBV_SEASON_LENGTH_17_GAME,
+    SBV_SEASON_LENGTH_ERA_CUTOFF,
+)
 
 RAW_DIR = Path("data/raw/nflverse")
 RAW_DIR.mkdir(parents=True, exist_ok=True)
@@ -139,6 +144,61 @@ INVOLVEMENT_COLS = ["attempts", "carries", "targets"]
 GROUP_KEY = ["season", "player_id"]
 
 POSITION_OVERRIDES_PATH = Path("data/manual/position_overrides.csv")
+
+
+def _regular_season_week_slot_limit(season):
+    """Maximum real REG calendar-week number: 17 through 2020, 18
+    from 2021 onward. This is a league calendar bound, not one team's
+    schedule length; a traded player can legitimately play in all 18
+    distinct slots after avoiding both teams' byes."""
+    season_length = (
+        SBV_SEASON_LENGTH_17_GAME
+        if season >= SBV_SEASON_LENGTH_ERA_CUTOFF
+        else SBV_SEASON_LENGTH_16_GAME
+    )
+    return season_length + 1
+
+
+def validate_normalized_weekly_source(weekly):
+    """Fail loudly if normalized source rows can leak postseason weeks
+    or impossible REG calendar slots into season aggregation."""
+    required = {"season", "player_id", "week", "season_type"}
+    missing = sorted(required - set(weekly.columns))
+    if missing:
+        raise ValueError(f"Normalized weekly source is missing required columns: {missing}")
+
+    if not weekly["season_type"].eq("REG").all():
+        bad_types = sorted(weekly.loc[weekly["season_type"] != "REG", "season_type"].astype(str).unique())
+        raise ValueError(
+            "Normalized weekly source contains non-REG rows "
+            f"({bad_types}); postseason data must not enter season aggregation."
+        )
+
+    seasons = pd.to_numeric(weekly["season"], errors="coerce")
+    weeks = pd.to_numeric(weekly["week"], errors="coerce")
+    integer_values = seasons.notna() & weeks.notna() & seasons.mod(1).eq(0) & weeks.mod(1).eq(0)
+    slot_limits = seasons.map(lambda s: _regular_season_week_slot_limit(int(s)) if pd.notna(s) else pd.NA)
+    valid = integer_values & weeks.ge(1) & weeks.le(slot_limits)
+    if not valid.all():
+        examples = weekly.loc[~valid, ["season", "player_id", "week"]].head(5).to_dict("records")
+        raise ValueError(
+            "Normalized weekly source contains invalid or postseason calendar-week slots; "
+            f"expected weeks 1-17 through 2020 and 1-18 from 2021 onward. Examples: {examples}"
+        )
+
+
+def validate_weekly_player_output(weekly_out):
+    """Validate the one-row-per-real-REG-player-week export contract."""
+    validation_frame = weekly_out if "season_type" in weekly_out.columns else weekly_out.assign(season_type="REG")
+    validate_normalized_weekly_source(validation_frame)
+    key = ["season", "player_id", "week"]
+    duplicates = weekly_out.duplicated(subset=key, keep=False)
+    if duplicates.any():
+        examples = weekly_out.loc[duplicates, key].head(5).to_dict("records")
+        raise ValueError(
+            "Weekly player output contains duplicate (season, player_id, week) keys "
+            f"after aggregation. Examples: {examples}"
+        )
 
 
 def load_position_overrides():
@@ -211,6 +271,7 @@ def build_season_results():
         raise RuntimeError("No weekly data downloaded.")
 
     weekly = pd.concat(frames, ignore_index=True)
+    validate_normalized_weekly_source(weekly)
 
     pd.DataFrame(failed).to_csv(RAW_DIR / "weekly_download_failures.csv", index=False)
 
@@ -411,6 +472,7 @@ def build_season_results():
         )
         .sort_values(GROUP_KEY + ["week"])
     )
+    validate_weekly_player_output(weekly_out)
 
     weekly_out_path = RAW_DIR / f"weekly_results_ppr_{SEASONS[0]}_{SEASONS[-1]}.csv"
     weekly_out.to_csv(weekly_out_path, index=False)

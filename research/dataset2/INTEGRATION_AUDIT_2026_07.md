@@ -165,13 +165,15 @@ rows, 10,566 real skill-position player-seasons 2006-2024)
    years, more roster churn in 17-game seasons, or both) was not fully
    root-caused. Non-blocking; worth revisiting if #10-derived traits
    show an unexplained era effect later.
-4. **One pre-existing, unrelated data-quality anomaly**: a single real
-   2025 master-DB row (Rashid Shaheed) shows `games_played = 18`,
-   exceeding the real 17-game season length. This is an upstream
-   master-DB issue, not Dataset 2 code, and currently has ZERO effect
-   on any Dataset 2 output (no season 2026 exists yet to lag from it) —
-   but will silently produce a wrong `prior_season_games_played` once
-   2026 data arrives, unless corrected upstream first.
+4. **One verified traded-player extra-game case**: Rashid Shaheed's
+   2025 master-DB row correctly shows `games_played = 18`. He recorded
+   fantasy involvement in 18 distinct regular-season calendar weeks
+   after an in-season trade and avoided both teams' byes. The value is
+   factual, not an anomaly or upstream master-data error: a player's
+   season can exceed one club's 17-game schedule while remaining within
+   the 18 available 2021+ regular-season calendar-week slots. Dataset 2
+   must preserve 18 when the value becomes
+   `prior_season_games_played` for 2026 rather than capping it at 17.
 5. `starter_group_size == 0` (18 real rows) is a real, if unusual,
    state — worth knowing it exists, not itself actionable.
 
