@@ -1062,6 +1062,74 @@ DATASET2_SOURCE_A_TARGETS_UNRELIABLE_OBSERVATION_SEASONS = (2006, 2007, 2008)
 DATASET2_SOURCE_A_TARGETS_COVERAGE_REASON = "source_a_targets_and_receiving_air_yards_unreliable_2006_2008"
 
 
+# --- Dataset 2 predictor-clustering discovery-fit boundary (approved 2026-07) ---
+# METHODOLOGY LOCKED -- see docs/LEAGUE_WINNER_TRAITS_SPEC.md's
+# "Predictor-clustering discovery/holdout boundary" section (commit
+# 648ccad) for the full approved rule. Every decision-bearing
+# predictor-inventory, similarity, near-duplicate, redundancy,
+# clustering, and representative-selection computation must be fit
+# EXCLUSIVELY on prediction_season in
+# [DISCOVERY_FIT_START_SEASON, DISCOVERY_FIT_END_SEASON], inclusive.
+# 2021-2025 is the protected evaluation holdout, reserved for Phase 1;
+# 2026 is the future application cohort -- neither is touched by this
+# selection. Selection depends solely on prediction_season -- never
+# outcome_join_status or any outcome/label/target/eligibility field.
+# This is enforced structurally, not just behaviorally: see
+# lib/dataset2/common.py::filter_to_discovery_fit_predictor_rows(),
+# which reads only the canonical predictor table (which has no such
+# column at all), never the joined analysis view. A future, separately
+# identified production refit (data through 2025) is anticipated but
+# NOT implemented by this constant.
+DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_START_SEASON = 2006
+DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_END_SEASON = 2020
+
+# Positive, explicit definition of "the full HISTORICAL predictor
+# range" -- used ONLY as the comparator population for distinguishing
+# discovery_fit_degenerate columns (real variance historically, just
+# not within the narrower discovery-fit window above) from columns
+# that are constant everywhere. Deliberately a POSITIVE season range,
+# never "every row except 2026" -- a negative/exclusionary definition
+# would silently widen to include any future stray out-of-range row
+# (e.g. a data error before 2006 or after 2026) instead of rejecting
+# it. 2026 (the future application cohort) is excluded by simply not
+# being in this range, not by being named and subtracted out.
+DATASET2_PREDICTOR_CLUSTERING_HISTORICAL_RANGE_START_SEASON = 2006
+DATASET2_PREDICTOR_CLUSTERING_HISTORICAL_RANGE_END_SEASON = 2025
+
+
+def validate_dataset2_predictor_clustering_config():
+    """Fail loudly on invalid discovery-fit/historical-range season
+    configuration -- mirrors validate_mfl_2025_correction_config()'s
+    role and calling convention. Called at the top of every
+    lib/dataset2/common.py season-based selector
+    (filter_to_discovery_fit_predictor_rows(),
+    filter_to_historical_predictor_rows()) every time it runs, not
+    only at pipeline startup."""
+    errors = []
+    discovery_start = DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_START_SEASON
+    discovery_end = DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_END_SEASON
+    historical_start = DATASET2_PREDICTOR_CLUSTERING_HISTORICAL_RANGE_START_SEASON
+    historical_end = DATASET2_PREDICTOR_CLUSTERING_HISTORICAL_RANGE_END_SEASON
+
+    for start, end, label in (
+        (discovery_start, discovery_end, "DISCOVERY_FIT"),
+        (historical_start, historical_end, "HISTORICAL_RANGE"),
+    ):
+        if not isinstance(start, int) or not isinstance(end, int):
+            errors.append(f"DATASET2_PREDICTOR_CLUSTERING_{label}_START_SEASON and ..._END_SEASON must both be plain ints")
+        elif start >= end:
+            errors.append(
+                f"DATASET2_PREDICTOR_CLUSTERING_{label}_START_SEASON ({start}) must be "
+                f"strictly less than ..._END_SEASON ({end})"
+            )
+
+    if errors:
+        raise ValueError(
+            "Invalid Dataset 2 predictor-clustering discovery-fit/historical-range configuration in config.py:\n  - "
+            + "\n  - ".join(errors)
+        )
+
+
 # --- 2025 MFL ADP: canonical raw value + QB/TE sensitivity-ordering field ---
 # NOT under the SBV_* prefix: this feeds the whole master DB (both
 # LWI's overall_adp_model and SBV's expected-production fitting), not

@@ -16,7 +16,26 @@ import numpy as np
 import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from config import SBV_SEASON_LENGTH_16_GAME, SBV_SEASON_LENGTH_17_GAME, SBV_SEASON_LENGTH_ERA_CUTOFF
+from config import (
+    DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_END_SEASON,
+    DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_START_SEASON,
+    DATASET2_PREDICTOR_CLUSTERING_HISTORICAL_RANGE_END_SEASON,
+    DATASET2_PREDICTOR_CLUSTERING_HISTORICAL_RANGE_START_SEASON,
+    SBV_SEASON_LENGTH_16_GAME,
+    SBV_SEASON_LENGTH_17_GAME,
+    SBV_SEASON_LENGTH_ERA_CUTOFF,
+    validate_dataset2_predictor_clustering_config,
+)
+
+# family_number tag for identity/spine columns in the canonical
+# predictor table's own data dictionary (prediction_season, player_id,
+# position, observation_season) -- see
+# lib/dataset2/analysis_view.py::_predictor_role(), which encodes the
+# same real distinction for the analysis-view whitelist. Kept as its
+# own constant here (not re-imported from analysis_view.py) since
+# derive_predictor_whitelist_from_registry() below deliberately never
+# reads the analysis view or anything view-derived.
+DATASET2_SPINE_FAMILY_NUMBER = "N/A (spine)"
 
 
 def season_length(season: int) -> int:
@@ -294,3 +313,145 @@ def apply_source_coverage_null_mask(
         else:
             df.loc[mask, col] = np.nan
     return df
+
+
+def _validated_prediction_season(predictor_df: pd.DataFrame, caller: str) -> pd.Series:
+    """Shared, strengthened `prediction_season` validation for every
+    Dataset 2 predictor-clustering season selector -- a single place
+    so the two selectors below can never drift apart on what counts as
+    a valid season. Raises loudly -- never silently drops or coerces
+    -- on any of:
+
+    - column missing entirely
+    - boolean dtype (pandas classifies bool as "numeric," which would
+      otherwise silently pass a plain is_numeric_dtype check)
+    - any other non-numeric dtype (e.g. strings like "2006")
+    - any null value
+    - any non-finite value (inf/-inf)
+    - any non-integer-valued entry (e.g. 2006.5) -- a real season
+      number is always a whole year, never a fraction
+
+    Returns the original `prediction_season` Series unchanged (its own
+    dtype, not coerced) for the caller to build a boolean mask from --
+    the float64 conversion above is a temporary internal copy used only
+    for the finite/integer-value checks, never returned."""
+    if "prediction_season" not in predictor_df.columns:
+        raise ValueError(f"{caller}: 'prediction_season' not in predictor_df.columns")
+    season = predictor_df["prediction_season"]
+    if pd.api.types.is_bool_dtype(season) or not pd.api.types.is_numeric_dtype(season):
+        raise ValueError(f"{caller}: 'prediction_season' must be numeric, got dtype {season.dtype}")
+    if season.isna().any():
+        raise ValueError(f"{caller}: 'prediction_season' contains null values")
+    numeric = season.astype("float64")
+    if not np.isfinite(numeric.to_numpy()).all():
+        raise ValueError(f"{caller}: 'prediction_season' contains non-finite values (inf/-inf)")
+    if not (numeric == numeric.round()).all():
+        raise ValueError(f"{caller}: 'prediction_season' contains non-integer-valued entries")
+    return season
+
+
+def filter_to_discovery_fit_predictor_rows(predictor_df: pd.DataFrame) -> pd.DataFrame:
+    """The ONE, centralized discovery-fit row selector for Dataset 2
+    predictor-clustering work (predictor inventory, similarity,
+    near-duplicate, redundancy, clustering, representative selection)
+    -- methodology locked 2026-07, see
+    docs/LEAGUE_WINNER_TRAITS_SPEC.md's "Predictor-clustering
+    discovery/holdout boundary" section (commit 648ccad).
+
+    Selection depends SOLELY on `prediction_season`, restricted to
+    [DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_START_SEASON,
+    ..._END_SEASON] inclusive -- never `outcome_join_status` or any
+    outcome/label/target/eligibility field. This is enforced
+    structurally, not just behaviorally: `predictor_df` is expected to
+    be (or behave like) the canonical predictor table itself, which
+    has no such column at all -- callers must never pass the joined
+    analysis view here. Even a caller who mutates in extra
+    outcome-shaped columns onto `predictor_df` cannot change this
+    function's row selection, since only `prediction_season` is ever
+    read.
+
+    Pure: does not mutate `predictor_df` (returns a copy), preserves
+    original row order and every column. See
+    _validated_prediction_season() for the exact malformed-input
+    rejection rules."""
+    season = _validated_prediction_season(predictor_df, "filter_to_discovery_fit_predictor_rows")
+    validate_dataset2_predictor_clustering_config()
+    start = DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_START_SEASON
+    end = DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_END_SEASON
+    mask = (season >= start) & (season <= end)
+    return predictor_df.loc[mask].copy()
+
+
+def filter_to_historical_predictor_rows(predictor_df: pd.DataFrame) -> pd.DataFrame:
+    """Positive, explicit selector for the full HISTORICAL predictor
+    population -- prediction_season in
+    [DATASET2_PREDICTOR_CLUSTERING_HISTORICAL_RANGE_START_SEASON,
+    ..._END_SEASON] inclusive (2006-2025 as configured). Used ONLY as
+    the comparator population for classify_column_constancy()'s
+    discovery_fit_degenerate detection -- never for clustering fit
+    itself (see filter_to_discovery_fit_predictor_rows() for that).
+
+    Deliberately POSITIVE, not "every row except 2026": a negative/
+    exclusionary definition would silently include any future stray
+    out-of-range row (a pre-2006 or post-2026 data error) instead of
+    excluding it. Same outcome-independence guarantee as
+    filter_to_discovery_fit_predictor_rows() -- selection depends
+    solely on `prediction_season`, never any outcome-side column.
+
+    Pure: does not mutate `predictor_df` (returns a copy), preserves
+    original row order and every column. See
+    _validated_prediction_season() for the exact malformed-input
+    rejection rules."""
+    season = _validated_prediction_season(predictor_df, "filter_to_historical_predictor_rows")
+    validate_dataset2_predictor_clustering_config()
+    start = DATASET2_PREDICTOR_CLUSTERING_HISTORICAL_RANGE_START_SEASON
+    end = DATASET2_PREDICTOR_CLUSTERING_HISTORICAL_RANGE_END_SEASON
+    mask = (season >= start) & (season <= end)
+    return predictor_df.loc[mask].copy()
+
+
+def derive_predictor_whitelist_from_registry(registry: pd.DataFrame) -> list:
+    """Mechanically derives the predictor-column whitelist from the
+    canonical predictor table's own data dictionary
+    (`canonical_column`/`family_number`), excluding identity/spine
+    fields (`family_number == DATASET2_SPINE_FAMILY_NUMBER`) -- never a
+    hand-maintained list, and never the analysis-view whitelist (which
+    is derived from the joined view, not the predictor table alone).
+
+    Sorted for deterministic downstream iteration order -- this
+    project's own documented hash-randomization determinism bug (see
+    research/dataset2/trait_analysis_pipeline_predictor_inventory.py's
+    module docstring) makes unsorted set/list construction a real,
+    previously-caught failure mode here, not a hypothetical one."""
+    validate_columns(registry, ("canonical_column", "family_number"), "registry")
+    return sorted(
+        registry.loc[registry["family_number"] != DATASET2_SPINE_FAMILY_NUMBER, "canonical_column"].tolist()
+    )
+
+
+def classify_column_constancy(full_range_df: pd.DataFrame, fit_df: pd.DataFrame, columns) -> dict:
+    """Per-column constancy classification across two populations of
+    the SAME predictor table -- never conflates a column that is
+    constant everywhere with one that is only constant within the
+    narrower discovery-fit window. Returns {column: status}, where
+    status is one of:
+
+    - "varies": more than one real non-null value in `fit_df`.
+    - "universally_constant": at most one real non-null value in BOTH
+      `full_range_df` and `fit_df`.
+    - "discovery_fit_degenerate": at most one real non-null value in
+      `fit_df` but genuine variance (more than one real non-null
+      value) in `full_range_df` -- real information exists for this
+      column, it simply doesn't vary within the approved discovery
+      window. Must be reported as its own status, never silently
+      folded into "universally_constant" or omitted from an inventory
+      that reports constant columns."""
+    result = {}
+    for col in columns:
+        fit_n = fit_df[col].dropna().nunique()
+        if fit_n > 1:
+            result[col] = "varies"
+            continue
+        full_n = full_range_df[col].dropna().nunique()
+        result[col] = "discovery_fit_degenerate" if full_n > 1 else "universally_constant"
+    return result

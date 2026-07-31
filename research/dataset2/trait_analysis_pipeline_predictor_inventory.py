@@ -3,18 +3,36 @@ research/dataset2/trait_analysis_pipeline_predictor_inventory.py
 
 Real-data predictor inventory backing
 DATASET2_TRAIT_ANALYSIS_PIPELINE_PROPOSAL_2026_07.md §1. Structural
-characterization of the 431-column predictor whitelist ONLY -- no
-predictor is ever compared against an outcome/target column here. This
-is explicitly NOT outcome testing: it touches only
-lib/dataset2/analysis_view.py's already-built, already-committed
-outputs (predictor whitelist + column registry) and the predictor
-columns' own values, never `star_by_value_label`, `bust_primary_label`,
-or any other target/eligibility column.
+characterization of the predictor whitelist ONLY -- no predictor is
+ever compared against an outcome/target column here. This is
+explicitly NOT outcome testing.
 
-Restricts to `outcome_join_status == "outcome_matched"` rows (11,175 of
-11,784) for sample-size/coverage purposes -- the 609 real
-`prediction_season=2026` rows can never inform any outcome-adjacent
-statistic and would understate real historical coverage if included.
+SOURCING (methodology locked 2026-07, commit 648ccad -- see
+docs/LEAGUE_WINNER_TRAITS_SPEC.md's "Predictor-clustering
+discovery/holdout boundary" section): every decision-bearing
+predictor-inventory, similarity, near-duplicate, redundancy,
+clustering, and representative-selection computation in this file
+reads from the CANONICAL PREDICTOR TABLE, restricted to
+prediction_season 2006-2020 inclusive -- never the joined analysis
+view, never `outcome_join_status` or any other outcome/label/target/
+eligibility field. This is enforced structurally: the canonical
+predictor table has no such column to consult even by accident.
+`load_discovery_fit_predictor_table()`, `load_historical_predictor_rows()`,
+`load_predictor_dictionary()`, and `add_constancy_status()` are all
+defined below, in THIS file. `load_discovery_fit_predictor_table()` and
+`load_historical_predictor_rows()` are thin I/O wrappers that delegate
+row selection to the pure `filter_to_discovery_fit_predictor_rows()` /
+`filter_to_historical_predictor_rows()`; `add_constancy_status()`
+delegates to the pure `classify_column_constancy()`;
+`load_predictor_dictionary()` is a plain CSV read with no
+`lib/dataset2/common.py` call at all. Those three pure functions, plus
+`derive_predictor_whitelist_from_registry()`, are the ones that
+actually live in `lib/dataset2/common.py`. See
+`load_historical_predictor_rows()` and `add_constancy_status()` for
+the one, separate, non-decision-bearing use of a wider (still
+outcome-independent) 2006-2025 historical population -- distinguishing
+`discovery_fit_degenerate` columns from ones that are constant
+everywhere, never used for clustering itself.
 
 CLUSTERING (revised after review of the original 69-member cluster):
 see `build_predictor_clusters()`'s own docstring for the full
@@ -48,9 +66,23 @@ from scipy.spatial.distance import squareform
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-VIEW_PATH = "data/exports/dataset2_analysis_view.parquet"
-WHITELIST_PATH = "data/exports/dataset2_analysis_view_predictor_whitelist.csv"
-COLUMN_REGISTRY_PATH = "data/exports/dataset2_analysis_view_column_registry.csv"
+from config import DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_END_SEASON, DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_START_SEASON
+from lib.dataset2.common import (
+    classify_column_constancy,
+    derive_predictor_whitelist_from_registry,
+    filter_to_discovery_fit_predictor_rows,
+    filter_to_historical_predictor_rows,
+)
+
+# Discovery-fit sourcing (methodology locked 2026-07, commit 648ccad --
+# see docs/LEAGUE_WINNER_TRAITS_SPEC.md's "Predictor-clustering
+# discovery/holdout boundary" section). Deliberately the CANONICAL
+# predictor table, never the joined analysis view above -- the
+# canonical table has no outcome_join_status column at all, so
+# discovery-fit row selection is structurally incapable of consulting
+# outcome availability.
+PREDICTOR_TABLE_PATH = "data/exports/dataset2_canonical_predictor_table.parquet"
+PREDICTOR_DICTIONARY_PATH = "data/exports/dataset2_canonical_predictor_table_data_dictionary.csv"
 
 NEAR_DUPLICATE_CORR_THRESHOLD = 0.95
 # Documented minimum overlapping (jointly-non-null) sample for ANY
@@ -75,9 +107,54 @@ pd.set_option("display.width", 220)
 pd.set_option("display.max_rows", 300)
 
 
-def load_real_rows():
-    view = pd.read_parquet(VIEW_PATH)
-    return view[view["outcome_join_status"] == "outcome_matched"].copy()
+def load_discovery_fit_predictor_table() -> pd.DataFrame:
+    """I/O only -- reads the canonical predictor table (never the
+    joined analysis view) and delegates ALL row selection to the pure,
+    outcome-independent
+    lib.dataset2.common.filter_to_discovery_fit_predictor_rows(). The
+    ONLY population decision-bearing clustering work in this file
+    should use."""
+    predictor_df = pd.read_parquet(PREDICTOR_TABLE_PATH)
+    return filter_to_discovery_fit_predictor_rows(predictor_df)
+
+
+def load_historical_predictor_rows() -> pd.DataFrame:
+    """I/O only -- reads the canonical predictor table (never the
+    joined analysis view) and delegates ALL row selection to the pure,
+    outcome-independent
+    lib.dataset2.common.filter_to_historical_predictor_rows() (positive
+    2006-2025 range). NON-DECISION-BEARING: used only as the comparator
+    population for add_constancy_status()'s discovery_fit_degenerate
+    detection -- never for clustering fit itself, never for any
+    predictor-inventory/similarity/near-duplicate/redundancy/
+    representative-selection computation. Use
+    load_discovery_fit_predictor_table() for all of those."""
+    predictor_df = pd.read_parquet(PREDICTOR_TABLE_PATH)
+    return filter_to_historical_predictor_rows(predictor_df)
+
+
+def load_predictor_dictionary() -> pd.DataFrame:
+    """I/O only -- the canonical predictor table's own data
+    dictionary, used both for discovery-fit inventory building and for
+    mechanical whitelist derivation. Never the analysis-view column
+    registry."""
+    return pd.read_csv(PREDICTOR_DICTIONARY_PATH)
+
+
+def add_constancy_status(inv: pd.DataFrame, full_range_df: pd.DataFrame, fit_df: pd.DataFrame) -> pd.DataFrame:
+    """Persists a `constancy_status` column ("varies" /
+    "universally_constant" / "discovery_fit_degenerate") onto the FULL
+    inventory `inv` for every one of its columns -- not just a
+    temporary constant-columns reporting subset -- so the
+    classification survives into whatever gets exported to
+    data/exports/dataset2_trait_pipeline_predictor_inventory.csv.
+    `full_range_df` must be the historical (2006-2025) population from
+    load_historical_predictor_rows(); `fit_df` must be the
+    discovery-fit (2006-2020) population inv was itself built from."""
+    inv = inv.copy()
+    constancy = classify_column_constancy(full_range_df, fit_df, inv["column"].tolist())
+    inv["constancy_status"] = inv["column"].map(constancy)
+    return inv
 
 
 def build_inventory(real: pd.DataFrame, whitelist: list, registry: pd.DataFrame) -> pd.DataFrame:
@@ -526,14 +603,30 @@ def select_cluster_representative(members: list, inv: pd.DataFrame) -> str:
 
 
 if __name__ == "__main__":
-    real = load_real_rows()
-    whitelist = pd.read_csv(WHITELIST_PATH)["predictor_column"].tolist()
-    registry = pd.read_csv(COLUMN_REGISTRY_PATH)
+    real = load_discovery_fit_predictor_table()
+    registry = load_predictor_dictionary()
+    whitelist = derive_predictor_whitelist_from_registry(registry)
+    # Full HISTORICAL (2006-2025, positively defined -- see
+    # lib.dataset2.common.filter_to_historical_predictor_rows()) range
+    # canonical predictor rows, read ONLY to distinguish
+    # discovery_fit_degenerate columns from ones that are constant
+    # everywhere. Never used for any decision-bearing statistic itself.
+    historical = load_historical_predictor_rows()
 
-    print(f"Real (outcome-matched) rows: {len(real)}")
+    print(
+        f"Discovery-fit rows (prediction_season "
+        f"{DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_START_SEASON}-"
+        f"{DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_END_SEASON}, outcome-independent "
+        f"selection): {len(real)}"
+    )
     inv = build_inventory(real, whitelist, registry)
     inv = add_position_scoped_applicable_n(inv, real)
     inv = add_single_season_concentration(inv, real)
+    # Persisted onto the FULL inventory (every column, not just a
+    # throwaway constant-columns reporting subset) so this status
+    # survives into whatever gets exported to
+    # data/exports/dataset2_trait_pipeline_predictor_inventory.csv.
+    inv = add_constancy_status(inv, historical, real)
 
     print("\n=== var_type counts ===")
     print(inv["var_type"].value_counts())
@@ -543,8 +636,14 @@ if __name__ == "__main__":
     print(inv["family"].value_counts())
 
     const_cols = inv[inv["n_unique"] <= 1]
-    print(f"\n=== Constant columns (n_unique<=1): n={len(const_cols)} ===")
-    print(const_cols[["column", "n_unique", "pct_nonnull_overall"]].to_string())
+    print(f"\n=== Constant columns (n_unique<=1) within the discovery-fit population: n={len(const_cols)} ===")
+    print(const_cols[["column", "n_unique", "pct_nonnull_overall", "constancy_status"]].to_string())
+    degenerate = sorted(inv.loc[inv["constancy_status"] == "discovery_fit_degenerate", "column"].tolist())
+    print(
+        f"\n  discovery_fit_degenerate (real variance in the full, historical (2006-2025) "
+        f"predictor population; constant only within the approved discovery-fit window -- NOT "
+        f"universally constant): n={len(degenerate)} -> {degenerate}"
+    )
 
     low_scoped_coverage = inv[inv["pct_nonnull_within_scope"] < 50]
     print(f"\n=== Columns with real applicable coverage <50% WITHIN their own position scope: n={len(low_scoped_coverage)} ===")

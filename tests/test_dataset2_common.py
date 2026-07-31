@@ -22,9 +22,14 @@ import pandas as pd
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+import config
 from lib.dataset2.common import (
     apply_source_coverage_null_mask,
     build_team_game_index,
+    classify_column_constancy,
+    derive_predictor_whitelist_from_registry,
+    filter_to_discovery_fit_predictor_rows,
+    filter_to_historical_predictor_rows,
     real_reg_week_slots,
     season_length,
     week1_kickoff_by_team,
@@ -303,3 +308,331 @@ class TestApplySourceCoverageNullMask:
         out = apply_source_coverage_null_mask(df, ["x"], (2007, 2009), "prediction_season")
         assert list(out["prediction_season"]) == [2010, 2007, 2009]
         assert len(out) == 3
+
+
+# --- Dataset 2 predictor-clustering discovery-fit boundary (approved 2026-07,
+# locked commit 648ccad -- see docs/LEAGUE_WINNER_TRAITS_SPEC.md's
+# "Predictor-clustering discovery/holdout boundary" section) ---
+
+
+class TestValidateDataset2PredictorClusteringConfig:
+    def test_real_committed_config_passes(self):
+        config.validate_dataset2_predictor_clustering_config()  # should not raise
+
+    def test_raises_when_start_not_strictly_less_than_end(self, monkeypatch):
+        monkeypatch.setattr(config, "DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_START_SEASON", 2020)
+        monkeypatch.setattr(config, "DATASET2_PREDICTOR_CLUSTERING_DISCOVERY_FIT_END_SEASON", 2020)
+        with pytest.raises(ValueError, match="strictly less than"):
+            config.validate_dataset2_predictor_clustering_config()
+
+    def test_raises_when_historical_range_start_not_strictly_less_than_end(self, monkeypatch):
+        monkeypatch.setattr(config, "DATASET2_PREDICTOR_CLUSTERING_HISTORICAL_RANGE_START_SEASON", 2025)
+        monkeypatch.setattr(config, "DATASET2_PREDICTOR_CLUSTERING_HISTORICAL_RANGE_END_SEASON", 2025)
+        with pytest.raises(ValueError, match="strictly less than"):
+            config.validate_dataset2_predictor_clustering_config()
+
+
+class TestFilterToDiscoveryFitPredictorRows:
+    """Real methodology (commit 648ccad): fit population is
+    prediction_season 2006-2020 inclusive, selected SOLELY on that
+    column -- never outcome_join_status or any outcome/label/target/
+    eligibility field, even if such a column happens to be present."""
+
+    @staticmethod
+    def _fixture():
+        return pd.DataFrame(
+            {
+                "prediction_season": [2005, 2006, 2010, 2020, 2021, 2025, 2026],
+                "player_id": ["p2005", "p2006", "p2010", "p2020", "p2021", "p2025", "p2026"],
+                "position": ["WR"] * 7,
+                "some_predictor": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+            }
+        )
+
+    def test_2006_included_inclusive_start_boundary(self):
+        out = self._fixture().pipe(filter_to_discovery_fit_predictor_rows)
+        assert "p2006" in list(out["player_id"])
+
+    def test_2020_included_inclusive_end_boundary(self):
+        out = self._fixture().pipe(filter_to_discovery_fit_predictor_rows)
+        assert "p2020" in list(out["player_id"])
+
+    def test_excludes_2005(self):
+        out = self._fixture().pipe(filter_to_discovery_fit_predictor_rows)
+        assert "p2005" not in list(out["player_id"])
+
+    def test_excludes_2021(self):
+        out = self._fixture().pipe(filter_to_discovery_fit_predictor_rows)
+        assert "p2021" not in list(out["player_id"])
+
+    def test_excludes_2025(self):
+        out = self._fixture().pipe(filter_to_discovery_fit_predictor_rows)
+        assert "p2025" not in list(out["player_id"])
+
+    def test_excludes_2026(self):
+        out = self._fixture().pipe(filter_to_discovery_fit_predictor_rows)
+        assert "p2026" not in list(out["player_id"])
+
+    def test_exact_selected_set(self):
+        out = self._fixture().pipe(filter_to_discovery_fit_predictor_rows)
+        assert list(out["player_id"]) == ["p2006", "p2010", "p2020"]
+
+    def test_raises_on_missing_prediction_season_column(self):
+        df = pd.DataFrame({"x": [1.0]})
+        with pytest.raises(ValueError, match="prediction_season"):
+            filter_to_discovery_fit_predictor_rows(df)
+
+    def test_raises_on_null_prediction_season(self):
+        df = pd.DataFrame({"prediction_season": [2006, None], "x": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="null"):
+            filter_to_discovery_fit_predictor_rows(df)
+
+    def test_raises_on_non_numeric_prediction_season(self):
+        df = pd.DataFrame({"prediction_season": ["2006", "2010"], "x": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="numeric"):
+            filter_to_discovery_fit_predictor_rows(df)
+
+    def test_raises_on_boolean_prediction_season(self):
+        """pandas classifies bool as numeric -- a plain is_numeric_dtype
+        check alone would wrongly accept this."""
+        df = pd.DataFrame({"prediction_season": [True, False], "x": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="numeric"):
+            filter_to_discovery_fit_predictor_rows(df)
+
+    def test_raises_on_fractional_prediction_season(self):
+        df = pd.DataFrame({"prediction_season": [2006.5, 2010.0], "x": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="non-integer"):
+            filter_to_discovery_fit_predictor_rows(df)
+
+    def test_raises_on_positive_infinite_prediction_season(self):
+        df = pd.DataFrame({"prediction_season": [2006.0, float("inf")], "x": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="non-finite"):
+            filter_to_discovery_fit_predictor_rows(df)
+
+    def test_raises_on_negative_infinite_prediction_season(self):
+        df = pd.DataFrame({"prediction_season": [2006.0, float("-inf")], "x": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="non-finite"):
+            filter_to_discovery_fit_predictor_rows(df)
+
+    def test_does_not_mutate_input_dataframe(self):
+        df = self._fixture()
+        original = df.copy()
+        filter_to_discovery_fit_predictor_rows(df)
+        pd.testing.assert_frame_equal(df, original)
+
+    def test_row_order_preserved(self):
+        df = pd.DataFrame(
+            {"prediction_season": [2020, 2006, 2015], "player_id": ["z", "a", "m"], "x": [1.0, 2.0, 3.0]}
+        )
+        out = filter_to_discovery_fit_predictor_rows(df)
+        assert list(out["player_id"]) == ["z", "a", "m"]
+
+    def test_columns_preserved(self):
+        df = self._fixture()
+        out = filter_to_discovery_fit_predictor_rows(df)
+        assert list(out.columns) == list(df.columns)
+
+    def test_selection_unaffected_by_synthetic_forbidden_columns_added_and_mutated(self):
+        """The core outcome-independence proof: add
+        outcome_join_status/label/target/eligibility-shaped columns,
+        mutate them arbitrarily, and confirm row identity, seasons,
+        count, and order never move -- proving the selector structurally
+        ignores them rather than merely happening to today."""
+        df = self._fixture()
+        before = filter_to_discovery_fit_predictor_rows(df)
+
+        mutated = df.copy()
+        mutated["outcome_join_status"] = "no_outcome_row_matched"
+        mutated["star_by_value_label"] = None
+        mutated["star_outcome_eligible"] = False
+        mutated["bust_primary_label"] = 1
+        mutated["bust_primary_eligible"] = True
+        after = filter_to_discovery_fit_predictor_rows(mutated)
+
+        assert list(before["player_id"]) == list(after["player_id"])
+        assert list(before["prediction_season"]) == list(after["prediction_season"])
+        assert len(before) == len(after)
+
+        # Even removing the synthetic outcome columns entirely (a row
+        # subset with zero outcome-side data at all) must select the
+        # identical rows.
+        stripped = df.copy()
+        stripped_only = filter_to_discovery_fit_predictor_rows(stripped)
+        assert list(stripped_only["player_id"]) == list(before["player_id"])
+
+
+class TestFilterToHistoricalPredictorRows:
+    """Positive, explicit historical-range selector (2006-2025) --
+    used ONLY as the discovery_fit_degenerate comparator population,
+    never for clustering fit itself. Same malformed-input rejection
+    and outcome-independence guarantees as
+    TestFilterToDiscoveryFitPredictorRows above, proven independently
+    here rather than assumed from the sibling function."""
+
+    @staticmethod
+    def _fixture():
+        return pd.DataFrame(
+            {
+                "prediction_season": [2005, 2006, 2015, 2025, 2026],
+                "player_id": ["p2005", "p2006", "p2015", "p2025", "p2026"],
+                "position": ["WR"] * 5,
+                "some_predictor": [1.0, 2.0, 3.0, 4.0, 5.0],
+            }
+        )
+
+    def test_2006_included_inclusive_start_boundary(self):
+        out = self._fixture().pipe(filter_to_historical_predictor_rows)
+        assert "p2006" in list(out["player_id"])
+
+    def test_2025_included_inclusive_end_boundary(self):
+        out = self._fixture().pipe(filter_to_historical_predictor_rows)
+        assert "p2025" in list(out["player_id"])
+
+    def test_excludes_2005(self):
+        out = self._fixture().pipe(filter_to_historical_predictor_rows)
+        assert "p2005" not in list(out["player_id"])
+
+    def test_excludes_2026(self):
+        out = self._fixture().pipe(filter_to_historical_predictor_rows)
+        assert "p2026" not in list(out["player_id"])
+
+    def test_exact_selected_set(self):
+        out = self._fixture().pipe(filter_to_historical_predictor_rows)
+        assert list(out["player_id"]) == ["p2006", "p2015", "p2025"]
+
+    def test_positive_definition_excludes_any_out_of_range_row_not_only_2026(self):
+        """The core distinction from the earlier '!= 2026' comparator
+        this replaces: ANY out-of-range value is excluded, not only
+        the literal number 2026 -- proving this is a genuine positive
+        bound, not a negative exclusion of one specific value."""
+        df = pd.DataFrame(
+            {
+                "prediction_season": [2006, 2030, 1999],
+                "player_id": ["real", "future_data_error", "past_data_error"],
+                "x": [1.0, 2.0, 3.0],
+            }
+        )
+        out = filter_to_historical_predictor_rows(df)
+        assert list(out["player_id"]) == ["real"]
+
+    def test_raises_on_missing_prediction_season_column(self):
+        df = pd.DataFrame({"x": [1.0]})
+        with pytest.raises(ValueError, match="prediction_season"):
+            filter_to_historical_predictor_rows(df)
+
+    def test_raises_on_null_prediction_season(self):
+        df = pd.DataFrame({"prediction_season": [2006, None], "x": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="null"):
+            filter_to_historical_predictor_rows(df)
+
+    def test_raises_on_non_numeric_prediction_season(self):
+        df = pd.DataFrame({"prediction_season": ["2006", "2010"], "x": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="numeric"):
+            filter_to_historical_predictor_rows(df)
+
+    def test_raises_on_boolean_prediction_season(self):
+        df = pd.DataFrame({"prediction_season": [True, False], "x": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="numeric"):
+            filter_to_historical_predictor_rows(df)
+
+    def test_raises_on_fractional_prediction_season(self):
+        df = pd.DataFrame({"prediction_season": [2006.5, 2010.0], "x": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="non-integer"):
+            filter_to_historical_predictor_rows(df)
+
+    def test_raises_on_infinite_prediction_season(self):
+        df = pd.DataFrame({"prediction_season": [2006.0, float("inf")], "x": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="non-finite"):
+            filter_to_historical_predictor_rows(df)
+
+    def test_does_not_mutate_input_dataframe(self):
+        df = self._fixture()
+        original = df.copy()
+        filter_to_historical_predictor_rows(df)
+        pd.testing.assert_frame_equal(df, original)
+
+    def test_row_order_preserved(self):
+        df = pd.DataFrame(
+            {"prediction_season": [2015, 2006, 2025], "player_id": ["z", "a", "m"], "x": [1.0, 2.0, 3.0]}
+        )
+        out = filter_to_historical_predictor_rows(df)
+        assert list(out["player_id"]) == ["z", "a", "m"]
+
+    def test_columns_preserved(self):
+        df = self._fixture()
+        out = filter_to_historical_predictor_rows(df)
+        assert list(out.columns) == list(df.columns)
+
+    def test_selection_unaffected_by_synthetic_forbidden_columns(self):
+        df = self._fixture()
+        before = filter_to_historical_predictor_rows(df)
+        mutated = df.copy()
+        mutated["outcome_join_status"] = "no_outcome_row_matched"
+        mutated["star_by_value_label"] = None
+        mutated["bust_primary_eligible"] = True
+        after = filter_to_historical_predictor_rows(mutated)
+        assert list(before["player_id"]) == list(after["player_id"])
+        assert list(before["prediction_season"]) == list(after["prediction_season"])
+
+
+class TestDerivePredictorWhitelistFromRegistry:
+    def test_excludes_spine_columns(self):
+        registry = pd.DataFrame(
+            {
+                "canonical_column": ["prediction_season", "player_id", "position", "observation_season", "fam1_experience_years"],
+                "family_number": ["N/A (spine)", "N/A (spine)", "N/A (spine)", "N/A (spine)", "1"],
+            }
+        )
+        assert derive_predictor_whitelist_from_registry(registry) == ["fam1_experience_years"]
+
+    def test_does_not_blanket_ban_legitimate_predictor_side_eligible_named_columns(self):
+        """Real predictor columns legitimately contain 'eligible' in
+        their name (e.g. Family #9's efficiency_volume_eligible_*
+        flags) -- a naive substring ban would wrongly exclude 60 real
+        predictors from the whitelist. Exclusion must be mechanical via
+        family_number == spine, never name-based."""
+        registry = pd.DataFrame(
+            {
+                "canonical_column": [
+                    "player_id",
+                    "fam9_team_final_4_qb_passing_efficiency_volume_eligible_exploratory",
+                ],
+                "family_number": ["N/A (spine)", "9"],
+            }
+        )
+        whitelist = derive_predictor_whitelist_from_registry(registry)
+        assert "fam9_team_final_4_qb_passing_efficiency_volume_eligible_exploratory" in whitelist
+
+    def test_sorted_deterministic(self):
+        registry = pd.DataFrame({"canonical_column": ["z_col", "a_col"], "family_number": ["1", "1"]})
+        assert derive_predictor_whitelist_from_registry(registry) == ["a_col", "z_col"]
+
+    def test_raises_on_missing_required_registry_columns(self):
+        registry = pd.DataFrame({"canonical_column": ["x"]})
+        with pytest.raises(ValueError):
+            derive_predictor_whitelist_from_registry(registry)
+
+
+class TestClassifyColumnConstancy:
+    def test_varies(self):
+        full = pd.DataFrame({"c": [1.0, 2.0, 3.0]})
+        fit = pd.DataFrame({"c": [1.0, 2.0]})
+        assert classify_column_constancy(full, fit, ["c"]) == {"c": "varies"}
+
+    def test_universally_constant(self):
+        full = pd.DataFrame({"c": [5.0, 5.0, 5.0]})
+        fit = pd.DataFrame({"c": [5.0, 5.0]})
+        assert classify_column_constancy(full, fit, ["c"]) == {"c": "universally_constant"}
+
+    def test_discovery_fit_degenerate(self):
+        full = pd.DataFrame({"c": [5.0, 5.0, 8.0]})  # real variance across the full range
+        fit = pd.DataFrame({"c": [5.0, 5.0]})  # constant only within the discovery-fit window
+        assert classify_column_constancy(full, fit, ["c"]) == {"c": "discovery_fit_degenerate"}
+
+    def test_never_conflates_degenerate_with_universally_constant(self):
+        full = pd.DataFrame({"deg": [1.0, 2.0], "const": [1.0, 1.0]})
+        fit = pd.DataFrame({"deg": [1.0, 1.0], "const": [1.0, 1.0]})
+        result = classify_column_constancy(full, fit, ["deg", "const"])
+        assert result["deg"] == "discovery_fit_degenerate"
+        assert result["const"] == "universally_constant"
+        assert result["deg"] != result["const"]

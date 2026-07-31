@@ -9,9 +9,15 @@ season rows two predictors must share before their pairwise
 similarity is even used as a clustering edge -- currently 50 in the
 committed script) at 30/50/100, per instruction. Never edits the
 committed script (monkeypatches the already-imported module's global
-for each run instead) and never touches any outcome/target column --
-same OUTCOME-FREE inputs (`real`, `inv`) the committed script itself
-uses.
+for each run instead) and never touches any outcome/target column.
+
+DISCOVERY-FIT SOURCING (methodology locked 2026-07, commit 648ccad --
+see docs/LEAGUE_WINNER_TRAITS_SPEC.md's "Predictor-clustering
+discovery/holdout boundary" section): `real`/`inv` are built from
+`tapi.load_discovery_fit_predictor_table()` (the canonical predictor
+table, prediction_season 2006-2020 only, selection outcome-independent
+by construction) and `tapi.load_predictor_dictionary()` -- never the
+joined analysis view or its outcome-derived `outcome_join_status`.
 """
 
 import sys
@@ -25,9 +31,9 @@ import trait_analysis_pipeline_predictor_inventory as tapi
 
 
 def _load_real_and_inv():
-    real = tapi.load_real_rows()
-    whitelist = pd.read_csv(tapi.WHITELIST_PATH)["predictor_column"].tolist()
-    registry = pd.read_csv(tapi.COLUMN_REGISTRY_PATH)
+    real = tapi.load_discovery_fit_predictor_table()
+    registry = tapi.load_predictor_dictionary()
+    whitelist = tapi.derive_predictor_whitelist_from_registry(registry)
     inv = tapi.build_inventory(real, whitelist, registry)
     inv = tapi.add_position_scoped_applicable_n(inv, real)
     inv = tapi.add_single_season_concentration(inv, real)
