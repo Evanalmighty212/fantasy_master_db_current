@@ -41,24 +41,24 @@ def _players(*rows):
 def _weekly(rows):
     """rows: (season, player_id, week, team, season_type, targets, carries, rushing_yards,
     receiving_yards, receiving_air_yards, passing_air_yards, passing_epa, rushing_epa,
-    receiving_epa, attempts, fantasy_points_ppr, receptions=0)."""
+    receiving_epa, attempts, fantasy_points_ppr, receptions=0, receiving_yards_after_catch=0)."""
     cols = (
         "season", "player_id", "week", "team", "season_type", "targets", "carries", "rushing_yards",
         "receiving_yards", "receiving_air_yards", "passing_air_yards", "passing_epa", "rushing_epa",
-        "receiving_epa", "attempts", "fantasy_points_ppr", "receptions",
+        "receiving_epa", "attempts", "fantasy_points_ppr", "receptions", "receiving_yards_after_catch",
     )
     if not rows:
         return pd.DataFrame(columns=cols)
-    # `receptions` is optional in each row tuple (defaults to 0) so
-    # existing 16-field fixtures throughout this file don't all need
-    # updating just to add family #88's new required input.
-    padded = [r if len(r) == len(cols) else tuple(r) + (0,) for r in rows]
+    # `receptions`/`receiving_yards_after_catch` are optional trailing
+    # fields (default 0) so existing shorter fixtures throughout this
+    # file don't all need updating just to add a new required input.
+    padded = [tuple(r) + (0,) * (len(cols) - len(r)) for r in rows]
     return pd.DataFrame([dict(zip(cols, r)) for r in padded])
 
 
-def _rb_weekly_rows(season, player_id, weeks, team, carries=10, ppg=10.0, receptions=2):
+def _rb_weekly_rows(season, player_id, weeks, team, carries=10, ppg=10.0, receptions=2, receiving_yards_after_catch=3):
     return [
-        (season, player_id, wk, team, "REG", 2, carries, carries * 4.0, 10.0, 5.0, 0.0, 0.0, 1.0, 0.5, 0, ppg, receptions)
+        (season, player_id, wk, team, "REG", 2, carries, carries * 4.0, 10.0, 5.0, 0.0, 0.0, 1.0, 0.5, 0, ppg, receptions, receiving_yards_after_catch)
         for wk in weeks
     ]
 
@@ -439,6 +439,127 @@ class TestMissingnessAndNormalization:
         weekly = _weekly(_rb_weekly_rows(2014, "P1", AAA_2014_WEEKS, "AAA") + _rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA"))
         out, registry, deferred = _build(pop, players, weekly)
         assert out["fam88_prior_season_heavy_touch_workload"].dtype == "boolean"
+
+    def test_fam18_receiving_efficiency_computed_from_real_season_totals(self):
+        # Real 2014 season for P1: 5 targets/week, 3 receptions/week,
+        # 10 receiving_yards/week, 3 receiving_yards_after_catch/week
+        # x 16 real weeks. Season-total ratios must reflect the REAL
+        # SUMMED totals, not a per-week average.
+        pop = _population(
+            (2014, "P1", "WR", "AAA", 16, 8.0, 40, 12),
+            (2015, "P1", "WR", "AAA", 15, 9.0, 35, 10),
+        )
+        players = _players(("P1", "PfrP1", "1994-01-01", 2012, 72, 195, 2012, 4, 100, "AAA"))
+        weekly = _weekly(
+            [(2014, "P1", wk, "AAA", "REG", 5, 0, 0.0, 10.0, 6.0, 0.0, 0.0, 0.0, 1.0, 0, 8.0, 3, 3) for wk in AAA_2014_WEEKS]
+            + [(2015, "P1", wk, "AAA", "REG", 5, 0, 0.0, 10.0, 6.0, 0.0, 0.0, 0.0, 1.0, 0, 8.0, 3, 3) for wk in AAA_2015_WEEKS]
+        )
+        out, registry, deferred = _build(pop, players, weekly)
+        row_2015 = out[out["prediction_season"] == 2015].iloc[0]
+        n_weeks = len(AAA_2014_WEEKS)
+        expected_targets, expected_receptions = 5 * n_weeks, 3 * n_weeks
+        expected_rec_yards, expected_yac = 10 * n_weeks, 3 * n_weeks
+        assert row_2015["fam18_prior_season_catch_rate"] == pytest.approx(expected_receptions / expected_targets)
+        assert row_2015["fam18_prior_season_receiving_yards_per_target"] == pytest.approx(expected_rec_yards / expected_targets)
+        assert row_2015["fam18_prior_season_yac_per_reception"] == pytest.approx(expected_yac / expected_receptions)
+
+    def test_fam18_null_for_rookie_not_zero(self):
+        pop = _population((2015, "P1", "WR", "AAA", 16, 8.0, 40, 12))
+        players = _players(("P1", "PfrP1", "1998-01-01", 2015, 72, 195, 2015, 4, 100, "AAA"))
+        weekly = _weekly(
+            [(2015, "P1", wk, "AAA", "REG", 5, 0, 0.0, 10.0, 6.0, 0.0, 0.0, 0.0, 1.0, 0, 8.0, 3, 3) for wk in AAA_2015_WEEKS]
+        )
+        out, registry, deferred = _build(pop, players, weekly)
+        row = out[out["prediction_season"] == 2015].iloc[0]
+        assert pd.isna(row["fam18_prior_season_catch_rate"])
+        assert pd.isna(row["fam18_prior_season_receiving_yards_per_target"])
+        assert pd.isna(row["fam18_prior_season_yac_per_reception"])
+
+    def test_fam18_null_for_zero_targets_source_coverage_gap(self):
+        # A real prior-season row exists (population has 2014), but no
+        # real weekly rows at all that season -- zero targets -> null
+        # ratios, never a guessed 0.0.
+        pop = _population(
+            (2014, "P1", "WR", "AAA", 16, 8.0, 40, 12),
+            (2015, "P1", "WR", "AAA", 15, 9.0, 35, 10),
+        )
+        players = _players(("P1", "PfrP1", "1994-01-01", 2012, 72, 195, 2012, 4, 100, "AAA"))
+        weekly = _weekly([(2015, "P1", wk, "AAA", "REG", 5, 0, 0.0, 10.0, 6.0, 0.0, 0.0, 0.0, 1.0, 0, 8.0, 3, 3) for wk in AAA_2015_WEEKS])
+        out, registry, deferred = _build(pop, players, weekly)
+        row_2015 = out[out["prediction_season"] == 2015].iloc[0]
+        assert pd.isna(row_2015["fam18_prior_season_catch_rate"])
+        assert pd.isna(row_2015["fam18_prior_season_receiving_yards_per_target"])
+        assert pd.isna(row_2015["fam18_prior_season_yac_per_reception"])
+
+    def test_fam18_traded_player_aggregates_across_teams_no_duplicate_rows(self):
+        pop = _population(
+            (2014, "P1", "WR", "KC", 16, 8.0, 30, 8),
+            (2015, "P1", "WR", "SF", 15, 9.0, 25, 6),
+        )
+        players = _players(("P1", "PfrP1", "1993-01-01", 2011, 72, 195, 2011, 4, 100, "KC"))
+        weekly = _weekly(
+            [(2014, "P1", wk, "KC", "REG", 5, 0, 0.0, 10.0, 6.0, 0.0, 0.0, 0.0, 1.0, 0, 8.0, 3, 3) for wk in AAA_2014_WEEKS[:8]]
+            + [(2014, "P1", wk, "SF", "REG", 4, 0, 0.0, 8.0, 5.0, 0.0, 0.0, 0.0, 1.0, 0, 8.0, 2, 2) for wk in AAA_2014_WEEKS[8:]]
+            + [(2015, "P1", wk, "SF", "REG", 5, 0, 0.0, 10.0, 6.0, 0.0, 0.0, 0.0, 1.0, 0, 8.0, 3, 3) for wk in AAA_2015_WEEKS]
+        )
+        out, registry, deferred = _build(pop, players, weekly)
+        assert out.duplicated(subset=["prediction_season", "player_id"]).sum() == 0
+        row_2015 = out[out["prediction_season"] == 2015].iloc[0]
+        n_kc, n_sf = len(AAA_2014_WEEKS[:8]), len(AAA_2014_WEEKS[8:])
+        expected_targets = 5 * n_kc + 4 * n_sf
+        expected_receptions = 3 * n_kc + 2 * n_sf
+        assert row_2015["fam18_prior_season_catch_rate"] == pytest.approx(expected_receptions / expected_targets)
+
+    def test_fam18_columns_registered_and_denominators_preserved(self):
+        pop = _population((2015, "P1", "WR", "AAA", 16, 8.0, 40, 12))
+        players = _players(("P1", "PfrP1", "1995-01-01", 2010, 72, 195, 2010, 4, 100, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA"))
+        out, registry, deferred = _build(pop, players, weekly)
+        reg_idx = registry.set_index("canonical_column")
+        for col in (
+            "fam18_prior_season_catch_rate",
+            "fam18_prior_season_receiving_yards_per_target",
+            "fam18_prior_season_yac_per_reception",
+        ):
+            assert col in reg_idx.index
+            assert reg_idx.loc[col, "family_number"] == "18"
+            assert reg_idx.loc[col, "missingness_semantics"]
+        # Denominator columns must remain separately present/auditable.
+        assert "srcA_prior_season_targets" in out.columns
+        assert "srcA_prior_season_receptions" in out.columns
+
+    def test_fam18_no_threshold_or_classification_column(self):
+        pop = _population((2015, "P1", "WR", "AAA", 16, 8.0, 40, 12))
+        players = _players(("P1", "PfrP1", "1995-01-01", 2010, 72, 195, 2010, 4, 100, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA"))
+        out, registry, deferred = _build(pop, players, weekly)
+        fam18_cols = [c for c in out.columns if c.startswith("fam18_")]
+        assert set(fam18_cols) == {
+            "fam18_prior_season_catch_rate",
+            "fam18_prior_season_receiving_yards_per_target",
+            "fam18_prior_season_yac_per_reception",
+        }
+
+    def test_fam18_targets_unreliable_coverage_floor_applied_end_to_end(self):
+        # Real, audited finding: observation season 2007 has an
+        # unreliable real `targets` count -- prediction_season 2008
+        # must be forced null for catch_rate/yards_per_target even
+        # though real (garbage) counts would otherwise compute a
+        # value, while yac_per_reception stays real and computed.
+        pop = _population(
+            (2007, "P1", "WR", "AAA", 16, 8.0, 40, 12),
+            (2008, "P1", "WR", "AAA", 15, 9.0, 35, 10),
+        )
+        players = _players(("P1", "PfrP1", "1990-01-01", 2005, 72, 195, 2005, 4, 100, "AAA"))
+        weekly = _weekly(
+            [(2007, "P1", wk, "AAA", "REG", 1, 0, 0.0, 10.0, 6.0, 0.0, 0.0, 0.0, 1.0, 0, 8.0, 3, 3) for wk in range(1, 17)]
+            + [(2008, "P1", wk, "AAA", "REG", 5, 0, 0.0, 10.0, 6.0, 0.0, 0.0, 0.0, 1.0, 0, 8.0, 3, 3) for wk in range(1, 17)]
+        )
+        out, registry, deferred = _build(pop, players, weekly)
+        row_2008 = out[out["prediction_season"] == 2008].iloc[0]
+        assert pd.isna(row_2008["fam18_prior_season_catch_rate"])
+        assert pd.isna(row_2008["fam18_prior_season_receiving_yards_per_target"])
+        assert not pd.isna(row_2008["fam18_prior_season_yac_per_reception"])
 
     def test_position_inapplicable_flag_reads_as_scoped_not_ordinary_missing(self):
         # A WR's QB-passing-role columns must be recognized as

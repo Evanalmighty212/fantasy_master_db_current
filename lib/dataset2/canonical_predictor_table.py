@@ -32,8 +32,9 @@ built:
 - Family #44 (player changed teams)
 - Source A prior-season usage (targets/carries/receiving_yards/
   receiving_air_yards/passing_epa/rushing_epa/receiving_epa/
-  target_share/air_yards_share/wopr) -- no single family number, a
-  cross-cutting `srcA_` prefix is used (see NAMING below)
+  receptions/receiving_yards_after_catch/target_share/air_yards_share/
+  wopr) -- no single family number, a cross-cutting `srcA_` prefix is
+  used (see NAMING below)
 - Source B prior-season OFFENSIVE snaps and offense_pct ONLY -- per
   explicit instruction, narrower than snap_traits.py's full real
   output (which also has defense_snaps/st_snaps/games_active,
@@ -52,6 +53,13 @@ built:
   `fam88_prior_season_heavy_touch_workload`, added 2026-07); the
   remainder (multi-season touch history, postseason workload,
   age/frame-compound flags) is EXCLUDED, see DEFERRED FAMILIES below
+- Family #18 -- receiving-efficiency CORE portion only
+  (`fam18_prior_season_catch_rate`,
+  `fam18_prior_season_receiving_yards_per_target`,
+  `fam18_prior_season_yac_per_reception`, added 2026-07); no
+  threshold/classification flag -- see
+  lib.dataset2.receiving_efficiency_traits.py's own docstring for the
+  full real design and the real YAC coverage audit it relies on
 
 AGE (FAMILY #2) INCLUSION -- per explicit instruction (2026-07), age
 was moved from deferred to Wave 1. Its real prerequisite
@@ -156,6 +164,7 @@ from lib.dataset2.common import validate_columns
 from lib.dataset2.depth_chart_traits import build_depth_chart_traits
 from lib.dataset2.experience_age_draft import build_experience_age_draft_traits
 from lib.dataset2.fragility_traits import build_durability_risk_traits, build_volume_fragility_traits, build_workload_core_traits
+from lib.dataset2.receiving_efficiency_traits import build_receiving_efficiency_traits
 from lib.dataset2.partial_season_canonical import (
     DEFAULT_WINDOW_NS,
     build_family9_observation_wide,
@@ -629,6 +638,54 @@ def _build_fam88_layer(experience_age_draft_raw: pd.DataFrame, srcA_preseason: p
     return out, registry
 
 
+def _build_fam18_layer(srcA_preseason: pd.DataFrame, min_season: int, max_season: int):
+    """Family #18, receiving-efficiency CORE portion -- approved
+    2026-07 (see lib/dataset2/receiving_efficiency_traits.py's own
+    docstring for the full real design, the real YAC coverage audit,
+    and what's deliberately NOT built this round -- no threshold/
+    classification flag). `srcA_preseason` must be
+    `_build_srcA_layer()`'s own un-prefixed `preseason` return value --
+    built ONCE and shared, never recomputed a second time. The real
+    denominator columns this family's ratios are computed from
+    (`srcA_prior_season_targets`, `srcA_prior_season_receptions`) are
+    already separate canonical columns in their own right (Source A
+    base variables) -- deliberately NOT duplicated here, so low-sample
+    ratios stay auditable against their own real denominators."""
+    eff = build_receiving_efficiency_traits(srcA_preseason)
+    rename = {
+        "prior_season_catch_rate": "fam18_prior_season_catch_rate",
+        "prior_season_receiving_yards_per_target": "fam18_prior_season_receiving_yards_per_target",
+        "prior_season_yac_per_reception": "fam18_prior_season_yac_per_reception",
+    }
+    out = eff[["season", "player_id"] + list(rename.keys())].rename(columns=rename)
+
+    registry = [
+        _registry_row(
+            "fam18_prior_season_catch_rate", "18", "Receiving efficiency (core)",
+            "Source A weekly (REG only), via usage_traits.py", min_season + 1, max_season, "float64",
+            "No season N-1 real row (rookie or gap year), or real zero prior-season targets -> null "
+            "(never a guessed 0.0); prediction_season 2007-2009 FORCED null -- real, audited "
+            "targets-tracking gap in observation seasons 2006-2008 (see "
+            "config.DATASET2_TARGETS_UNRELIABLE_OBSERVATION_SEASONS)", "prediction_season - 1", "receptions / targets",
+        ),
+        _registry_row(
+            "fam18_prior_season_receiving_yards_per_target", "18", "Receiving efficiency (core)",
+            "Source A weekly (REG only), via usage_traits.py", min_season + 1, max_season, "float64",
+            "No season N-1 real row, or real zero prior-season targets -> null (never a guessed 0.0); "
+            "prediction_season 2007-2009 FORCED null -- same real targets-tracking gap as catch_rate",
+            "prediction_season - 1", "receiving_yards / targets",
+        ),
+        _registry_row(
+            "fam18_prior_season_yac_per_reception", "18", "Receiving efficiency (core)",
+            "Source A weekly (REG only), via usage_traits.py", min_season + 1, max_season, "float64",
+            "No season N-1 real row, or real zero prior-season receptions -> null; never a guessed 0.0. "
+            "A real negative or zero YAC total with positive receptions produces the real calculated value.",
+            "prediction_season - 1", "receiving_yards_after_catch / receptions",
+        ),
+    ]
+    return out, registry
+
+
 def build_canonical_predictor_table(
     master_population: pd.DataFrame,
     players_df: pd.DataFrame,
@@ -717,6 +774,9 @@ def build_canonical_predictor_table(
     fam88, reg = _build_fam88_layer(exp_age_draft_raw, srcA_preseason, min_season, max_season)
     registry_rows += reg
 
+    fam18, reg = _build_fam18_layer(srcA_preseason, min_season, max_season)
+    registry_rows += reg
+
     # Family #9's own raw_snaps expects matched, renamed rows -- reuse
     # the SAME real matched frame Source B's own preseason layer
     # already built, rather than re-crosswalking a second time.
@@ -780,7 +840,7 @@ def build_canonical_predictor_table(
     spine = pd.concat([spine, extra_keys], ignore_index=True).drop_duplicates(subset=["prediction_season", "player_id"])
 
     out = spine.copy()
-    for frame in (fam1_4_6, fam7, fam8_39_44, srcA, srcB, fam10, fam86, fam88):
+    for frame in (fam1_4_6, fam7, fam8_39_44, srcA, srcB, fam10, fam86, fam88, fam18):
         frame = frame.rename(columns={"season": "prediction_season"})
         incoming = set(frame.columns) - {"prediction_season", "player_id"}
         collisions = incoming & (set(out.columns) - {"prediction_season", "player_id", "position"})
@@ -812,6 +872,7 @@ def build_canonical_predictor_table(
         + [c for c in fam10.columns if c not in ("season", "player_id")]
         + [c for c in fam86.columns if c not in ("season", "player_id")]
         + [c for c in fam88.columns if c not in ("season", "player_id")]
+        + [c for c in fam18.columns if c not in ("season", "player_id")]
         + fam9_cols
     )
     out = out[["prediction_season", "player_id", "position", "observation_season"] + [c for c in column_order if c not in ("prediction_season", "player_id", "position", "observation_season")]]

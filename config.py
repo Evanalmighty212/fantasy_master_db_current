@@ -1019,6 +1019,32 @@ DATASET2_DEPTH_CHART_STRUCTURAL_STARTER_COUNT = {"QB": 1, "RB": 1, "WR": 3, "TE"
 DATASET2_FAM88_HEAVY_TOUCH_WORKLOAD_THRESHOLD = 350
 
 
+# Real, audited data-quality boundary (2026-07, family #18
+# receiving-efficiency work): `targets` in the raw nflverse weekly
+# file (data/raw/nflverse/annual/stats_player_week_{season}.csv) is
+# essentially UNTRACKED for these real OBSERVATION seasons -- verified
+# directly, not assumed: 99.5-99.6% of real player-weeks with a real
+# reception (receptions > 0) show `targets == 0` in each of these three
+# seasons (a real recording gap, not a real football outcome -- a
+# catch requires a target by definition), vs. a clean 0.0% in EVERY
+# season 2009 onward -- a sharp, discrete break, not a gradual decline.
+# `receptions` and `receiving_yards_after_catch` are NOT affected
+# (their own audits found full, clean 2006-2025 coverage -- see
+# lib/dataset2/usage_traits.py's own module docstring). STATUS:
+# confirmed via direct real-data audit, not a research judgment call.
+# Applies to any predictor whose real value is LAGGED FROM one of
+# these seasons, i.e. `prediction_season == observation_season + 1`.
+# Scoped this round to family #18's `catch_rate`/
+# `receiving_yards_per_target` (both targets-denominated) -- see
+# lib/dataset2/receiving_efficiency_traits.py. NOT yet applied to the
+# pre-existing `srcA_prior_season_targets`/`target_share`/`wopr`
+# canonical columns (built in an earlier round, same real underlying
+# gap, not in this round's approved scope) -- a real, disclosed, open
+# item for a future round's explicit decision, not silently carried
+# forward as fixed.
+DATASET2_TARGETS_UNRELIABLE_OBSERVATION_SEASONS = (2006, 2007, 2008)
+
+
 # --- 2025 MFL ADP: canonical raw value + QB/TE sensitivity-ordering field ---
 # NOT under the SBV_* prefix: this feeds the whole master DB (both
 # LWI's overall_adp_model and SBV's expected-production fitting), not

@@ -24,6 +24,23 @@ unlock family #88's compact workload core -- see
 real fantasy "touches" is `carries + receptions`, never `carries +
 targets`; `targets` remains a real, separate OPPORTUNITY measure
 (chances, including incompletions), not a completed touch).
+`receiving_yards_after_catch` added 2026-07 to unlock family #18's
+receiving-efficiency core (`prior_season_yac_per_reception`) -- see
+`lib/dataset2/receiving_efficiency_traits.py`. REAL YAC COVERAGE AUDIT
+(2026-07, run before this field was trusted, all 20 real season files
+2006-2025 checked directly): 0% null on every real player-week row
+with `receptions > 0` in every season (2006-2025, no gaps, no schema
+break); a real, stable ~7-10% zero rate per season (a real, common
+football outcome -- a catch immediately tackled at the catch point);
+a small, real, stable rate of negative values per season (14-38 rows/
+season -- also real: a short/negative-air-yards catch, e.g. a screen,
+can still gain positive or negative yards after the catch); the real
+season-level `sum(receiving_yards_after_catch) / sum(receiving_yards)`
+ratio rises smoothly from 0.42 (2006) to ~0.48 (2025), consistent with
+the real, well-documented league-wide shift toward shorter/quicker
+passing schemes -- a real trend, not a data anomaly. Full, meaningful
+2006-2025 coverage is claimed on this evidence, not merely because the
+column exists.
 
 REQUIRED INPUT SCOPE, real finding: `weekly` must be the FULL raw
 weekly file, ALL positions, not pre-filtered to skill positions --
@@ -48,8 +65,9 @@ AGGREGATION METHOD PER FIELD -- verified against real 2023 data,
 not assumed:
 
 - `targets`, `carries`, `receiving_yards`, `receiving_air_yards`,
-  `receptions`: SUMMED across the season. Real counts/yardage,
-  unambiguous. `receptions` added 2026-07 -- same SUM treatment as
+  `receptions`, `receiving_yards_after_catch`: SUMMED across the
+  season. Real counts/yardage, unambiguous. `receptions` and
+  `receiving_yards_after_catch` added 2026-07 -- same SUM treatment as
   `targets`/`carries`, no new aggregation logic.
 - `passing_epa`, `rushing_epa`, `receiving_epa`: SUMMED. Verified real:
   these are per-week TOTALS (not per-play averages) already -- a
@@ -170,6 +188,7 @@ WEEKLY_REQUIRED_COLUMNS = (
     "rushing_epa",
     "receiving_epa",
     "receptions",
+    "receiving_yards_after_catch",
 )
 
 # Real counts/totals, summed across the season -- unambiguous.
@@ -182,6 +201,7 @@ SUM_FIELDS = (
     "rushing_epa",
     "receiving_epa",
     "receptions",
+    "receiving_yards_after_catch",
 )
 
 # Season-level shares/rates RECOMPUTED from real summed numerators and

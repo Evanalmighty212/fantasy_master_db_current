@@ -46,13 +46,13 @@ def _population_df(*rows):
 
 def _weekly_row(season, pid, week, team, season_type="REG", targets=0, carries=0, receiving_yards=0,
                  receiving_air_yards=0, passing_air_yards=0, passing_epa=0.0, rushing_epa=0.0, receiving_epa=0.0,
-                 receptions=0):
+                 receptions=0, receiving_yards_after_catch=0):
     return {
         "season": season, "player_id": pid, "week": week, "team": team, "season_type": season_type,
         "targets": targets, "carries": carries, "receiving_yards": receiving_yards,
         "receiving_air_yards": receiving_air_yards, "passing_air_yards": passing_air_yards,
         "passing_epa": passing_epa, "rushing_epa": rushing_epa, "receiving_epa": receiving_epa,
-        "receptions": receptions,
+        "receptions": receptions, "receiving_yards_after_catch": receiving_yards_after_catch,
     }
 
 
@@ -222,6 +222,61 @@ class TestReceptionsSummed:
         assert pd.isna(out.loc[0, "prior_season_receptions"])
 
 
+class TestReceivingYardsAfterCatchSummed:
+    """Added 2026-07 to unlock family #18's receiving-efficiency core
+    (lib/dataset2/receiving_efficiency_traits.py). Same real,
+    unambiguous SUM treatment as receiving_yards -- no new aggregation
+    logic. See usage_traits.py's own module-docstring YAC coverage
+    audit for the real coverage finding backing this field."""
+
+    def test_yac_summed_across_real_reg_weeks(self):
+        pop = _population_df({"season": 2023, "player_id": "00-a", "position": "WR"})
+        weekly = _weekly_df(
+            _weekly_row(2023, "00-a", 1, "ATL", receiving_yards_after_catch=15),
+            _weekly_row(2023, "00-a", 2, "ATL", receiving_yards_after_catch=22),
+        )
+        out = ut.build_raw_season_usage(pop, weekly)
+        assert out.loc[0, "receiving_yards_after_catch"] == 37
+
+    def test_postseason_yac_excluded(self):
+        pop = _population_df({"season": 2023, "player_id": "00-a", "position": "WR"})
+        weekly = _weekly_df(
+            _weekly_row(2023, "00-a", 1, "ATL", receiving_yards_after_catch=15, season_type="REG"),
+            _weekly_row(2023, "00-a", 20, "ATL", receiving_yards_after_catch=40, season_type="POST"),
+        )
+        out = ut.build_raw_season_usage(pop, weekly)
+        assert out.loc[0, "receiving_yards_after_catch"] == 15
+
+    def test_real_negative_weekly_yac_is_summed_not_floored(self):
+        # A real, possible per-week outcome (see module docstring's
+        # audit) -- must never be clamped to zero during aggregation.
+        pop = _population_df({"season": 2023, "player_id": "00-a", "position": "WR"})
+        weekly = _weekly_df(
+            _weekly_row(2023, "00-a", 1, "ATL", receiving_yards_after_catch=10),
+            _weekly_row(2023, "00-a", 2, "ATL", receiving_yards_after_catch=-3),
+        )
+        out = ut.build_raw_season_usage(pop, weekly)
+        assert out.loc[0, "receiving_yards_after_catch"] == 7
+
+    def test_yac_lagged_to_prior_season(self):
+        pop = _population_df(
+            {"season": 2022, "player_id": "00-a", "position": "WR"},
+            {"season": 2023, "player_id": "00-a", "position": "WR"},
+        )
+        weekly = _weekly_df(_weekly_row(2022, "00-a", 1, "ATL", receiving_yards_after_catch=55))
+        raw = ut.build_raw_season_usage(pop, weekly)
+        out = ut.build_preseason_usage_features(raw)
+        row_2023 = out[out["season"] == 2023].iloc[0]
+        assert row_2023["prior_season_receiving_yards_after_catch"] == 55
+
+    def test_rookie_prior_season_yac_is_null(self):
+        pop = _population_df({"season": 2023, "player_id": "00-rookie", "position": "WR"})
+        weekly = _weekly_df(_weekly_row(2023, "00-rookie", 1, "ATL", receiving_yards_after_catch=20))
+        raw = ut.build_raw_season_usage(pop, weekly)
+        out = ut.build_preseason_usage_features(raw)
+        assert pd.isna(out.loc[0, "prior_season_receiving_yards_after_catch"])
+
+
 class TestTradedPlayerFollowedCorrectly:
     def test_season_share_uses_each_weeks_own_real_team(self):
         """Real pattern from a real 2023 trade (Chase Claypool,
@@ -288,10 +343,10 @@ def _raw_usage_df(*rows):
 
 
 def _raw_row(season, pid, position, targets=0.0, carries=0.0, receiving_yards=0.0, receiving_air_yards=0.0,
-             passing_epa=0.0, rushing_epa=0.0, receiving_epa=0.0, receptions=0.0, target_share=np.nan,
-             air_yards_share=np.nan, wopr=np.nan):
+             passing_epa=0.0, rushing_epa=0.0, receiving_epa=0.0, receptions=0.0,
+             receiving_yards_after_catch=0.0, target_share=np.nan, air_yards_share=np.nan, wopr=np.nan):
     return [season, pid, position, targets, carries, receiving_yards, receiving_air_yards, passing_epa,
-            rushing_epa, receiving_epa, receptions, target_share, air_yards_share, wopr]
+            rushing_epa, receiving_epa, receptions, receiving_yards_after_catch, target_share, air_yards_share, wopr]
 
 
 class TestPreseasonLagCorrectness:
