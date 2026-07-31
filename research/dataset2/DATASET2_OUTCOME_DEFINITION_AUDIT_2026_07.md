@@ -390,6 +390,26 @@ about the 133-cluster/0-over-10 result. The committed script's own
 ran against a monkeypatched, in-memory copy of the module global, for
 this descriptive comparison alone.
 
+**SUPERSEDED (2026-07, Source A coverage remediation)**: the 133-cluster
+figure above predates both family #18/#88 (built after this audit) and
+the Source A targets/receiving-air-yards coverage remediation (149
+target-derived columns forced null for prediction seasons 2007-2009 —
+see `research/dataset2/SOURCE_A_TARGETS_COVERAGE_REMEDIATION_AUDIT_2026_07.md`).
+Re-run against the current, remediated predictor table: **144 clusters**,
+0 exceeding 10 members, `MIN_OVERLAP_N` 30/50/100 membership still
+identical at all three floors (stability holds). The 0.90-0.95
+near-neighbor band also shifted: 478 pairs (vs. 266 at `|r|>=0.95`),
+computed the same way as §6a below but against the remediated table's
+213 continuous whitelist columns. Full comparison table, including the
+isolated pre-remediation baseline (138 clusters, computed this round by
+temporarily reverting the remediation code to separate its effect from
+the unrelated family #18/#88 growth) and the interpretation of why
+cluster count rose, is in
+`research/dataset2/DATASET2_TRAIT_ANALYSIS_PIPELINE_PROPOSAL_2026_07.md`
+§11.8. Not re-executed as a fresh 30/50/100 sweep narrative here to
+avoid duplicating that section — see §11.8 for the authoritative
+current numbers.
+
 ---
 
 ## 7. Scope note

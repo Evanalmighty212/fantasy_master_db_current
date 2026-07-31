@@ -761,15 +761,96 @@ alongside it. Still a real, open item for a future round if requested.
 
 ---
 
+## 11.8 Source A targets/receiving-air-yards coverage remediation (2026-07) — SUPERSEDES §1/§1.5/§9's predictor and cluster counts
+
+**Note first**: every count in §1, §1.5, and §9 above (434 predictors,
+133 clusters, 223 content columns, 274 near-duplicate pairs at
+`|r|>=0.95`) predates BOTH family #18 (receiving efficiency) and family
+#88's workload core, which were built and committed in the interim
+(see `CHANGELOG.md`). Those additions alone moved the real,
+pre-remediation baseline to 444 canonical columns / 440 whitelist
+columns, 229 content columns, and 138 clusters (0 exceeding 10
+members) — recomputed this round, before the remediation below, by
+temporarily reverting the remediation code (`git stash`) and rebuilding
+the full pipeline, specifically so the remediation's own effect could
+be isolated from the unrelated family #18/#88 growth. That
+138-cluster figure, not the older 133, is the correct immediate
+baseline for what follows.
+
+**The remediation itself**: `research/dataset2/SOURCE_A_TARGETS_COVERAGE_REMEDIATION_AUDIT_2026_07.md`
+documents a real Source A data-quality gap — `targets` and
+`receiving_air_yards` are ~99.5-99.7% zero-filled (not real zeros) in
+the underlying nflverse weekly file for observation seasons 2006-2008
+only, a clean break at 2009. A centralized, dtype-aware coverage mask
+(`apply_source_coverage_null_mask()` in `lib/dataset2/common.py`) now
+forces 149 audited, target-derived canonical columns (5 Source A
+fields + 144 Family #9 receiving-opportunity/efficiency/role fields,
+generated programmatically from the real `window_ns`, not hardcoded)
+to real null for prediction seasons 2007-2009, replacing what were
+previously invalid non-null (mostly zero) values. **45,240 cells**
+changed from invalid non-null to null (3,980 Source A + 41,260 Family
+#9); verified via a null-safe diff that 0 cells changed outside this
+149-column/3-season scope in either direction. Column count is
+unchanged (444/440) — the mask nulls values, never drops or adds
+columns. Full test suite: 1,166 passed (up from 1,144, +22 new tests).
+
+**Real, honest effect on clustering (recomputed after remediation,
+same unmodified script, verified deterministic and stable at
+`MIN_OVERLAP_N` 30/50/100)**:
+
+| Metric | Pre-remediation (post-fam18/88 baseline) | Post-remediation (current) |
+|---|---|---|
+| Content columns | 229 | 229 (unchanged — mask affects values, not column set) |
+| Final cluster count | 138 | **144** (+6) |
+| Singleton clusters | 83 | 91 (+8) |
+| Cluster size 2-5 / 6-10 / >10 | 41 / 14 / 0 | 39 / 14 / 0 |
+| Largest cluster | 10 | 10 (unchanged) |
+| `MIN_OVERLAP_N` 30/50/100 membership | identical at all three | identical at all three (stability holds) |
+| Near-duplicate pairs `\|r\|>=0.95` | 276 | 266 (-10) |
+| Near-neighbor pairs `0.90<=\|r\|<0.95` | 320 | 478 (+158) |
+
+**Interpretation**: forcing invalid non-null (mostly-zero) Source A
+target/air-yards values to real null for 2007-2009 reduces the
+pairwise jointly-non-null overlap used to compute correlations among
+the affected Family #9 window-variant columns. Several pairs that were
+previously artificially glued together at `|r|>=0.95` (partly on the
+strength of a shared block of invalid zeros) now fall into the
+0.90-0.95 band or lower once those invalid values are correctly
+excluded — this is exactly the expected, correct consequence of
+removing bad data from a correlation computation, not a clustering
+regression. `MIN_OVERLAP_N` floor stability (30/50/100 all identical)
+continues to hold post-remediation, confirming the cluster count shift
+is a real correlation-strength effect, not an overlap-sample-size
+artifact. No clustering threshold or default was changed to produce
+this table — same script, same `NEAR_DUPLICATE_CORR_THRESHOLD=0.95`,
+same complete-linkage cut.
+
+Regenerated artifacts (all deterministic, byte-identical across two
+independent rebuild runs):
+`data/exports/dataset2_canonical_predictor_table.{csv,parquet}`,
+`data/exports/dataset2_canonical_predictor_table_data_dictionary.csv`,
+`data/exports/dataset2_analysis_view.{csv,parquet}` and its whitelist/
+registry/join-audit siblings,
+`data/exports/dataset2_trait_pipeline_predictor_inventory.csv`,
+`data/exports/dataset2_trait_pipeline_near_duplicate_pairs.csv`,
+`data/exports/dataset2_trait_pipeline_predictor_clusters.csv`.
+
+No target/outcome was opened or altered by this remediation — the same
+hardcoded verification counts (`bust_primary_label` positive=522,
+`bust_strict_below_replacement_label` positive=103, `star_by_value_label`
+positive=76) reconfirmed unchanged after this round's rebuild.
+
+---
+
 ## 12. Explicit stop point
 
 **This document stops before Phase 1 begins.** No trait has been
 tested against any of the 4 targets. The real work performed this
 round is entirely structural/outcome-free: the age (family #2) rebuild
-(§11.7), the revised, audited predictor clustering (§1.5, 133 clusters,
-0 exceeding 10 members), and the targets' own aggregate discovery/
-holdout base counts (§4 — properties of the targets alone, not of any
-trait-target association).
+(§11.7), the revised, audited predictor clustering (§1.5, superseded by
+§11.8's 144-cluster remediated result, 0 exceeding 10 members), and the
+targets' own aggregate discovery/holdout base counts (§4 — properties
+of the targets alone, not of any trait-target association).
 Artifacts:
 `data/exports/dataset2_trait_pipeline_predictor_inventory.csv`,
 `data/exports/dataset2_trait_pipeline_near_duplicate_pairs.csv`,
