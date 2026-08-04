@@ -86,15 +86,18 @@ import pandas as pd
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from lib.dataset2.common import validate_columns
 
-PREDICTOR_REQUIRED_COLUMNS = ("prediction_season", "player_id", "position")
-OUTCOME_REQUIRED_COLUMNS = ("outcome_season", "player_id", "position")
+SHARED_SPINE_METADATA_COLUMNS = (
+    "canonical_position_status", "canonical_position_authority", "historical_input_revision",
+)
+PREDICTOR_REQUIRED_COLUMNS = ("prediction_season", "player_id", "position") + SHARED_SPINE_METADATA_COLUMNS
+OUTCOME_REQUIRED_COLUMNS = ("outcome_season", "player_id", "position") + SHARED_SPINE_METADATA_COLUMNS
 PREDICTOR_COLUMN_REGISTRY_REQUIRED_COLUMNS = ("canonical_column", "family_number")
 
 PREDICTOR_SPINE_COLUMNS = (
     "prediction_season", "player_id", "position", "canonical_position_status",
     "canonical_position_authority", "historical_input_revision", "observation_season",
 )
-_OUTCOME_DROP_BEFORE_MERGE = ("position",)  # redundant with the predictor spine's own position
+_OUTCOME_DROP_BEFORE_MERGE = ("position",) + SHARED_SPINE_METADATA_COLUMNS
 _OUTCOME_RENAME_BEFORE_MERGE = {"outcome_season": "prediction_season"}
 
 # Every nullable-boolean column on the outcome side -- re-cast
@@ -235,6 +238,33 @@ def build_dataset2_analysis_view(
         raise RuntimeError("predictor_df has duplicate (prediction_season, player_id) keys -- not a valid spine.")
     if outcome_df.duplicated(subset=["outcome_season", "player_id"]).any():
         raise RuntimeError("outcome_df has duplicate (outcome_season, player_id) keys.")
+
+    # These fields describe the shared player-season spine, not an
+    # outcome. Validate them on every matched key before dropping only
+    # the redundant outcome-side copies. Predictor-only application
+    # rows retain the predictor values unchanged.
+    shared = predictor_df[
+        ["prediction_season", "player_id"] + list(SHARED_SPINE_METADATA_COLUMNS)
+    ].merge(
+        outcome_df[["outcome_season", "player_id"] + list(SHARED_SPINE_METADATA_COLUMNS)].rename(
+            columns={"outcome_season": "prediction_season"}
+        ),
+        on=["prediction_season", "player_id"], how="inner", suffixes=("_predictor", "_outcome"),
+        validate="one_to_one",
+    )
+    disagreements = []
+    for column in SHARED_SPINE_METADATA_COLUMNS:
+        left = shared[f"{column}_predictor"]
+        right = shared[f"{column}_outcome"]
+        bad = ~(left.eq(right) | (left.isna() & right.isna()))
+        if bad.any():
+            disagreements.extend(
+                shared.loc[bad, ["prediction_season", "player_id"]]
+                .assign(column=column, predictor_value=left[bad].values, outcome_value=right[bad].values)
+                .to_dict("records")
+            )
+    if disagreements:
+        raise RuntimeError(f"Shared predictor/outcome spine metadata disagree: {disagreements[:20]}")
 
     outcome_renamed = outcome_df.rename(columns=_OUTCOME_RENAME_BEFORE_MERGE).drop(columns=list(_OUTCOME_DROP_BEFORE_MERGE))
 

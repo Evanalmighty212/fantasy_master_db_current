@@ -37,6 +37,15 @@ TARGET_REGISTRY_PATH = OUTPUT_DIR / "dataset2_analysis_view_target_registry.csv"
 COLUMN_REGISTRY_PATH = OUTPUT_DIR / "dataset2_analysis_view_column_registry.csv"
 JOIN_AUDIT_PATH = OUTPUT_DIR / "dataset2_analysis_view_join_audit_report.csv"
 
+# The pre-directory-first artifact contained 103 strict busts because
+# 2021 Mike Thomas (CIN) was incorrectly assigned Michael Thomas's ADP.
+# The approved directory-first identity repair makes Mike Thomas correctly
+# bust-ineligible, so the canonical regenerated count is 102.
+EXPECTED_STRICT_BUST_POSITIVE_COUNT = 102
+STRICT_BUST_COUNT_AUDIT_KEY = (
+    f"bust_strict_below_replacement_label_positive_matches_{EXPECTED_STRICT_BUST_POSITIVE_COUNT}"
+)
+
 
 def main():
     print("Loading already-built predictor and outcome artifacts (read-only, no recomputation)...")
@@ -125,11 +134,14 @@ def main():
     star_eligible = int(view["star_outcome_eligible"].sum())
     star_true = int((view["star_by_value_label"] == True).sum())  # noqa: E712
     print(f"bust_primary_label positive count: {bust_primary_true} (expected 522)")
-    print(f"bust_strict_below_replacement_label positive count: {bust_strict_true} (expected 103)")
+    print(
+        "bust_strict_below_replacement_label positive count: "
+        f"{bust_strict_true} (expected {EXPECTED_STRICT_BUST_POSITIVE_COUNT})"
+    )
     print(f"star_outcome_eligible count: {star_eligible}")
     print(f"star_by_value_label positive count: {star_true}")
     audit["bust_primary_label_positive_matches_522"] = bust_primary_true == 522
-    audit["bust_strict_below_replacement_label_positive_matches_103"] = bust_strict_true == 103
+    audit[STRICT_BUST_COUNT_AUDIT_KEY] = bust_strict_true == EXPECTED_STRICT_BUST_POSITIVE_COUNT
 
     pd.DataFrame([audit]).T.rename(columns={0: "value"}).to_csv(JOIN_AUDIT_PATH)
 

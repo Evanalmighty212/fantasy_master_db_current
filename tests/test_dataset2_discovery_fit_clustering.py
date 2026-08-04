@@ -103,8 +103,15 @@ def discovery_fit_clusters(discovery_fit_real, discovery_fit_inv):
 
 
 class TestDiscoveryFitSourcing:
-    def test_exactly_8161_live_discovery_fit_rows(self, discovery_fit_real):
-        assert len(discovery_fit_real) == 8161
+    def test_exactly_8156_live_discovery_fit_rows_after_unresolved_exclusions(self, discovery_fit_real):
+        historical_pre_authority_count = 8161
+        discovery_era_unresolved_identity_conflicts = 4
+        discovery_era_unresolved_position_authority = 1  # Patterson 2020
+        assert len(discovery_fit_real) == (
+            historical_pre_authority_count
+            - discovery_era_unresolved_identity_conflicts
+            - discovery_era_unresolved_position_authority
+        )
 
     def test_canonical_predictor_artifact_used_as_source(self):
         assert tapi.PREDICTOR_TABLE_PATH == "data/exports/dataset2_canonical_predictor_table.parquet"
@@ -141,7 +148,14 @@ class TestDiscoveryFitSourcing:
         predictor_df = pd.read_parquet(tapi.PREDICTOR_TABLE_PATH)
         outcome_df = pd.read_parquet(_OUTCOME_TABLE_PATH)
         overlap = set(predictor_df.columns) & set(outcome_df.columns)
-        assert overlap <= {"player_id", "position"}  # only real join keys may be shared
+        expected_shared_columns = {
+            "player_id",
+            "position",
+            "canonical_position_status",
+            "canonical_position_authority",
+            "historical_input_revision",
+        }
+        assert overlap <= expected_shared_columns
         assert "outcome_join_status" not in predictor_df.columns
 
     def test_whitelist_does_not_blanket_ban_real_eligible_named_predictors(self, discovery_fit_whitelist):

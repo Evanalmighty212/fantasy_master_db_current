@@ -19,6 +19,7 @@ import pandas as pd
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+import scripts.build_dataset2_analysis_view as analysis_view_driver
 from lib.dataset2.analysis_view import (
     OUTCOME_JOIN_STATUS_MATCHED,
     OUTCOME_JOIN_STATUS_NO_MATCH,
@@ -27,13 +28,37 @@ from lib.dataset2.analysis_view import (
 )
 
 
+class TestRequiredVerificationCounts:
+    def test_strict_bust_expectation_tracks_directory_first_identity_repair(self):
+        assert analysis_view_driver.EXPECTED_STRICT_BUST_POSITIVE_COUNT == 102
+        assert analysis_view_driver.STRICT_BUST_COUNT_AUDIT_KEY.endswith("_matches_102")
+
+    @pytest.mark.skipif(
+        not analysis_view_driver.JOIN_AUDIT_PATH.exists(),
+        reason="regenerated Dataset 2 analysis-view audit artifact is unavailable",
+    )
+    def test_live_audit_records_the_approved_strict_bust_count(self):
+        audit = pd.read_csv(analysis_view_driver.JOIN_AUDIT_PATH, index_col=0)["value"]
+        assert str(audit.loc[analysis_view_driver.STRICT_BUST_COUNT_AUDIT_KEY]).lower() == "true"
+        assert "bust_strict_below_replacement_label_positive_matches_103" not in audit.index
+
+
 def _predictor(*rows, extra_cols=None):
     """rows: (prediction_season, player_id, position, fam1_trait)."""
-    cols = ["prediction_season", "player_id", "position", "observation_season", "fam1_trait"]
     out_rows = []
     for r in rows:
         ps, pid, pos, trait = r
-        out_rows.append({"prediction_season": ps, "player_id": pid, "position": pos, "observation_season": ps - 1, "fam1_trait": trait})
+        out_rows.append({
+            "prediction_season": ps, "player_id": pid, "position": pos,
+            "canonical_position_status": "adp_source",
+            "canonical_position_authority": "adp_source_position",
+            "historical_input_revision": "test-revision",
+            "observation_season": ps - 1, "fam1_trait": trait,
+        })
+    cols = [
+        "prediction_season", "player_id", "position", "canonical_position_status",
+        "canonical_position_authority", "historical_input_revision", "observation_season", "fam1_trait",
+    ]
     df = pd.DataFrame(out_rows, columns=cols) if out_rows else pd.DataFrame(columns=cols)
     return df
 
@@ -44,6 +69,9 @@ def _predictor_registry():
             {"canonical_column": "prediction_season", "family_number": "N/A (spine)"},
             {"canonical_column": "player_id", "family_number": "N/A (spine)"},
             {"canonical_column": "position", "family_number": "N/A (spine)"},
+            {"canonical_column": "canonical_position_status", "family_number": "N/A (spine)"},
+            {"canonical_column": "canonical_position_authority", "family_number": "N/A (spine)"},
+            {"canonical_column": "historical_input_revision", "family_number": "N/A (spine)"},
             {"canonical_column": "observation_season", "family_number": "N/A (spine)"},
             {"canonical_column": "fam1_trait", "family_number": "1"},
         ]
@@ -54,7 +82,9 @@ def _outcome(*rows):
     """rows: (outcome_season, player_id, position, real_status, star_eligible, star_label,
     bust_eligible, bust_label, bust25, bust30, strict_eligible, strict_label, diag_eligible, diag_value)."""
     cols = (
-        "outcome_season", "player_id", "position", "real_status", "has_real_market_adp", "adp_round",
+        "outcome_season", "player_id", "position", "canonical_position_status",
+        "canonical_position_authority", "historical_input_revision",
+        "real_status", "has_real_market_adp", "adp_round",
         "star_outcome_eligible", "star_outcome_ineligibility_reason", "star_by_value_label",
         "sbv_score_available", "star_by_value_score",
         "bust_primary_eligible", "bust_primary_ineligibility_reason", "bust_primary_assignment_method",
@@ -75,6 +105,9 @@ def _outcome(*rows):
         out_rows.append(
             {
                 "outcome_season": os_, "player_id": pid, "position": pos, "real_status": status,
+                "canonical_position_status": "adp_source",
+                "canonical_position_authority": "adp_source_position",
+                "historical_input_revision": "test-revision",
                 "has_real_market_adp": True, "adp_round": 5,
                 "star_outcome_eligible": star_elig, "star_outcome_ineligibility_reason": None if star_elig else "x",
                 "star_by_value_label": star_lbl,
@@ -234,6 +267,29 @@ class TestPredictorWhitelistAndTargetRegistry:
 
 
 class TestStructuralIntegrity:
+    def test_equal_shared_metadata_is_retained_once_from_predictor(self):
+        predictor = _predictor((2015, "P1", "RB", 1.0))
+        outcome = _outcome((2015, "P1", "RB", "adp_scored", True, True, True, True, True, True, True, False, True, 5.0))
+        view, *_ = build_dataset2_analysis_view(predictor, _predictor_registry(), outcome)
+        for column in ("canonical_position_status", "canonical_position_authority", "historical_input_revision"):
+            assert list(view.columns).count(column) == 1
+            assert view.loc[0, column] == predictor.loc[0, column]
+
+    def test_shared_metadata_mismatch_fails_loudly(self):
+        predictor = _predictor((2015, "P1", "RB", 1.0))
+        outcome = _outcome((2015, "P1", "RB", "adp_scored", True, True, True, True, True, True, True, False, True, 5.0))
+        outcome.loc[0, "historical_input_revision"] = "different-revision"
+        with pytest.raises(RuntimeError, match="Shared predictor/outcome spine metadata disagree"):
+            build_dataset2_analysis_view(predictor, _predictor_registry(), outcome)
+
+    def test_predictor_only_2026_row_preserves_shared_metadata(self):
+        predictor = _predictor((2026, "FUTURE", "WR", 1.0))
+        view, *_ = build_dataset2_analysis_view(predictor, _predictor_registry(), _outcome())
+        row = view.iloc[0]
+        assert row["canonical_position_status"] == "adp_source"
+        assert row["canonical_position_authority"] == "adp_source_position"
+        assert row["historical_input_revision"] == "test-revision"
+
     def test_no_x_y_suffix_columns(self):
         predictor = _predictor((2015, "P1", "RB", 1.0))
         outcome = _outcome((2015, "P1", "RB", "adp_scored", True, True, True, True, True, True, True, False, True, 5.0))
