@@ -48,12 +48,12 @@ LWI = 46% ADP Value
   `lwi_eligibility_flag` explaining why (`no_adp_match` or
   `insufficient_games`), not a score computed from insufficient data.
 
-### Approved input-governance revision (not yet implemented)
+### Approved input-governance revision
 
-**Methodology status: APPROVED by Evan (2026-07). Implementation
-status: NOT YET IMPLEMENTED.** The LWI formula and weights are
-unchanged. After implementation, every position-relative LWI step
-will use the separately governed, preseason-frozen
+**Methodology status: APPROVED by Evan (2026-07 and 2026-08).
+Implementation status: IMPLEMENTED; downstream artifact regeneration
+pending.** The LWI formula and weights are unchanged. Every
+position-relative LWI step uses the separately governed
 `canonical_fantasy_position` defined in
 [`MATCHING_ARCHITECTURE.md`](MATCHING_ARCHITECTURE.md), rather than
 treating the results source's position as authoritative. The raw ADP
@@ -71,6 +71,21 @@ ADP rank and production cohort must never be used silently. Mixing a WR
 ADP rank with a TE results cohort, as happened for N'Keal Harry in
 2019-2020, is invalid even when the player identity itself is known
 exactly.
+
+Where stronger preseason evidence is absent, the constrained,
+row-labeled `processed_results_position_fallback` described in
+`MATCHING_ARCHITECTURE.md` is permitted only for otherwise clean
+historical rows. It is not independently verified preseason evidence
+and cannot supersede an approved override, unresolved decision, known
+conflict, or contrary ADP/manual evidence.
+An ADP position attached to an unresolved identity or position-matching
+conflict is preserved as conflict evidence rather than treated as clean
+ADP authority. Decision-bearing position-relative fields, including
+positional finish, must be rebuilt from the resolved canonical cohorts.
+Bare `position` is canonical-only and null for unresolved rows. LWI,
+SBV, expected-production fitting, rankings, and labels must either
+exclude those rows explicitly or fail loudly; source-derived position
+remains available only through its named provenance fields.
 
 Corrected inputs that change a previously published LWI score receive
 an explicit new historical-label/reproducibility revision. This is

@@ -55,13 +55,35 @@ are different facts and must not be collapsed into one field:
   not by themselves convert a receiver such as Deebo Samuel or Percy
   Harvin into a running back.
 
-Canonical fantasy position follows this authority order: verified
-contemporaneous fantasy/ADP position when available and
-football-coherent; otherwise a documented official/team position
-established by the preseason cutoff; otherwise a predeclared named
-fantasy authority. A materially conflicting case stays explicitly
-unresolved until Evan decides -- the results-source position is never
-a silent fallback presented as adjudication.
+Canonical fantasy position follows this authority order: an approved
+player-season override; otherwise verified contemporaneous fantasy/ADP
+position when available and football-coherent; otherwise a documented
+official/team position established by the preseason cutoff; otherwise
+a predeclared named fantasy authority. For an otherwise clean
+historical row with none of those authorities, Evan has approved the
+explicitly named `processed_results_position_fallback`: it may carry
+the processed results position into the canonical field only when
+there is no approved override, explicit unresolved case, known
+cross-position conflict, contrary ADP-source position, or contrary
+manual evidence. Its authority and `constrained_fallback` status must
+be stored on the row. It is an auditable coverage fallback, **not**
+independently verified preseason evidence. Any stronger evidence,
+approved override, or unresolved decision supersedes it; a materially
+conflicting case stays unresolved until Evan decides.
+
+Identity resolution is a prerequisite for ordinary ADP-source
+position authority. An `exact_name_position_mismatch`, unresolved
+identity-confidence case, or equivalent matching conflict must retain
+an explicit unresolved/conflict status even when an ADP position is
+present. That ADP value remains evidence, but it is not promoted to
+clean canonical authority until the identity conflict is adjudicated;
+an approved player-season override may resolve and supersede it.
+
+The legacy bare `position` field is canonical-only. It is populated
+from `canonical_fantasy_position` for resolved statuses and is null for
+every unresolved status; it never falls back to processed results.
+`processed_position` and the raw provider fields retain the historical
+source values under their explicit names.
 
 The approved player-season treatments are:
 

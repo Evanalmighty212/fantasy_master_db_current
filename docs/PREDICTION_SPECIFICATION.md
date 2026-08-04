@@ -143,8 +143,9 @@ kept.
 
 ### Approved position/team input-governance revision
 
-**Methodology status: APPROVED by Evan (2026-07). Implementation
-status: NOT YET IMPLEMENTED.** Stars-by-Value and every downstream
+**Methodology status: APPROVED by Evan (2026-07 and 2026-08).
+Implementation status: IMPLEMENTED; downstream artifact regeneration
+pending.** Stars-by-Value and every downstream
 Dataset 3 outcome or model must use the separately governed,
 preseason-frozen `canonical_fantasy_position` defined in
 [`MATCHING_ARCHITECTURE.md`](MATCHING_ARCHITECTURE.md). ADP-source
@@ -159,6 +160,21 @@ ADP rank and production cohort must never be used silently. Raw ADP
 position, raw results position, official/team-listed position, and
 actual usage roles remain separate evidence. A position disagreement
 must never redirect an ADP row to a different player identity.
+
+The constrained `processed_results_position_fallback` described in
+`MATCHING_ARCHITECTURE.md` may be used only for otherwise clean
+historical rows lacking stronger evidence. It remains explicitly
+labeled and is not independently verified preseason evidence; it may
+not supersede an approved override, unresolved case, known conflict,
+or contrary ADP/manual evidence.
+An ADP position attached to an unresolved identity or matching conflict
+is retained as evidence but cannot become ordinary clean ADP-source
+authority until adjudicated. Position-derived production fields are
+recomputed from resolved canonical cohorts.
+Bare `position` is canonical-only and null for unresolved rows;
+processed and raw positions remain separately named provenance. The
+Dataset 2 predictor table carries `historical_input_revision` as
+non-predictive input-governance metadata, never as a feature.
 
 Raw provider team values likewise remain unchanged provenance. A
 separately named, season-accurate canonical team governs identity

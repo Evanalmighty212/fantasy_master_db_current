@@ -1,0 +1,19 @@
+player_id,start_season,end_season,canonical_fantasy_position,decision_status,authority,notes
+00-0035624,2019,2022,WR,approved,Evan-approved season-specific treatment,N'Keal Harry; no decision for 2023 or 2024
+00-0030578,2013,2019,WR,approved,Evan-approved season-specific treatment,Cordarrelle Patterson pre-conversion seasons
+00-0030578,2020,2020,,unresolved,pending contemporaneous preseason fantasy authority,Cordarrelle Patterson 2020
+00-0030578,2021,2024,RB,approved,Evan-approved season-specific treatment,Cordarrelle Patterson post-conversion seasons in current data
+00-0027651,2011,2011,WR,approved,Evan-approved season-specific treatment,Dexter McCluster
+00-0027651,2012,2012,RB,approved,Evan-approved season-specific treatment,Dexter McCluster
+00-0027651,2013,2013,WR,approved,Evan-approved season-specific treatment,Dexter McCluster
+00-0027651,2014,2016,RB,approved,Evan-approved season-specific treatment,Dexter McCluster
+00-0032200,2016,2016,WR,approved,Evan-approved season-specific treatment,Ty Montgomery
+00-0032200,2017,2023,RB,approved,Evan-approved season-specific treatment,Ty Montgomery seasons in current data
+00-0028825,2011,2013,QB,approved,Evan-approved season-specific treatment,Terrelle Pryor
+00-0028825,2015,2018,WR,approved,Evan-approved season-specific treatment,Terrelle Pryor seasons in current data
+00-0035719,2019,2025,WR,approved,Evan-approved hybrid treatment,Deebo Samuel; rushing remains usage
+00-0026998,2009,2016,WR,approved,Evan-approved hybrid treatment,Percy Harvin; rushing remains usage
+00-0033357,2023,2023,,unresolved,pending named fantasy-position authority,Taysom Hill 2023
+00-0031299,2014,2024,WR,approved,existing manual processed-position evidence,Jordan Matthews; applies only to player-seasons present in the population
+00-0032055,2015,2019,WR,approved,existing manual processed-position evidence,Devin Funchess
+00-0040718,2025,2025,WR,approved,existing manual processed-position evidence,Travis Hunter fantasy-relevant offensive position

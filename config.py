@@ -171,6 +171,12 @@ LWI_PLAYOFF_ERA_CUTOFF_SEASON = 2020
 # for full details.
 LWI_VERSION = "2.1"
 
+# [IMPLEMENTATION METADATA] Distinguishes regenerated historical
+# labels built from corrected canonical position/team/identity inputs
+# from the prior data state. Formula versions above/below do not change:
+# this revision records input governance, not a new LWI or SBV formula.
+HISTORICAL_INPUT_REVISION = "2026-08-canonical-position-team-v1"
+
 
 def validate_lwi_config():
     """

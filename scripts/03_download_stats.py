@@ -272,6 +272,8 @@ def build_season_results():
 
     weekly = pd.concat(frames, ignore_index=True)
     validate_normalized_weekly_source(weekly)
+    weekly["results_source_position_raw"] = weekly["position"]
+    weekly["results_source_team_raw"] = weekly["recent_team"]
 
     pd.DataFrame(failed).to_csv(RAW_DIR / "weekly_download_failures.csv", index=False)
 
@@ -350,6 +352,7 @@ def build_season_results():
             "teams_all": ",".join(sorted(set(g["recent_team"].dropna()))),
         }))
     )
+    team_info["results_source_team_raw"] = team_info["primary_team"]
 
     # Carry through display name and position without letting either
     # fragment the grouping key -- use the most frequent value observed.
@@ -358,6 +361,7 @@ def build_season_results():
         .agg(
             player_display_name=("player_display_name", lambda s: s.mode().iat[0]),
             position=("position", lambda s: s.mode().iat[0]),
+            results_source_position_raw=("results_source_position_raw", lambda s: s.mode().iat[0]),
         )
     )
 
@@ -453,7 +457,8 @@ def build_season_results():
     # with the correct total, matching games_played's nunique()-based
     # count exactly.
     weekly_raw = played[
-        GROUP_KEY + ["week", "player_display_name", "position", "recent_team", "fantasy_points_ppr"]
+        GROUP_KEY + ["week", "player_display_name", "position", "results_source_position_raw",
+                     "recent_team", "results_source_team_raw", "fantasy_points_ppr"]
     ]
     dup_weeks = weekly_raw[weekly_raw.duplicated(subset=GROUP_KEY + ["week"], keep=False)]
     if len(dup_weeks) > 0:
@@ -467,7 +472,9 @@ def build_season_results():
         .agg(
             player_display_name=("player_display_name", "first"),
             position=("position", "first"),
+            results_source_position_raw=("results_source_position_raw", "first"),
             recent_team=("recent_team", "first"),
+            results_source_team_raw=("results_source_team_raw", "first"),
             fantasy_points_ppr=("fantasy_points_ppr", "sum"),
         )
         .sort_values(GROUP_KEY + ["week"])

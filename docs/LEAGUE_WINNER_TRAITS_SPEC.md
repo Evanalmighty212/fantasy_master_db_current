@@ -325,14 +325,29 @@ useful for Dataset 3 later:
 
 ### Approved player-season position and team authority
 
-**Methodology status: APPROVED by Evan (2026-07). Implementation
-status: NOT YET IMPLEMENTED.** Dataset 2 must use the separately
+**Methodology status: APPROVED by Evan (2026-07 and 2026-08).
+Implementation status: IMPLEMENTED; downstream artifact regeneration
+pending.** Dataset 2 uses the separately
 governed, preseason-frozen `canonical_fantasy_position` defined in
 [`MATCHING_ARCHITECTURE.md`](MATCHING_ARCHITECTURE.md) for
 position-specific predictor construction and normalization. Player
 identity, ADP-source position, official/team-listed position, and
 actual usage roles remain separate fields; a disagreement among them
 must never redirect an ADP row to a different player identity.
+
+The constrained `processed_results_position_fallback` defined in
+`MATCHING_ARCHITECTURE.md` is allowed only for otherwise clean
+historical rows lacking stronger evidence. Dataset 2 must retain its
+authority/status fields and must not describe it as independently
+verified preseason evidence.
+Rows with unresolved identity/position matching conflicts are not
+ordinary ADP-authority rows and remain outside resolved canonical
+position cohorts. The canonical predictor and outcome artifacts retain
+the position authority and status fields so fallback-sourced rows can
+be identified for later sensitivity or exclusion analysis.
+The predictor spine also carries `historical_input_revision` as
+non-modeling metadata. It identifies the corrected input state without
+using any outcome, label, eligibility, or protected-holdout result.
 
 For a lagged predictor, position authority follows the season the
 fact describes: a prior-season position-normalized value uses that

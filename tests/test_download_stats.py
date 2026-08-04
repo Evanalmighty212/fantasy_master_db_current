@@ -496,6 +496,7 @@ class TestNKealHarrySeasonSpecificOverride:
         weekly = pd.read_csv(tmp_path / "data/raw/nflverse/weekly_results_ppr_2018_2024.csv")
         harry_weekly = weekly[weekly["player_id"] == self.HARRY_ID].set_index("season")
         assert set(harry_weekly.loc[list(self.APPROVED_SEASONS), "position"]) == {"WR"}
+        assert set(harry_weekly.loc[list(self.APPROVED_SEASONS), "results_source_position_raw"]) == {"TE"}
         assert harry_weekly.loc[2018, "position"] == "TE"
         assert harry_weekly.loc[2023, "position"] == "TE"
         assert harry_weekly.loc[2024, "position"] == "TE"
