@@ -431,6 +431,103 @@ class TestPositionOverrideIsIdempotent:
         pd.testing.assert_frame_equal(season.reset_index(drop=True), season_again.reset_index(drop=True))
 
 
+class TestNKealHarrySeasonSpecificOverride:
+    """Protects Evan's narrowly approved Harry scope: WR in exactly
+    2019-2022, keyed by player identity and applied before positional
+    finish ranks are constructed. It must not become a career-wide or
+    name-based correction."""
+
+    HARRY_ID = "00-0035624"
+    APPROVED_SEASONS = {2019, 2020, 2021, 2022}
+
+    @staticmethod
+    def _harry_override_rows():
+        return [
+            {
+                "player_id": TestNKealHarrySeasonSpecificOverride.HARRY_ID,
+                "season": str(season),
+                "correct_position": "WR",
+                "notes": "approved narrow Harry test fixture",
+            }
+            for season in sorted(TestNKealHarrySeasonSpecificOverride.APPROVED_SEASONS)
+        ]
+
+    def test_committed_override_scope_is_exactly_2019_through_2022(self):
+        overrides = pd.read_csv(
+            Path(__file__).resolve().parent.parent / "data/manual/position_overrides.csv",
+            dtype=str,
+        )
+        harry = overrides[overrides["player_id"] == self.HARRY_ID]
+        assert set(harry["season"]) == {"2019", "2020", "2021", "2022"}
+        assert set(harry["correct_position"]) == {"WR"}
+        assert harry["season"].notna().all(), "Harry must not receive an all-season override"
+
+    def test_weekly_and_season_rows_correct_only_approved_seasons_before_ranking(self, tmp_path, monkeypatch):
+        _write_position_overrides(tmp_path, *self._harry_override_rows())
+        rows = []
+        for season in range(2018, 2025):
+            rows.extend(
+                [
+                    make_weekly_row(season, 1, self.HARRY_ID, "N'Keal Harry", "TE", "NE", targets=1, points=10.0),
+                    make_weekly_row(season, 1, "00-WR-PEER", "WR Peer", "WR", "NE", targets=1, points=20.0),
+                    make_weekly_row(season, 1, "00-OTHER-HARRY", "Other Harry", "TE", "NE", targets=1, points=5.0),
+                ]
+            )
+        weekly_df = pd.DataFrame(rows)
+
+        with patch(
+            "nflverse_source.fetch_and_normalize",
+            side_effect=lambda season: weekly_df[weekly_df["season"] == season].copy(),
+        ):
+            mod = load_module(tmp_path, monkeypatch)
+            mod.SEASONS = list(range(2018, 2025))
+            season = mod.build_season_results()
+
+        harry = season[season["player_id"] == self.HARRY_ID].set_index("season")
+        assert set(harry.loc[list(self.APPROVED_SEASONS), "position"]) == {"WR"}
+        assert harry.loc[2018, "position"] == "TE"
+        assert harry.loc[2023, "position"] == "TE"
+        assert harry.loc[2024, "position"] == "TE"
+
+        # The correction precedes Step 6: the 20-point WR peer ranks
+        # WR1 and Harry's 10 points rank WR2 in each approved season.
+        assert set(harry.loc[list(self.APPROVED_SEASONS), "position_finish_ppr"]) == {2}
+
+        weekly = pd.read_csv(tmp_path / "data/raw/nflverse/weekly_results_ppr_2018_2024.csv")
+        harry_weekly = weekly[weekly["player_id"] == self.HARRY_ID].set_index("season")
+        assert set(harry_weekly.loc[list(self.APPROVED_SEASONS), "position"]) == {"WR"}
+        assert harry_weekly.loc[2018, "position"] == "TE"
+        assert harry_weekly.loc[2023, "position"] == "TE"
+        assert harry_weekly.loc[2024, "position"] == "TE"
+
+        other = season[season["player_id"] == "00-OTHER-HARRY"]
+        assert set(other["position"]) == {"TE"}, "Correction leaked to another player identity"
+
+    def test_season_specific_application_is_idempotent_and_identity_keyed(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("download_stats_harry", SCRIPT_PATH)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        overrides = pd.DataFrame(self._harry_override_rows())
+        base = pd.DataFrame(
+            [
+                {"season": season, "player_id": self.HARRY_ID, "position": "TE"}
+                for season in range(2018, 2025)
+            ]
+            + [{"season": 2020, "player_id": "00-NOT-HARRY", "position": "TE"}]
+        )
+
+        once = mod.apply_position_overrides(base.copy(), overrides)
+        twice = mod.apply_position_overrides(once.copy(), overrides)
+        pd.testing.assert_frame_equal(once, twice)
+
+        harry = once[once["player_id"] == self.HARRY_ID].set_index("season")
+        assert set(harry.loc[list(self.APPROVED_SEASONS), "position"]) == {"WR"}
+        assert set(harry.loc[[2018, 2023, 2024], "position"]) == {"TE"}
+        assert once.loc[once["player_id"] == "00-NOT-HARRY", "position"].iat[0] == "TE"
+
+
 class TestTeamHandlingDoesNotFragmentSeason:
     def test_traded_player_gets_one_row_not_two(self, tmp_path, monkeypatch):
         # Regression test for the original Priority 1 bug: recent_team
