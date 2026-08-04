@@ -18,6 +18,48 @@ import pytest
 import player_matching as pm
 
 
+def _directory(*rows):
+    return pd.DataFrame(rows, columns=["gsis_id", "display_name", "position", "rookie_season", "last_season"])
+
+
+class TestRosterDirectoryFirstIdentity:
+    def test_absent_michael_thomas_is_not_redirected_to_mike_thomas(self):
+        adp = pd.DataFrame([{
+            "season": 2021, "player_name_original": "Michael Thomas", "position": "WR",
+            "overall_adp": 20.0,
+        }])
+        results = pd.DataFrame([{
+            "season": 2021, "player_id": "00-MIKE", "player_display_name": "Mike Thomas", "position": "WR",
+        }])
+        directory = _directory(
+            ("00-MICHAEL-DB", "Michael Thomas", "DB", 2012, 2023),
+            ("00-MICHAEL-WR", "Michael Thomas", "WR", 2016, 2023),
+            ("00-MIKE", "Mike Thomas", "WR", 2016, 2022),
+        )
+        matched, missing, _, duplicates, _ = pm.match_players(
+            adp, results, pd.DataFrame(), players_directory_df=directory
+        )
+        assert missing.empty
+        assert duplicates.empty
+        assert matched.iloc[0]["nflverse_player_id"] == "00-MICHAEL-WR"
+        assert matched.iloc[0]["identity_join_status"] == "identity_resolved_no_results_row"
+
+    def test_position_only_disambiguates_same_exact_directory_name(self):
+        adp = pd.DataFrame([{
+            "season": 2021, "player_name_original": "Michael Thomas", "position": "WR",
+            "overall_adp": 20.0,
+        }])
+        results = pd.DataFrame([{
+            "season": 2021, "player_id": "00-MICHAEL-WR", "player_display_name": "Michael Thomas", "position": "WR",
+        }])
+        directory = _directory(
+            ("00-MICHAEL-DB", "Michael Thomas", "DB", 2012, 2023),
+            ("00-MICHAEL-WR", "Michael Thomas", "WR", 2016, 2023),
+        )
+        matched, *_ = pm.match_players(adp, results, pd.DataFrame(), players_directory_df=directory)
+        assert matched.iloc[0]["nflverse_player_id"] == "00-MICHAEL-WR"
+
+
 class TestNormalizeName:
     def test_strips_generational_suffix(self):
         # Real finding: suffix stripping cut the fuzzy-review pile from

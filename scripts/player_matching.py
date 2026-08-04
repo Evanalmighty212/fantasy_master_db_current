@@ -113,7 +113,8 @@ def load_overrides() -> pd.DataFrame:
 
 
 def match_players(adp_df: pd.DataFrame, results_df: pd.DataFrame,
-                   overrides_df: pd.DataFrame = None):
+                   overrides_df: pd.DataFrame = None,
+                   players_directory_df: pd.DataFrame = None):
     """
     Returns (matched_df, missing_df, low_confidence_df, duplicates_df,
     out_of_scope_df).
@@ -128,6 +129,17 @@ def match_players(adp_df: pd.DataFrame, results_df: pd.DataFrame,
     # -- prep results side --
     results = results_df.copy()
     results["name_normalized"] = results["player_display_name"].apply(normalize_name)
+
+    directory = None
+    if players_directory_df is not None:
+        required = {"gsis_id", "display_name", "position", "rookie_season", "last_season"}
+        missing = sorted(required - set(players_directory_df.columns))
+        if missing:
+            raise ValueError(f"Player directory is missing required columns: {missing}")
+        directory = players_directory_df.copy()
+        directory["name_normalized"] = directory["display_name"].apply(normalize_name)
+        if directory["gsis_id"].dropna().duplicated().any():
+            raise ValueError("Player directory contains duplicate non-null gsis_id values")
 
     # -- prep override lookup: (season, normalized original name) -> player_id --
     override_lookup = {}
@@ -164,9 +176,43 @@ def match_players(adp_df: pd.DataFrame, results_df: pd.DataFrame,
             })
             continue
 
+        # 2. Resolve identity against the roster/player directory before
+        # consulting season results. This prevents an absent real player
+        # from being redirected to a similarly named player who happened
+        # to record stats (the 2021 Michael Thomas -> Mike Thomas bug).
+        if directory is not None:
+            rookie = pd.to_numeric(directory["rookie_season"], errors="coerce")
+            last = pd.to_numeric(directory["last_season"], errors="coerce")
+            active = directory[(rookie <= season) & (last >= season)]
+            exact_directory = active[active["name_normalized"] == name_norm]
+            if len(exact_directory) > 1:
+                position_matches = exact_directory[exact_directory["position"] == position]
+                if len(position_matches) == 1:
+                    exact_directory = position_matches
+            if len(exact_directory) == 1:
+                resolved_id = exact_directory.iloc[0]["gsis_id"]
+                has_results = bool(((results["season"] == season) & (results["player_id"] == resolved_id)).any())
+                matched_rows.append({
+                    **adp_row.to_dict(),
+                    "nflverse_player_id": resolved_id,
+                    "match_type": "roster_directory_exact",
+                    "match_confidence": 100,
+                    "identity_join_status": "identity_resolved_with_results" if has_results else "identity_resolved_no_results_row",
+                })
+                continue
+            if len(exact_directory) > 1:
+                duplicate_rows.append({
+                    **adp_row.to_dict(),
+                    "candidate_player_ids": ";".join(exact_directory["gsis_id"].astype(str)),
+                    "reason": "multiple active player-directory identities share exact name",
+                })
+                continue
+
         season_pool = results[results["season"] == season]
 
-        # 2. exact name + position
+        # 3. legacy results-side fallback for identities the directory
+        # could not resolve. Position corroborates; it never substitutes
+        # a different identity after a directory resolution.
         exact_pos = season_pool[
             (season_pool["name_normalized"] == name_norm)
             & (season_pool["position"] == position)
