@@ -251,7 +251,7 @@ from config import (
     DATASET2_ROLE_THRESHOLDS_SNAP_SHARE,
     DATASET2_ROLE_THRESHOLDS_TEAM_GAME,
 )
-from lib.dataset2.common import build_team_game_index, validate_columns
+from lib.dataset2.common import build_team_game_index, canonicalize_team_column, validate_columns
 
 POPULATION_REQUIRED_COLUMNS = ("season", "player_id", "position")
 WEEKLY_PLAYER_BASE_COLUMNS = ("season", "player_id", "week", "team")
@@ -1111,6 +1111,13 @@ def build_team_game_snap_share_role_traits(
 
     validate_columns(weekly_player, WEEKLY_PLAYER_REQUIRED_COLUMNS, "weekly_player")
     validate_columns(raw_snaps, SNAP_ROLE_REQUIRED_COLUMNS, "raw_snaps")
+
+    # Source A can carry retrospectively-current franchise codes while
+    # Source B carries the code used in the actual season. Canonicalize
+    # copies of both before team/week joins; raw inputs remain untouched.
+    weekly_player = canonicalize_team_column(weekly_player)
+    weekly_all_positions = canonicalize_team_column(weekly_all_positions)
+    raw_snaps = canonicalize_team_column(raw_snaps)
 
     position_population = population[population["position"] == position]
     base, player_team, team_game_index = _scope_to_team_games(position_population, weekly_player, weekly_all_positions)

@@ -26,6 +26,7 @@ from config import (
     SBV_SEASON_LENGTH_ERA_CUTOFF,
     validate_dataset2_predictor_clustering_config,
 )
+from lib.player_season_authority import FRANCHISE_TEAM_ERAS, canonical_team
 
 # family_number tag for identity/spine columns in the canonical
 # predictor table's own data dictionary (prediction_season, player_id,
@@ -107,11 +108,9 @@ def validate_columns(df: pd.DataFrame, required, label: str) -> None:
 # data, not a team-code mismatch -- resolving it would mean guessing a
 # kickoff date that was never real, which this module's own
 # MISSINGNESS POLICY (see experience_age_draft.py) explicitly forbids.
-HISTORICAL_TEAM_CODE_ALIASES = (
-    # (current/population code, historical/schedule code, first_season, last_season_inclusive)
-    ("LV", "OAK", 1999, 2019),  # Oakland -> Las Vegas Raiders (moved 2020)
-    ("LA", "STL", 1999, 2015),  # St. Louis -> Los Angeles Rams (moved 2016)
-    ("LAC", "SD", 1999, 2016),  # San Diego -> Los Angeles Chargers (moved 2017)
+HISTORICAL_TEAM_CODE_ALIASES = tuple(
+    (current, historical, first, last)
+    for historical, current, first, last in FRANCHISE_TEAM_ERAS
 )
 
 
@@ -131,6 +130,15 @@ def _canonicalize_historical_team_code(team: str, season: int) -> str:
         if team == historical_code and first_season <= season <= last_season:
             return current_code
     return team
+
+
+def canonicalize_team_column(df: pd.DataFrame, team_column="team") -> pd.DataFrame:
+    """Return a copy with season-accurate canonical franchise codes.
+    The caller's raw provider frame remains unchanged for provenance."""
+    validate_columns(df, ("season", team_column), "team-coded source")
+    out = df.copy()
+    out[team_column] = [canonical_team(team, season) for team, season in zip(out[team_column], out["season"])]
+    return out
 
 
 def week1_kickoff_by_team(schedule_df: pd.DataFrame, season: int) -> dict:

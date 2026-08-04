@@ -793,6 +793,25 @@ class TestSnapShareRoleTraits:
     build_season_snap_usage()) that stays independent of any single
     player's own week-to-week availability."""
 
+    def test_historical_franchise_aliases_repair_source_a_source_b_join(self):
+        """2019 Raiders rows may be LV in Source A but OAK in Source B;
+        both must join as the same real franchise without mutating raw inputs."""
+        pop = _population((2019, "P1", "WR"))
+        weeks = [14, 15, 16, 17]
+        wap = _weekly_all_positions([(2019, wk, "LV", "REG") for wk in weeks])
+        wp = _weekly_player([(2019, "P1", wk, "LV", 5.0) for wk in weeks])
+        raw = _raw_snaps(
+            [(2019, wk, "OAK", "OL1", 60.0) for wk in weeks]
+            + [(2019, wk, "OAK", "P1", 30.0) for wk in weeks]
+        )
+        wp_before, wap_before, raw_before = wp.copy(), wap.copy(), raw.copy()
+        out = build_team_game_snap_share_role_traits(pop, wp, wap, raw, n=4, position="WR")
+        assert out.iloc[0]["team_final_n_has_snap_coverage"] == True  # noqa: E712
+        assert out.iloc[0]["team_final_n_offense_snap_share"] == pytest.approx(0.5)
+        pd.testing.assert_frame_equal(wp, wp_before)
+        pd.testing.assert_frame_equal(wap, wap_before)
+        pd.testing.assert_frame_equal(raw, raw_before)
+
     @pytest.mark.parametrize(
         "player_snaps_per_week,expect_present,expect_meaningful,expect_strong",
         [
