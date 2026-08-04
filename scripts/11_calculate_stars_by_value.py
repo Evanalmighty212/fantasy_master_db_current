@@ -87,13 +87,13 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-from lib.player_season_authority import resolved_canonical_position_population
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import config
+from lib.player_season_authority import resolved_canonical_position_population
 from lib.stars_by_value import production as prod
 from lib.stars_by_value import expected_production as ep
 from lib.stars_by_value import labeling

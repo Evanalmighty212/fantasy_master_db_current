@@ -18,6 +18,7 @@ by exercising the real code path that produces canonical rows.
 """
 
 import sys
+import subprocess
 from pathlib import Path
 
 import pandas as pd
@@ -28,6 +29,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
 from lib.stars_by_value import labeling
 from lib.stars_by_value import schema as sbv_schema
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_canonical_sbv_script_imports_when_executed_outside_repo(tmp_path):
+    """Regression for authority import preceding REPO_ROOT setup."""
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts/11_calculate_stars_by_value.py"), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--mode" in result.stdout
 
 
 def _ep_lookup(*rows):
