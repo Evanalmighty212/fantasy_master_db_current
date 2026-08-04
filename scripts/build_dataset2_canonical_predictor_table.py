@@ -41,6 +41,7 @@ import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 sys.path.append(str(Path(__file__).resolve().parent))
+from lib.player_season_authority import resolved_canonical_position_population
 from lib.dataset2.canonical_predictor_table import build_canonical_predictor_table
 import nflverse_source
 
@@ -57,7 +58,16 @@ DICTIONARY_PATH = OUTPUT_DIR / "dataset2_canonical_predictor_table_data_dictiona
 
 def _load_master_population() -> pd.DataFrame:
     df = pd.read_csv(MASTER_POPULATION_PATH, low_memory=False)
-    return df[df["position"].isin(["QB", "RB", "WR", "TE"])]
+    required = {
+        "canonical_fantasy_position", "canonical_position_status",
+        "canonical_position_authority", "canonical_team", "historical_input_revision",
+    }
+    missing = sorted(required - set(df.columns))
+    if missing:
+        raise ValueError(f"Master dataset lacks canonical authority fields: {missing}")
+    df = resolved_canonical_position_population(df)
+    df["team"] = df["canonical_team"]
+    return df
 
 
 def _load_players() -> pd.DataFrame:

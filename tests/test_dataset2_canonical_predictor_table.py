@@ -30,7 +30,11 @@ AAA_2014_WEEKS = list(range(1, 17))
 def _population(*rows):
     """rows: (season, player_id, position, team, games_played, ppg_ppr, overall_finish_ppr, position_finish_ppr)."""
     cols = ("season", "player_id", "position", "team", "games_played", "ppg_ppr", "overall_finish_ppr", "position_finish_ppr")
-    return pd.DataFrame([dict(zip(cols, r)) for r in rows])
+    out = pd.DataFrame([dict(zip(cols, r)) for r in rows])
+    out["canonical_position_status"] = "adp_source"
+    out["canonical_position_authority"] = "adp_source_position"
+    out["historical_input_revision"] = "test-input-revision"
+    return out
 
 
 def _players(*rows):
@@ -147,6 +151,9 @@ class TestGrainAudits:
         weekly = _weekly(_rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA") + _rb_weekly_rows(2014, "P1", AAA_2014_WEEKS, "AAA"))
         out, registry, deferred = _build(pop, players, weekly)
         assert out.duplicated(subset=["prediction_season", "player_id"]).sum() == 0
+        assert set(out["canonical_position_status"]) == {"adp_source"}
+        assert set(out["canonical_position_authority"]) == {"adp_source_position"}
+        assert set(out["historical_input_revision"]) == {"test-input-revision"}
 
     def test_no_duplicate_canonical_column_names(self):
         pop = _population((2015, "P1", "RB", "AAA", 16, 10.0, 20, 5))

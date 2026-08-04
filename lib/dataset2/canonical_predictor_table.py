@@ -185,6 +185,9 @@ MASTER_POPULATION_REQUIRED_COLUMNS = (
     "ppg_ppr",
     "overall_finish_ppr",
     "position_finish_ppr",
+    "canonical_position_status",
+    "canonical_position_authority",
+    "historical_input_revision",
 )
 
 PLAYERS_REQUIRED_COLUMNS = ("gsis_id", "pfr_id", "birth_date", "rookie_season", "height", "weight", "draft_year", "draft_round", "draft_pick", "draft_team")
@@ -910,7 +913,12 @@ def build_canonical_predictor_table(
     # exactly the intended case (real count: 609 real 2026 rows against
     # the full real population) and drops the ~2,700 real phantom
     # retired-player rows the naive version produced.
-    spine = population[["season", "player_id", "position"]].rename(columns={"season": "prediction_season"})
+    authority_columns = [
+        "canonical_position_status", "canonical_position_authority", "historical_input_revision",
+    ]
+    spine = population[["season", "player_id", "position"] + authority_columns].rename(
+        columns={"season": "prediction_season"}
+    )
     fam9_keys = fam9_preseason[["prediction_season", "player_id", "position"]]
     extra_keys = fam9_keys.merge(
         spine[["prediction_season", "player_id"]], on=["prediction_season", "player_id"], how="left", indicator=True
@@ -918,13 +926,19 @@ def build_canonical_predictor_table(
     extra_keys = extra_keys[
         (extra_keys["_merge"] == "left_only") & (extra_keys["prediction_season"] > max_season)
     ][["prediction_season", "player_id", "position"]]
+    prior_authority = population[["season", "player_id"] + authority_columns].copy()
+    prior_authority["prediction_season"] = prior_authority["season"] + 1
+    extra_keys = extra_keys.merge(
+        prior_authority[["prediction_season", "player_id"] + authority_columns],
+        on=["prediction_season", "player_id"], how="left",
+    )
     spine = pd.concat([spine, extra_keys], ignore_index=True).drop_duplicates(subset=["prediction_season", "player_id"])
 
     out = spine.copy()
     for frame in (fam1_4_6, fam7, fam8_39_44, srcA, srcB, fam10, fam86, fam88, fam18):
         frame = frame.rename(columns={"season": "prediction_season"})
         incoming = set(frame.columns) - {"prediction_season", "player_id"}
-        collisions = incoming & (set(out.columns) - {"prediction_season", "player_id", "position"})
+        collisions = incoming & (set(out.columns) - {"prediction_season", "player_id", "position", *authority_columns})
         if collisions:
             raise RuntimeError(f"Canonical column-name collision(s): {sorted(collisions)}")
         out = out.merge(frame, on=["prediction_season", "player_id"], how="left")
@@ -944,7 +958,7 @@ def build_canonical_predictor_table(
         raise RuntimeError(f"Canonical column-name collision(s) detected in final table: {dupes}")
 
     column_order = (
-        ["prediction_season", "player_id", "position", "observation_season"]
+        ["prediction_season", "player_id", "position"] + authority_columns + ["observation_season"]
         + [c for c in fam1_4_6.columns if c not in ("season", "player_id")]
         + [c for c in fam7.columns if c not in ("season", "player_id")]
         + [c for c in fam8_39_44.columns if c not in ("season", "player_id")]
@@ -956,7 +970,8 @@ def build_canonical_predictor_table(
         + [c for c in fam18.columns if c not in ("season", "player_id")]
         + fam9_cols
     )
-    out = out[["prediction_season", "player_id", "position", "observation_season"] + [c for c in column_order if c not in ("prediction_season", "player_id", "position", "observation_season")]]
+    identity_columns = ["prediction_season", "player_id", "position"] + authority_columns + ["observation_season"]
+    out = out[identity_columns + [c for c in column_order if c not in identity_columns]]
     out = out.sort_values(["prediction_season", "player_id"]).reset_index(drop=True)
 
     # --- Source A targets/receiving_air_yards coverage remediation ---
@@ -999,15 +1014,32 @@ def build_canonical_predictor_table(
             min_season, max_season + 1, "object", "Never null (spine key)", "N/A (identity)", "player_id",
         ),
     )
-    registry_rows.insert(
-        2,
+    registry_rows[2:2] = [
         _registry_row(
             "position", "N/A (spine)", "Table identity", "master population / family #9 union",
             min_season, max_season + 1, "object", "Never null (spine key)", "N/A (identity)", "position",
         ),
-    )
+        _registry_row(
+            "canonical_position_status", "N/A (spine)", "Position-authority provenance",
+            "master population / prior observation for future application rows",
+            min_season, max_season + 1, "object", "Never null for resolved rows",
+            "N/A (identity metadata)", "canonical_position_status",
+        ),
+        _registry_row(
+            "canonical_position_authority", "N/A (spine)", "Position-authority provenance",
+            "master population / prior observation for future application rows",
+            min_season, max_season + 1, "object", "Never null for resolved rows",
+            "N/A (identity metadata)", "canonical_position_authority",
+        ),
+        _registry_row(
+            "historical_input_revision", "N/A (spine)", "Input-governance revision",
+            "master population / prior observation for future application rows",
+            min_season, max_season + 1, "object", "Never null",
+            "Metadata only; prohibited as a model predictor", "historical_input_revision",
+        ),
+    ]
     registry_rows.insert(
-        3,
+        6,
         _registry_row(
             "observation_season", "N/A (spine)", "Table identity",
             "family #9's own observation season (see partial_season_canonical.py)",

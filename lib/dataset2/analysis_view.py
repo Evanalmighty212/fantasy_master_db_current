@@ -68,7 +68,8 @@ PREDICTOR WHITELIST: derived MECHANICALLY from the predictor table's
 own already-built column registry (`family_number != "N/A (spine)"`)
 -- never hand-picked here, never re-derived from scratch. The 4 spine
 columns (`prediction_season`, `player_id`, `position`,
-`observation_season`) are `role="id"`, not predictors -- `position` in
+`observation_season`, canonical-position provenance, and
+`historical_input_revision`) are `role="id"`, not predictors -- `position` in
 particular is withheld from the whitelist by this same mechanical rule
 (a deliberate, disclosed default: this project's established
 convention is position-STRATIFIED analysis, not a raw pooled-position
@@ -89,7 +90,10 @@ PREDICTOR_REQUIRED_COLUMNS = ("prediction_season", "player_id", "position")
 OUTCOME_REQUIRED_COLUMNS = ("outcome_season", "player_id", "position")
 PREDICTOR_COLUMN_REGISTRY_REQUIRED_COLUMNS = ("canonical_column", "family_number")
 
-PREDICTOR_SPINE_COLUMNS = ("prediction_season", "player_id", "position", "observation_season")
+PREDICTOR_SPINE_COLUMNS = (
+    "prediction_season", "player_id", "position", "canonical_position_status",
+    "canonical_position_authority", "historical_input_revision", "observation_season",
+)
 _OUTCOME_DROP_BEFORE_MERGE = ("position",)  # redundant with the predictor spine's own position
 _OUTCOME_RENAME_BEFORE_MERGE = {"outcome_season": "prediction_season"}
 
