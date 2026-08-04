@@ -38,6 +38,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
+from lib.player_season_authority import canonical_position_resolved_mask
 from sklearn.isotonic import IsotonicRegression
 
 from config import (
@@ -407,6 +408,10 @@ def calculate_lwi():
 
     master = pd.read_csv(MASTER_PATH)
     weekly = pd.read_csv(WEEKLY_PATH)
+    required_authority = {"canonical_fantasy_position", "canonical_position_status"}
+    missing_authority = sorted(required_authority - set(master.columns))
+    if missing_authority:
+        raise ValueError(f"Master dataset lacks canonical position authority fields: {missing_authority}")
 
     print("Step 1: Determining LWI eligibility...")
     # A row is ADP-eligible if EITHER it has a real drafted match
@@ -431,9 +436,14 @@ def calculate_lwi():
         adp_eligible & (master["games_played"] < MIN_GAMES),
         "lwi_eligibility_flag",
     ] = "insufficient_games"
+    master.loc[
+        ~canonical_position_resolved_mask(master),
+        "lwi_eligibility_flag",
+    ] = "unresolved_canonical_position"
 
     eligible_mask = master["lwi_eligibility_flag"] == "eligible"
     eligible = master[eligible_mask].copy()
+    eligible["position"] = eligible["canonical_fantasy_position"]
     ineligible = master[~eligible_mask].copy()
     print(f"  Eligible: {len(eligible)} / {len(master)} total rows")
     n_verified_undrafted_eligible = (eligible.get("adp_status") == "undrafted").sum() if "adp_status" in eligible.columns else 0

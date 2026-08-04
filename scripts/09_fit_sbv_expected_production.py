@@ -45,6 +45,7 @@ import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import SEASONS
+from lib.player_season_authority import resolved_canonical_position_population
 from lib.stars_by_value import expected_production as ep
 from lib.stars_by_value import production as prod
 
@@ -82,11 +83,14 @@ def load_full_population() -> pd.DataFrame:
     df = pd.read_csv(MASTER_PATH)
     df["adp_matched"] = df["data_quality_flag"].isin(DRAFTED_QUALITY_FLAGS)
 
-    required = list(prod.REQUIRED_COLUMNS) + ["overall_adp_observed"]
+    required = list(prod.REQUIRED_COLUMNS) + [
+        "overall_adp_observed", "canonical_fantasy_position", "canonical_position_status",
+    ]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise RuntimeError(f"{MASTER_PATH} is missing required columns: {missing}")
 
+    df = resolved_canonical_position_population(df)
     return df[df["games_played"] >= 1].copy()
 
 

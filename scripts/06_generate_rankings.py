@@ -57,6 +57,8 @@ def load_rankable_rows():
         (df["lwi_eligibility_flag"] == "eligible")
         & (df["lwi_component_coverage"] == "complete_6_of_6")
     ].copy()
+    if rankable["position"].isna().any():
+        raise ValueError("Rankable LWI rows contain unresolved canonical position")
     print(f"Loaded {before} total rows -> {len(rankable)} rankable "
           f"(eligible + complete_6_of_6) rows")
     return rankable
@@ -133,7 +135,8 @@ def build_no_adp_breakout_candidates():
     players are explicitly excluded from LWI until someone verifies
     their real draft status (see data/manual/adp_status_verification.csv
     and config.py's LWI_GLOBAL_MAX_OVERALL_ADP documentation for the
-    full reasoning). The threshold here (top 24 at position, 8+ games)
+    full reasoning). The threshold here (top 24 by the explicitly
+    reported processed-results position/finish, 8+ games)
     is deliberately generous -- better to surface a few candidates that
     turn out to have been drafted-but-missed than to silently miss a
     real James Robinson/Victor Cruz/Puka Nacua-type story.
@@ -144,9 +147,12 @@ def build_no_adp_breakout_candidates():
         & (master["games_played"] >= 8)
         & (master["position_finish_ppr"] <= 24)
     ].copy()
+    unresolved["display_position_status"] = unresolved["canonical_position_status"]
+    unresolved["processed_position_finish_ppr"] = unresolved["position_finish_ppr"]
     unresolved = unresolved.sort_values(["season", "position", "position_finish_ppr"])
-    cols = ["season", "player_name", "position", "team", "games_played",
-            "fantasy_points_ppr", "ppg_ppr", "overall_finish_ppr", "position_finish_ppr"]
+    cols = ["season", "player_name", "position", "processed_position",
+            "display_position_status", "team", "games_played",
+            "fantasy_points_ppr", "ppg_ppr", "overall_finish_ppr", "processed_position_finish_ppr"]
     return unresolved[cols]
 
 

@@ -72,6 +72,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+from lib.player_season_authority import resolved_canonical_position_population
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import DATASET2_ADP_ROUND_BUCKETS
@@ -109,7 +110,7 @@ def _adp_bucket(adp_round):
 def main():
     print("Loading real master population, real SBV export, real players.csv...")
     master = pd.read_csv(MASTER_POPULATION_PATH, low_memory=False)
-    master = master[master["position"].isin(["QB", "RB", "WR", "TE"])]
+    master = resolved_canonical_position_population(master)
     sbv = pd.read_csv(SBV_EXPORT_PATH, low_memory=False)
     players = pd.read_csv(PLAYERS_PATH, low_memory=False)
 

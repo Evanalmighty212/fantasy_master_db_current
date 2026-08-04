@@ -218,12 +218,16 @@ from config import (
     DATASET2_ANALYSIS_MIN_CELL_SAMPLE_SIZE,
     DATASET2_ERA_BOUNDARIES,
     SBV_LAMBDA,
+    HISTORICAL_INPUT_REVISION,
 )
 from lib.dataset2.common import validate_columns
 from lib.stars_by_value import expected_production as ep
 from lib.stars_by_value import minimal_market_cost as mmc
 
-MASTER_POPULATION_REQUIRED_COLUMNS = ("season", "player_id", "position", "overall_adp", "games_played")
+MASTER_POPULATION_REQUIRED_COLUMNS = (
+    "season", "player_id", "position", "canonical_position_status",
+    "canonical_position_authority", "overall_adp", "games_played",
+)
 SBV_STATUS_REQUIRED_COLUMNS = ("season", "player_id", "star_by_value_status", "star_by_value_score", "star_by_value_label")
 PLAYERS_REQUIRED_COLUMNS = ("gsis_id", "draft_round")
 EP_LOOKUP_REQUIRED_COLUMNS = ("prediction_season", "position", "draft_round", "expected_production")
@@ -247,6 +251,9 @@ OUTCOME_OUTPUT_COLUMNS = (
     "outcome_season",
     "player_id",
     "position",
+    "canonical_position_status",
+    "canonical_position_authority",
+    "historical_input_revision",
     "real_status",
     "has_real_market_adp",
     "adp_round",
@@ -454,6 +461,7 @@ def build_canonical_outcome_table(
     base = master_population[list(MASTER_POPULATION_REQUIRED_COLUMNS)].drop_duplicates(
         subset=["season", "player_id"]
     ).rename(columns={"season": "outcome_season"})
+    base["historical_input_revision"] = HISTORICAL_INPUT_REVISION
 
     sbv = sbv_status[list(SBV_STATUS_REQUIRED_COLUMNS)].drop_duplicates(subset=["season", "player_id"]).rename(
         columns={"season": "outcome_season"}

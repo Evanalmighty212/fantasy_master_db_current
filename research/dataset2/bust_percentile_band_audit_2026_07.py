@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+from lib.player_season_authority import resolved_canonical_position_population
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent / "scripts"))
@@ -61,7 +62,7 @@ def _era_label(season):
 
 def main():
     master_population = pd.read_csv(MASTER_POPULATION_PATH, low_memory=False)
-    master_population = master_population[master_population["position"].isin(["QB", "RB", "WR", "TE"])]
+    master_population = resolved_canonical_position_population(master_population)
     sbv_status = pd.read_csv(SBV_EXPORT_PATH, low_memory=False)
     players_df = pd.read_csv(PLAYERS_PATH, low_memory=False)
     ep_lookup = pd.read_parquet(EP_LOOKUP_PATH)

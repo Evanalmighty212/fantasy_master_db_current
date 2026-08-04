@@ -87,6 +87,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+from lib.player_season_authority import resolved_canonical_position_population
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -178,7 +179,11 @@ def load_mfl_cached(season: int):
 
 def build_population():
     master = pd.read_csv(MASTER_PATH, low_memory=False)
-    pop = master[master["position"].isin(config.SBV_POSITIONS)].copy()
+    required = {"canonical_fantasy_position", "canonical_position_status"}
+    missing = sorted(required - set(master.columns))
+    if missing:
+        raise ValueError(f"Master dataset lacks canonical position authority fields: {missing}")
+    pop = resolved_canonical_position_population(master)
     pop["adp_matched"] = pop["data_quality_flag"].isin(["matched_clean", "matched_needs_review"])
     pop = pop.dropna(subset=["ppg_ppr", "position_finish_ppr", "games_played", "fantasy_points_ppr"])
 
@@ -238,7 +243,7 @@ def run_label_rows(processable: pd.DataFrame, ep_lookup: pd.DataFrame, full_pop:
         overrides_2010_df=overrides_2010_df,
         schedule_df=schedule_df,
     )
-    out = processable[["season", "player_id", "player_name", "position"]].merge(
+    out = processable[["season", "player_id", "player_name", "position", "historical_input_revision"]].merge(
         result, on=["season", "player_id"], how="inner",
     )
     # audit_df is already fully self-contained (season, player_id,

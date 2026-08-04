@@ -30,6 +30,7 @@ position_finish_ppr (rank within WR only, i.e. "WR12"/"WR24").
 from pathlib import Path
 
 import pandas as pd
+from lib.player_season_authority import resolved_canonical_position_population
 
 MASTER_DB_PATH = Path("data/master/master_historical_db_with_lwi_2006_2025.csv")
 OUTPUT_CSV_PATH = Path("research/output/wr_games_played_impact.csv")
@@ -40,6 +41,7 @@ TOP_N_THRESHOLDS = [12, 20, 24, 36]
 
 def load_wr_seasons() -> pd.DataFrame:
     df = pd.read_csv(MASTER_DB_PATH)
+    df = resolved_canonical_position_population(df)
     wr = df[(df["position"] == "WR") & (df["games_played"].isin(GAMES_PLAYED_RANGE))].copy()
     return wr
 

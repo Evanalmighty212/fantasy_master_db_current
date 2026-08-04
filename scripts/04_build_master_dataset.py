@@ -45,17 +45,29 @@ from config import (
     SEASONS, TOP_N_ADP,
     LWI_GLOBAL_MAX_OVERALL_ADP,
     LWI_GLOBAL_MAX_POSITIONAL_ADP,
+    HISTORICAL_INPUT_REVISION,
 )
 import player_matching
+from lib.player_season_authority import (
+    add_canonical_fantasy_position,
+    add_canonical_team,
+    load_canonical_position_authority,
+    canonical_position_resolved_mask,
+)
 
 RESULTS_PATH = Path(f"data/raw/nflverse/season_results_ppr_{SEASONS[0]}_{SEASONS[-1]}.csv")
 ADP_PATH = Path(f"data/processed/adp_clean_{SEASONS[0]}_{SEASONS[-1]}.csv")
 MASTER_DIR = Path("data/master")
 VALIDATION_DIR = Path("data/exports/validation")
 ADP_VERIFICATION_PATH = Path("data/manual/adp_status_verification.csv")
+PLAYERS_DIRECTORY_PATH = Path("data/raw/nflverse/reference/players.csv")
 
 FINAL_COLUMNS = [
     "season", "player_id", "player_name", "position", "team",
+    "results_source_position_raw", "processed_position", "adp_source_position",
+    "canonical_fantasy_position", "canonical_position_status", "canonical_position_authority",
+    "results_source_team_raw", "adp_source_team_raw", "canonical_team",
+    "historical_input_revision",
     "games_played", "fantasy_points_ppr", "ppg_ppr",
     "overall_finish_ppr", "position_finish_ppr",
     "overall_adp", "positional_adp", "adp_source", "adp_rank",
@@ -140,6 +152,15 @@ def apply_adp_status_and_proxy(master, verification_df):
             n = mask.sum()
             if n == 0:
                 continue
+            if master.loc[mask, "position"].isna().any():
+                unresolved = master.loc[
+                    mask & master["position"].isna(),
+                    ["season", "player_id", "processed_position", "canonical_position_status"],
+                ]
+                raise ValueError(
+                    "Verified-undrafted ADP proxy requires a resolved canonical position; "
+                    f"unresolved rows: {unresolved.to_dict('records')}"
+                )
             positions_hit = master.loc[mask, "position"].unique()
             for pos in positions_hit:
                 pos_mask = mask & (master["position"] == pos)
@@ -158,8 +179,58 @@ def apply_adp_status_and_proxy(master, verification_df):
     return master
 
 
+def apply_player_season_authority(master, authority_df):
+    """Add separate canonical position/team fields without overwriting
+    raw ADP or results provenance columns."""
+    required = {
+        "season", "player_id", "processed_position", "adp_source_position",
+        "results_source_position_raw", "results_source_team_raw", "adp_source_team_raw",
+        "match_type", "data_quality_flag", "fantasy_points_ppr", "position_finish_ppr",
+    }
+    missing = sorted(required - set(master.columns))
+    if missing:
+        raise ValueError(f"Master join lacks authority/provenance inputs: {missing}")
+    out = add_canonical_fantasy_position(master, authority_df)
+    out = add_canonical_team(out, "results_source_team_raw")
+    resolved = canonical_position_resolved_mask(out)
+    # Approved Option 2: the legacy bare field is canonical-only.
+    # Unresolved rows remain null here; processed/raw values survive in
+    # their explicitly named provenance columns and must never leak back
+    # into decision-bearing consumers through a compatibility fallback.
+    out["position"] = out["canonical_fantasy_position"]
+    # Results-side position_finish_ppr was calculated before canonical
+    # authority existed. Re-rank the complete resolved population by
+    # canonical cohort so no changed player or affected cohort peer can
+    # retain a finish rank from the former processed position.
+    canonical_finish = (
+        out.loc[resolved]
+        .groupby(["season", "canonical_fantasy_position"])["fantasy_points_ppr"]
+        .rank(method="min", ascending=False)
+        .astype("Int64")
+    )
+    out.loc[resolved, "position_finish_ppr"] = canonical_finish
+    out["team"] = out["canonical_team"]
+    return out
+
+
+def compute_positional_adp_ranks(matched):
+    """Rank the complete correctly resolved preseason ADP population.
+
+    Identity-resolved players without a results row remain in this
+    denominator because they occupied real market space; this function
+    does not create results/master rows for them.
+    """
+    out = matched.copy()
+    out["positional_adp"] = (
+        out.groupby(["season", "position"])["overall_adp"]
+        .rank(method="first", ascending=True)
+        .astype("Int64")
+    )
+    return out
+
+
 def build_master_dataset():
-    if not RESULTS_PATH.exists() or not ADP_PATH.exists():
+    if not RESULTS_PATH.exists() or not ADP_PATH.exists() or not PLAYERS_DIRECTORY_PATH.exists():
         raise FileNotFoundError(
             f"Need both {RESULTS_PATH} (from 03_download_stats.py) and "
             f"{ADP_PATH} (from 02_clean_adp.py) to exist first."
@@ -167,11 +238,12 @@ def build_master_dataset():
 
     results = pd.read_csv(RESULTS_PATH)
     adp = pd.read_csv(ADP_PATH)
+    players_directory = pd.read_csv(PLAYERS_DIRECTORY_PATH, low_memory=False)
     overrides = player_matching.load_overrides()
 
     print("Step 1: Running player identity matching (Priority 4)...")
     matched, missing, low_conf, dupes, out_of_scope = player_matching.match_players(
-        adp, results, overrides
+        adp, results, overrides, players_directory_df=players_directory
     )
 
     VALIDATION_DIR.mkdir(parents=True, exist_ok=True)
@@ -183,12 +255,7 @@ def build_master_dataset():
           f"Low-confidence: {len(low_conf)}, Duplicates: {len(dupes)}")
 
     print("Step 2: Computing positional ADP rank...")
-    matched = matched.copy()
-    matched["positional_adp"] = (
-        matched.groupby(["season", "position"])["overall_adp"]
-        .rank(method="first", ascending=True)
-        .astype("Int64")
-    )
+    matched = compute_positional_adp_ranks(matched)
 
     print("Step 3: Checking for duplicate (season, player_id) in matched ADP...")
     dup_player_season = matched[
@@ -220,8 +287,9 @@ def build_master_dataset():
     adp_slim = (
         matched_clean
         [["season", "nflverse_player_id", "overall_adp", "adp_rank",
-          "positional_adp", "source", "match_type", "match_confidence"]]
-        .rename(columns={"nflverse_player_id": "player_id", "source": "adp_source"})
+          "positional_adp", "source", "position", "team", "match_type", "match_confidence"]]
+        .rename(columns={"nflverse_player_id": "player_id", "source": "adp_source",
+                         "position": "adp_source_position", "team": "adp_source_team_raw"})
     )
 
     print("Step 4: Joining results (base population) with matched ADP...")
@@ -231,7 +299,15 @@ def build_master_dataset():
     master = master.rename(columns={
         "player_display_name": "player_name",
         "primary_team": "team",
+        "position": "processed_position",
     })
+    if "results_source_position_raw" not in master.columns:
+        master["results_source_position_raw"] = master["processed_position"]
+    if "results_source_team_raw" not in master.columns:
+        master["results_source_team_raw"] = master["team"]
+
+    master = apply_player_season_authority(master, load_canonical_position_authority())
+    master["historical_input_revision"] = HISTORICAL_INPUT_REVISION
 
     print("Step 4b: Applying ADP status classification and undrafted-player proxy...")
     verification_df = load_adp_verification()

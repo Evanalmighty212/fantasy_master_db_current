@@ -52,6 +52,7 @@ def _ep_lookup(*rows):
 def _row(**overrides):
     base = {
         "season": 2020, "player_id": "00-1", "player_name": "Test Player", "position": "WR",
+        "historical_input_revision": config.HISTORICAL_INPUT_REVISION,
         "games_played": 12, "P": 300.0, "data_quality_flag": "matched_clean", "adp_round": 3,
     }
     base.update(overrides)
@@ -62,7 +63,8 @@ def _real_canonical_shaped_output():
     """Reproduces the EXACT column-shaping run_label_rows() performs
     in scripts/11_calculate_stars_by_value.py: label_rows()'s own
     output columns, left-merged onto the identity columns
-    (season, player_id, player_name, position) from the source rows.
+    (season, player_id, player_name, position, historical input revision)
+    from the source rows.
     Returns (canonical_df, audit_df) -- label_rows() now returns both
     (Option 3A, 2026-07). None of these 3 fixture rows have a
     provenance requiring an audit row, so audit_df is empty here."""
@@ -75,7 +77,7 @@ def _real_canonical_shaped_output():
         _row(season=2020, player_id="00-c", position="WR", P=0.0),  # below_production_gate
     ])
     result, audit_df = labeling.label_rows(rows, lookup)
-    canonical_df = rows[["season", "player_id", "player_name", "position"]].merge(
+    canonical_df = rows[["season", "player_id", "player_name", "position", "historical_input_revision"]].merge(
         result, on=["season", "player_id"], how="inner",
     )
     return canonical_df, audit_df
@@ -181,7 +183,7 @@ class TestRunLabelRowsMergeShapeUnchanged:
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         source = inspect.getsource(mod.run_label_rows)
-        assert '["season", "player_id", "player_name", "position"]' in source
+        assert '["season", "player_id", "player_name", "position", "historical_input_revision"]' in source
 
 
 class TestRenderSchemaMarkdownContent:

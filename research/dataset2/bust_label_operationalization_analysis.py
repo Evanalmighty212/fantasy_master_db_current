@@ -31,6 +31,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from lib.player_season_authority import resolved_canonical_position_population
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from config import (
@@ -87,7 +88,7 @@ def games_bucket(g):
 def build_analysis_frame():
     outcome = pd.read_parquet(OUTCOME_TABLE_PATH)
     master = pd.read_csv(MASTER_POPULATION_PATH, low_memory=False)
-    master = master[master["position"].isin(["QB", "RB", "WR", "TE"])]
+    master = resolved_canonical_position_population(master)
     master_cols = master[
         ["season", "player_id", "overall_adp", "games_played", "ppg_ppr", "fantasy_points_ppr", "position_finish_ppr", "data_quality_flag"]
     ].drop_duplicates(subset=["season", "player_id"]).rename(columns={"season": "outcome_season"})

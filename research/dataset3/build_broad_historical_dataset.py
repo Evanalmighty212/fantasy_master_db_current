@@ -50,6 +50,7 @@ Output: research/output/dataset3/broad_historical_dataset.csv
 from pathlib import Path
 
 import pandas as pd
+from lib.player_season_authority import resolved_canonical_position_population
 
 MASTER_DB_PATH = Path("data/master/master_historical_db_with_lwi_2006_2025.csv")
 OUTPUT_PATH = Path("research/output/dataset3/broad_historical_dataset.csv")
@@ -102,6 +103,7 @@ def classify_draft_status(df: pd.DataFrame) -> pd.Series:
 def build_broad_historical_dataset(master_path: Path = MASTER_DB_PATH) -> pd.DataFrame:
     df = pd.read_csv(master_path)
 
+    df = resolved_canonical_position_population(df)
     df = df[df["position"].isin(POSITIONS) & (df["games_played"] >= MEANINGFUL_ACTIVITY_MIN_GAMES)].copy()
 
     df["adp_matched"] = df["data_quality_flag"].isin(DRAFTED_QUALITY_FLAGS)

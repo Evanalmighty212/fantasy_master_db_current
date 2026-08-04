@@ -22,6 +22,7 @@ reserved (not computed this round).
 """
 
 import sys
+import importlib.util
 from pathlib import Path
 
 import pandas as pd
@@ -38,6 +39,13 @@ from lib.dataset2.canonical_outcome_table import (
     build_canonical_outcome_table,
 )
 
+DRIVER_SPEC = importlib.util.spec_from_file_location(
+    "dataset2_outcome_driver",
+    Path(__file__).resolve().parent.parent / "scripts/build_dataset2_canonical_outcome_table.py",
+)
+outcome_driver = importlib.util.module_from_spec(DRIVER_SPEC)
+DRIVER_SPEC.loader.exec_module(outcome_driver)
+
 
 def _master(*rows):
     """rows: (season, player_id, position, overall_adp, games_played).
@@ -51,9 +59,14 @@ def _master(*rows):
             gp = 10
         else:
             s, p, pos, adp, gp = r
-        out_rows.append({"season": s, "player_id": p, "position": pos, "overall_adp": adp, "games_played": gp})
+        out_rows.append({
+            "season": s, "player_id": p, "position": pos,
+            "canonical_position_status": "adp_source",
+            "canonical_position_authority": "adp_source_position",
+            "overall_adp": adp, "games_played": gp,
+        })
     if not out_rows:
-        return pd.DataFrame(columns=cols)
+        return pd.DataFrame(columns=cols + ("canonical_position_status", "canonical_position_authority"))
     return pd.DataFrame(out_rows)
 
 
@@ -121,17 +134,38 @@ class TestStarOutcome:
         assert row["sbv_score_available"] == True  # noqa: E712
         assert row["star_by_value_score"] == 42.0
 
-    def test_ineligible_star_row_has_null_label_not_false(self):
-        master = _master((2008, "P1", "QB", 10.0))
-        sbv = _sbv((2008, "P1", "out_of_scope", None, None))
-        players = _players(("P1", 1))
-        ep_lookup = _ep_lookup()
-        production = _production((2008, "P1", 40.0))
-        out = build_canonical_outcome_table(master, sbv, players, ep_lookup, production)
-        row = out.iloc[0]
-        assert row["star_outcome_eligible"] == False  # noqa: E712
-        assert pd.isna(row["star_by_value_label"])
-        assert row["star_outcome_ineligibility_reason"] == "out_of_scope_temporal_window"
+
+def test_primary_bust_production_receives_canonical_position_and_reranked_finish(monkeypatch):
+    captured = {}
+
+    def fake_compute(frame):
+        captured["frame"] = frame.copy()
+        return frame[["season", "player_id"]].assign(P=1.0)
+
+    monkeypatch.setattr(outcome_driver.prod, "compute_production", fake_compute)
+    master = pd.DataFrame([{
+        "season": 2019, "player_id": "00-0035624", "position": "WR",
+        "canonical_fantasy_position": "WR", "canonical_position_status": "approved_override",
+        "canonical_position_authority": "Evan-approved season-specific treatment",
+        "games_played": 7, "fantasy_points_ppr": 100.0, "ppg_ppr": 100 / 7,
+        "position_finish_ppr": 123, "data_quality_flag": "matched_clean",
+    }])
+    outcome_driver._compute_production(master)
+    supplied = captured["frame"].iloc[0]
+    assert supplied["position"] == "WR"
+    assert supplied["position_finish_ppr"] == 123
+
+def test_ineligible_star_row_has_null_label_not_false():
+    master = _master((2008, "P1", "QB", 10.0))
+    sbv = _sbv((2008, "P1", "out_of_scope", None, None))
+    players = _players(("P1", 1))
+    ep_lookup = _ep_lookup()
+    production = _production((2008, "P1", 40.0))
+    out = build_canonical_outcome_table(master, sbv, players, ep_lookup, production)
+    row = out.iloc[0]
+    assert row["star_outcome_eligible"] == False  # noqa: E712
+    assert pd.isna(row["star_by_value_label"])
+    assert row["star_outcome_ineligibility_reason"] == "out_of_scope_temporal_window"
 
 
 class TestBustPrimaryAndHistoricalSensitivity:
@@ -513,6 +547,8 @@ class TestReasonCodeCompleteness:
         production = _production((2015, "P1", 15.0))
         out = build_canonical_outcome_table(master, sbv, players, ep_lookup, production)
         assert list(out.columns) == list(OUTCOME_OUTPUT_COLUMNS)
+        assert out.loc[0, "canonical_position_status"] == "adp_source"
+        assert out.loc[0, "canonical_position_authority"] == "adp_source_position"
 
 
 class TestNoDuplicateKeys:

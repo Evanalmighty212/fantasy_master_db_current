@@ -130,6 +130,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from lib.player_season_authority import resolved_canonical_position_population
 
 MASTER_DB_PATH = Path("data/master/master_historical_db_with_lwi_2006_2025.csv")
 OUTPUT_DIR = Path("research/output")
@@ -158,6 +159,7 @@ def games_bucket(games_played) -> str:
 
 def load_wr() -> pd.DataFrame:
     df = pd.read_csv(MASTER_DB_PATH)
+    df = resolved_canonical_position_population(df)
     return df[df["position"] == "WR"].copy()
 
 

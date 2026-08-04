@@ -45,7 +45,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # column set -- season/player_id are shared join keys so they're only
 # listed once, in the order run_label_rows()'s merge actually produces
 # (identity columns first, then labeling's own columns).
-_IDENTITY_COLUMNS = ("season", "player_id", "player_name", "position")
+_IDENTITY_COLUMNS = ("season", "player_id", "player_name", "position", "historical_input_revision")
 EXPECTED_COLUMNS = _IDENTITY_COLUMNS + tuple(
     c for c in labeling.OUTPUT_COLUMNS if c not in _IDENTITY_COLUMNS
 )
@@ -104,6 +104,17 @@ COLUMN_DOCS = (
         "null_when": "never.",
         "safe_for_modeling": "Yes.",
         "provenance_notes": None,
+    },
+    {
+        "name": "historical_input_revision",
+        "dtype": "string",
+        "nullable": False,
+        "enum_values": (config.HISTORICAL_INPUT_REVISION,),
+        "description": "Input-governance revision used to build this historical label; separate from SBV_VERSION.",
+        "populated_when": "every row.",
+        "null_when": "never.",
+        "safe_for_modeling": "Metadata only -- never a predictor.",
+        "provenance_notes": "Records corrected identity/position/team inputs, not a formula change.",
     },
     {
         "name": "star_by_value_status",
