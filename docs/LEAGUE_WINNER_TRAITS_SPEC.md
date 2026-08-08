@@ -460,6 +460,64 @@ rather than re-deriving conclusions from the underlying research prose.
 
 ## Open decisions requiring explicit sign-off
 
+### Approved pre-Phase-1 outcome and inference freeze
+
+**Methodology status: APPROVED by Evan.**
+
+**Implementation status: NOT YET IMPLEMENTED.**
+
+Dataset 2 has three related primary outcome families: continuous LWI,
+Star, and strict bust. Strict bust means bottom-tail relative
+underperformance under a frozen discovery reference **and** production
+below replacement (`P < 0`). The former broad bottom-20% label remains
+secondary/contextual and must be named
+`relative_underperformance_bottom20`; 25% and 30% variants remain
+sensitivities, not additional primary families.
+
+Bust references are fit from eligible 2010--2020 discovery rows only.
+The complete empirical distributions, position x acquisition-cost/
+ADP-round x discovery-era cells, sparse/pooled fallback routing,
+raw-production fallback references, minimum-cell rules, and tie/midrank
+convention are frozen and versioned. Rows from 2021--2025 are applied to
+that reference without recalibration, reranking, fallback reselection,
+threshold changes, or any other holdout-informed modification. Natural
+holdout prevalence differences are allowed. Future implementation must
+produce hashed reference artifacts, fail loudly on mismatch, and provide
+row-level reconciliation during the one authorized coherent regeneration.
+The discovery-only pre-implementation diagnostic produced 54 strict busts
+among 1,746 eligible rows (approximately 3.09%); this is not yet a
+governed production-code result.
+
+For LWI, the practical-effect gate is an absolute adjusted contrast of
+at least 0.10 frozen discovery-outcome SD. The current discovery SD is
+approximately 18.5406, so 0.10 SD is approximately 1.8541 raw LWI
+points. Continuous traits use a one-discovery-period predictor-SD
+contrast; binary traits compare 1 versus 0; categorical traits compare
+governed levels against a predeclared reference. Football-native-unit
+effects accompany standardized effects, and the discovery outcome SD is
+frozen once rather than recomputed per trait.
+
+Rare-Star Firth inference uses 2,000 player-cluster bootstrap replicates
+with a fixed recorded seed, resampling players with all seasons together
+and retaining repeated sampled players correctly. Convergence,
+failed-replicate, and successful-fit safeguards fail loudly. Separate
+Benjamini-Hochberg `q = 0.10` correction is applied within each primary
+family. Agreement across correlated outcomes is convergent evidence, not
+independent replication. Robustness is reported in descriptive tiers,
+not enforced by an automatic 80%-or-discard rule.
+
+The strict-bust practical-effect advancement threshold remains an Evan
+decision after corrected implementation and discovery-only prevalence
+verification. Dataset 3's temporal split and model decisions remain
+separate unresolved work and do not block Dataset 2 Phase 1.
+
+Phase 1 has not begun. It cannot begin until these approved rules are
+implemented, frozen references and source inputs are versioned, derived
+artifacts are regenerated coherently, structural and deterministic
+validation passes, the governing documents accurately describe the live
+implementation, and Evan explicitly decides the strict-bust
+practical-effect gate.
+
 0. **Not a Dataset 2 decision, flagged here only to route it
    correctly**: whether Dataset 3's eventual model predicts a
    continuous LWI score, a league-winner probability, or both in
@@ -469,17 +527,17 @@ rather than re-deriving conclusions from the underlying research prose.
    proposes classification only) -- not decided here, since Dataset 2's
    trait research is useful either way and shouldn't be blocked on it.
 
-1. The exact era boundaries for era-effect testing (proposed:
-   pre-2011 / 2011-2020 / 2021+) -- explicitly INITIAL DEFAULTS, not
-   fixed boundaries, so later evidence can shift them without
-   contradicting this document.
+1. ~~The exact era boundaries for era-effect testing.~~ **RESOLVED for
+   Dataset 2 Phase 1**: pre-2011 versus 2011+ within the 2006--2020
+   discovery period. The protected 2021--2025 holdout does not fit an
+   era coefficient.
 2. Whether to pursue the bucket-2 traits requiring genuinely new
    external sourcing (coaching changes, depth charts, contract
    status) now, or defer them and build Dataset 2's first pass purely
    from bucket 1 -- the latter is faster and requires zero new data
    engineering; the former is likely more predictive but is real,
    separate work.
-3. The significance threshold/method for categorical trait testing --
-   proposed a basic rank-sum/proportions test, not a specific p-value
-   cutoff, since this is research prioritization, not a publication
-   claim.
+3. ~~The multiple-comparison threshold.~~ **RESOLVED**: separate BH
+   `q = 0.10` correction within LWI, Star, and strict-bust families.
+   Any remaining model-specific test detail that changes methodology
+   requires Evan's judgment during implementation design.

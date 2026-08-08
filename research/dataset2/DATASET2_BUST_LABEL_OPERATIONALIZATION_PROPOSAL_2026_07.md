@@ -782,3 +782,33 @@ values were not in scope for this implementation round). The corrected
 approved formula; the 532/104 figures earlier in this document are
 preserved as a disclosed historical error, not silently deleted, per
 this project's own decision-history conventions.
+
+---
+
+## 27. Superseding pre-Phase-1 freeze (2026-08)
+
+**Methodology status: APPROVED by Evan.**
+
+**Implementation status: NOT YET IMPLEMENTED.**
+
+The existing full-period calibration and broad-primary designation above
+are superseded for Dataset 2 Phase 1. Fit complete empirical references
+from eligible 2010--2020 discovery rows only, then freeze and version the
+population, distributions, position x acquisition-cost/ADP-round x
+discovery-era cells, sparse/pooled fallback routing, raw-production
+fallback references, minimum-cell rules, and average-rank/inclusive tie
+convention. Apply 2021--2025 rows to that frozen reference with no
+recalibration, reranking, fallback reselection, threshold change, or
+other holdout-informed modification. Holdout prevalence may differ.
+Reference artifacts require fingerprints/hashes, fail-loud validation,
+and row-level regeneration reconciliation.
+
+The primary bust family is now strict bust: frozen-reference bottom-tail
+relative underperformance **and** `P < 0`. The prior broad bottom-20%
+label remains secondary/contextual under the recommended explicit name
+`relative_underperformance_bottom20`; 25% and 30% remain sensitivities.
+The discovery-only pre-implementation diagnostic is 54 of 1,746 eligible
+(approximately 3.09%), not a governed production result. The strict-bust
+practical-effect advancement threshold remains an explicit Evan decision
+after corrected implementation and discovery-only prevalence
+verification.

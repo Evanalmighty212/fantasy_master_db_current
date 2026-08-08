@@ -475,10 +475,11 @@ score.
 | ROC-AUC (delta) | Binary targets, where baseline prevalence supports it | Rank-discrimination improvement |
 | **Precision-recall AUC (delta)** | Binary targets, **especially `star_by_value_label`** | ROC-AUC is known to look artificially strong under severe class imbalance (§4's 0.9% Star base rate) — PR-AUC is the more honest diagnostic here |
 
-**Estimation**: grouped k-fold cross-validation (grouped by
+**Superseded proposal**: grouped k-fold cross-validation (grouped by
 `player_id`, so no player's seasons split across train/test folds
 within a fold), run ONLY within the discovery window (§10) — never
 touching holdout data, consistent with the rest of this pipeline.
+Section 11.9 replaces this with approved expanding discovery windows.
 
 **Explicit scope limit, stated per instruction**: these four
 diagnostics answer "does this trait add anything measurable beyond
@@ -500,12 +501,16 @@ validation design are separate, future decisions.
 | **Primary FDR tests** | ≤ 143 × 4 = 572 nominal, reduced further per target by §5's gates | Cluster representatives only |
 | **Within-cluster sensitivity tests** | The remaining clustered non-representative content/role formulations, tested only as secondary formulation/threshold sensitivities AFTER their cluster's representative already cleared Phase 2 | Never independently entered into the FDR budget |
 
-**Procedure**: Benjamini-Hochberg FDR control, **q=0.10**, applied to
+**Superseded procedure**: Benjamini-Hochberg FDR control, **q=0.10**, applied to
 the cluster-REPRESENTATIVE primary tests only (§1.5's representative
 selection), **separately per target** (four independent FDR runs —
 Star/primary-bust/strict-bust/diagnostic are different questions and
 never share a correction budget, consistent with the approved round
 1/2 bust-label work's own position on this).
+
+Section 11.9 supersedes the four-run structure with three separate
+families: continuous LWI, Star, and strict bust. Broad bottom-20% is
+secondary/contextual rather than an independent primary FDR family.
 
 **FDR is a discovery FILTER, never proof and never the ranking
 criterion** — unchanged from the prior version, restated because it's
@@ -562,7 +567,7 @@ advancement standard's own explicit accommodation (§11).
 
 ## 11. Advancement standard
 
-A trait or cluster advances toward Dataset 3 candidacy on a given
+**Superseded automatic-conjunction proposal.** A trait or cluster advances toward Dataset 3 candidacy on a given
 target only when ALL of the following hold — this is a conjunction,
 not a scorecard:
 
@@ -595,6 +600,9 @@ not a scorecard:
 Traits/clusters satisfying all seven are compiled into the Phase 4
 final candidate list for Dataset 3, with the full standardized output
 (§6) and every caveat carried forward — not a bare list of names.
+Section 11.9 replaces this automatic robustness conjunction with
+descriptive robustness tiers while retaining the approved family-wise
+FDR and outcome-specific practical-effect rules.
 
 ---
 
@@ -867,6 +875,61 @@ byte-identical across two independent runs):
 `data/exports/dataset2_trait_pipeline_predictor_clusters.csv`.
 
 ---
+
+## 11.9 Superseding approved Phase 1 inference freeze (2026-08)
+
+**Methodology status: APPROVED by Evan.**
+
+**Implementation status: NOT YET IMPLEMENTED.**
+
+The following rules supersede conflicting proposals earlier in this
+document while preserving those passages as decision history:
+
+- Primary outcomes are continuous canonical LWI, Star, and strict bust.
+  Strict bust is frozen-reference bottom-tail relative
+  underperformance plus `P < 0`; broad bottom-20% becomes the
+  secondary/contextual `relative_underperformance_bottom20`, with 25%
+  and 30% variants retained as sensitivities.
+- Bust calibration uses eligible 2010--2020 discovery rows only. Its
+  empirical distributions, position x acquisition-cost/ADP-round x
+  discovery-era cells, sparse/pooled routing, raw-production fallback,
+  minimum-cell rules, and tie/midrank convention are frozen and
+  versioned before 2021--2025 application. No holdout recalibration,
+  reranking, routing reselection, or threshold change is permitted.
+- The primary LWI practical-effect gate is an absolute adjusted
+  contrast of at least 0.10 frozen discovery-outcome SD. With the
+  current discovery SD of approximately 18.5406, that is approximately
+  1.8541 raw LWI points. Continuous predictors use a one-discovery-
+  period predictor-SD contrast, binary predictors use 1 versus 0, and
+  categorical predictors use governed levels versus a predeclared
+  reference. Report native-unit effects as well.
+- Rare-Star Firth inference uses 2,000 player-cluster bootstrap
+  replicates with a fixed recorded seed. Players and all their seasons
+  are resampled together; repeated sampled players are retained
+  correctly. Convergence, failed-replicate, and minimum-successful-fit
+  safeguards fail loudly.
+- Separate Benjamini-Hochberg `q = 0.10` correction applies within each
+  of the three primary outcome families. Cross-outcome support is
+  convergent evidence, not independent replication. Robustness is
+  reported through descriptive tiers; the earlier automatic
+  conjunction and any 80%-or-discard interpretation are superseded.
+- Temporal incremental validation uses expanding discovery windows,
+  not the grouped random folds proposed in §8. The protected
+  2021--2025 holdout remains untouched during fitting and tuning.
+- The discovery-era control is pre-2011 versus 2011+ within 2006--2020;
+  no 2021+ era coefficient is fitted. Acquisition cost uses
+  leakage-safe preseason categorical strata.
+
+The strict-bust practical-effect gate remains unresolved and requires
+Evan's explicit decision after corrected implementation and
+discovery-only prevalence verification. The discovery-only diagnostic
+count is 54 of 1,746 eligible (approximately 3.09%); it is not a claim
+about governed production code. Phase 1 remains unstarted and blocked
+until the approved methodology and source rules are implemented,
+references and inputs are versioned, one coherent regeneration and
+deterministic validation pass, the documents match the live system, and
+the strict-bust practical-effect gate is decided. Dataset 3's separate
+split remains unresolved but is not a Dataset 2 Phase 1 blocker.
 
 ## 12. Explicit stop point
 

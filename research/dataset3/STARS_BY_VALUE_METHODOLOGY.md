@@ -1228,19 +1228,50 @@ before being treated as final -- and if a real need for the
 distinction emerges, the cleaner fix is a dedicated eleventh
 provenance value, not continuing to overload `adp_matched_clean`.
 
-**Vick 2010 specifically remains `unscoreable_drafted_adp_missing`.**
-The existing lead (NFL.com's "2010 ADP: 14th round" citation) is a
-real, named source, but it is a single restated number from one
-article with no snapshot date, scoring format, or underlying table --
-it does not currently meet this project's source-quality bar for a
-canonical number (the same bar applied throughout `ADP_SOURCE_MATRIX.md`),
-and it is not independent evidence of *minimal* cost in the sense
-case (2) requires -- if anything it's evidence a real, if very late,
-cost existed, which is exactly the `unscoreable_drafted_adp_missing`
-definition. It stays there unless a future source is judged
-sufficient to supply an actual canonical round under the project's
-existing standards -- not automatically promoted either direction by
-this schema revision.
+**Vick 2010 -- superseding approved treatment.**
+
+**Methodology status: APPROVED by Evan.**
+
+**Implementation status: NOT YET IMPLEMENTED.**
+
+The former conclusion was
+`unscoreable_drafted_adp_missing`, based on treating an NFL.com "2010
+ADP: 14th round" statement as a possible real acquisition-cost lead.
+That conclusion is retained here only as **superseded/corrected decision
+history**: the article was a retrospective draft-do-over, not
+contemporaneous preseason acquisition evidence, and supplies no usable
+numeric ADP.
+
+Under the approved 2026-08 ruling, Vick's governed classification is
+`preseason_market_status = rare_minimal_market`; his downstream
+acquisition/scoring treatment is categorical minimal market cost through
+the general governed MMC mechanism. Observed overall ADP, positional
+ADP, draft round, and draft pick remain null; none may be inferred or
+fabricated. The approved evidence is the omission of Vick from two deep
+contemporaneous PPR sources, corroboration that he went undrafted in
+approximately 90% of Yahoo leagues, and his preseason status as Kevin
+Kolb's backup. "Undrafted in the ordinary market" means
+`rare_minimal_market`, not `ordinary_market`. Future implementation
+must use the general governed MMC mechanism and must not add a
+name-specific methodological exception.
+
+If the existing storage/provenance value
+`mmc_verified_2010_manual_override` remains in use, it identifies this
+reviewed instance of the general governed rare/minimal-market rule. It
+is not evidence of, and must not be interpreted as, bespoke Vick-only
+methodology. Current generated artifacts still represent the prior
+implementation until the approved rule is implemented, regenerated,
+and validated.
+
+The governing three-level market architecture is `ordinary_market`,
+`rare_minimal_market`, and `participation_unknown`. Observed ADP,
+conditional average pick, participation evidence, source records, and
+provenance remain separate. A researched absence supports
+`rare_minimal_market` only with resolved identity, adequate season/
+position coverage, multiple reasonable contemporaneous sources, no
+contrary ordinary-market evidence, and a documented trail; otherwise
+status remains `participation_unknown`. Historical FFC participation
+percentages and numeric ADP are never invented.
 
 **Population rules -- when score/label/thresholds are populated vs. `NULL`**:
 

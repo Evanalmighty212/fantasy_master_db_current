@@ -39,9 +39,21 @@ An ADP source is considered "production ready" only if it satisfies all of the f
 
 # Current Recommendation
 
-**No single source has earned Primary Backbone status.**
+**Methodology status for the 2025 reconstructed-MFL acquisition-source
+methodology and its governed market-participation rules: APPROVED by
+Evan.**
 
-Current expectation:
+**Implementation status for those rules: NOT YET IMPLEMENTED.**
+
+The approved 2025 acquisition source is the strict reconstructed
+147-league MFL population described in the decision-history entry below.
+It uses raw observed mean picks without normalization, a 35%
+ordinary-market participation boundary, and a 30% principal sensitivity.
+This season-specific approval does not make MFL the historical backbone
+for other seasons. The live source grade and current generated artifacts
+still describe the prior implementation; no grade upgrade occurs until
+the approved source is preserved, implemented, regenerated, and
+validated successfully.
 
 - Primary source (to be determined)
 - Secondary validation source
@@ -62,7 +74,7 @@ Current expectation:
 | GitHub repositories | Unknown | TBD | TBD | Pending | Supplemental |
 | Internet Archive | Unknown | Low | TBD | Pending | Historical recovery |
 | Sleeper | Unknown | TBD | TBD | Pending | Modern validation |
-| MyFantasyLeague | 254 configuration-valid leagues (2025) | A (isolated diagnostic pipeline) | B (real QB/TE gap vs. every other 2025 source checked) | B- | Secondary sensitivity dataset only, not canonical |
+| MyFantasyLeague | Current live evidence: 254 configuration-valid leagues; approved replacement: strict 147-league reconstruction for 2025, not yet implemented | A (isolated diagnostic pipeline) | B (real QB source shift vs. FFToday validation) | B- | Canonical 2025 acquisition source only after implementation and validation; 30% sensitivity retained |
 | RTSports | Unknown | TBD | TBD | Pending | Candidate |
 | Commercial APIs | Unknown | Varies | High | Pending | Last resort |
 
@@ -413,9 +425,11 @@ Summary:
 
 ### Verdict
 
-Preserved as a secondary, platform-specific sensitivity dataset, not
-canonical history. See `research/diagnostics/mfl_pipeline/README.md`
-for the full final-decision writeup.
+**Superseded decision history.** This investigation originally retained
+MFL only as a platform-specific sensitivity. Evan subsequently approved
+the stricter 147-league reconstruction as the canonical 2025 acquisition
+source. The approved rule is recorded below; its implementation remains
+pending.
 
 ---
 
@@ -530,13 +544,10 @@ pick-provenance contamination as the sole explanation (see
 
 ### Decision
 
-2025 remains excluded from primary ADP-dependent fitting and is not
-promoted to canonical or secondary-blend status from any source
-checked in this pass (MFL, FFToday's consensus, or ESPN's partial data
-individually). **2007-2024 (18 seasons) is used for the Absolute
-Impact expected-production work**, per the existing decision in
-`research/diagnostics/mfl_pipeline/README.md`, now with stronger
-supporting evidence.
+**Superseded decision history.** This pass originally left 2025 without
+a canonical source. The later approved strict-reconstruction decision
+below supersedes that source-policy conclusion without erasing the
+cross-source evidence that motivated its safeguards.
 
 ### Next experiment
 
@@ -663,7 +674,7 @@ Not yet evaluated.
 | 2008 | ⭐⭐⭐⭐☆ | FFToday VERIFIED: 181 usable skill players, clean single snapshot (FFC's own archive for this year is contaminated) |
 | 2009 | ⭐⭐⭐⭐☆ | FFToday VERIFIED: 176 usable skill players, clean single snapshot; FFC PPR confirmed absent |
 | 2010-2024 | ⭐⭐⭐⭐☆ | FFC VERIFIED clean -- 92-187 usable skill players/year, needs a secondary source layered in to reach 250 every year |
-| 2025 | ⭐⭐☆☆☆ | FFC confirmed cleanly absent. FFToday's modern page (Sleeper/RTSports/ESPN rank consensus) and MFL's diagnostic pipeline both evaluated -- neither qualifies as canonical (see FFToday, MyFantasyLeague, and "2025 Cross-Source Validation" sections). 2025 remains sensitivity-only; 2007-2024 used for ADP-dependent fitting. |
+| 2025 | ⭐⭐☆☆☆ | FFC confirmed absent. The live grade remains unchanged while the strict reconstructed 147-league MFL population is APPROVED as future canonical acquisition evidence but NOT YET IMPLEMENTED or production-validated; FFToday's August 29 consensus remains independent validation only. See the 2026-08 decision entry. |
 
 ---
 
@@ -713,6 +724,55 @@ python run_pipeline.py
 ---
 
 # Decision History
+
+### 2026-08 -- Strict reconstructed MFL approved for canonical 2025 acquisition cost
+
+**Methodology status: APPROVED by Evan.**
+
+**Implementation status: NOT YET IMPLEMENTED.**
+
+The approved future canonical 2025 source is the governed 147-league
+reconstruction, pending implementation and production validation:
+real completed drafts, 12 teams, PPR/redraft-report-discovered,
+configuration-verified single-QB, non-IDP, non-salary, 14--18 roster
+spots, and complete through configured roster size. Configurations with
+`bestLineup=Yes` or missing status are excluded as a conservative
+best-ball proxy; MFL cannot prove managed-league status perfectly. The
+window ends at the actual NFL opening kickoff, September 4, 2025 at
+8:20 p.m. Eastern / September 5 at 00:20 UTC, superseding the earlier
+cutoff that ended about 24 hours too soon.
+
+Raw observed MFL mean picks are used without normalization.
+`ordinary_market` requires participation in at least 35% of governed
+drafts; 30% is the principal sensitivity. Observed players below 35%
+are `rare_minimal_market`, with conditional picks and participation
+evidence preserved. Absence from all complete governed drafts supports
+zero participation in this population but never a fabricated numeric
+ADP. FFToday's August 29, 2025 12-team PPR consensus is independent
+validation only and is never blended. The source disclosure must state
+that MFL QBs were selected approximately 15 overall picks earlier than
+the FFToday consensus, while RB/WR pricing and within-position ordering
+were much closer. The source bytes, reconstruction version, population
+rules, timing, provenance, and hashes must be preserved under the
+governed reproducibility policy. Any normalization toward a hypothetical
+FFC market requires a separate future methodology decision.
+
+Current generated artifacts and the live source grade still represent
+the prior implementation. Neither changes until governed preservation,
+implementation, coherent regeneration, and validation succeed.
+
+The approved general market-status architecture is
+`ordinary_market`, `rare_minimal_market`, and
+`participation_unknown`, with raw source observations and provenance
+kept separately. Michael Vick 2010 has
+`preseason_market_status = rare_minimal_market`; his downstream
+acquisition/scoring treatment is categorical minimal market cost.
+Observed overall ADP, positional ADP, draft round, and draft pick all
+remain null. The retrospective 14th-round draft-do-over rationale is
+superseded. Implementation must use the general evidence-based MMC
+mechanism rather than a Vick-specific exception. Thus "undrafted in
+the ordinary market" does not mean the governed status
+`ordinary_market`.
 
 This document is intended to remain a living engineering notebook.
 
@@ -771,7 +831,7 @@ attempted, no qualifying source found**:
 | Adrian Peterson 2012 | `ffc_adp_2012_ppr.json` (93 players, explicitly flagged `THIN_YEAR` in `ADP_SEASON_SOURCE_PLAN.csv`) | No | ESPN "Statuesday" column (Ken Daube, published 2012-08-08, `espn.com/fantasy/football/ffl/story?page=nfldk2k12_decisionspeterson`) gives only a single writer's subjective positional rank (RB11, recommended up to RB7) -- not an aggregated draft-position consensus. Does not meet this project's source-quality bar. | 3 (beyond reliable source depth) / 4 (no usable canonical ADP found) | Unresolved |
 | Justin Herbert 2020 | `ffc_adp_2020_ppr.json` (203 players) | No | Multiple searches found only 2021 ADP data (32.42, QB4) for Herbert; no 2020 preseason figure exists in indexed sources -- consistent with him being a non-starting rookie backup (Tyrod Taylor was the starter) with no real preseason fantasy relevance that year. | 5 (genuinely no preseason draftable relevance) | Unresolved |
 | Victor Cruz 2011, Odell Beckham Jr. 2014, Puka Nacua 2023 | Respective `ffc_adp_*_ppr.json` (188-202 players each) | No | Not independently re-searched externally this pass (time-boxed to the two cases above as representative) -- pattern-consistent with Herbert 2020 (real UDFA/rookie-breakout stories where a genuine lack of preseason ADP is the more likely explanation than a data gap). Flagged explicitly as un-verified, not confirmed. | 5 (probable, not confirmed) | Unresolved |
-| Mike Vick 2010 | `ffc_adp_2010_ppr.json` (214 players) | No | Not independently re-searched this pass. Vick was a backup (Kevin Kolb was the starter) entering 2010, consistent with genuinely minimal preseason ADP relevance -- same reasoning as Herbert 2020, not confirmed via search. | 5 (probable, not confirmed) | Unresolved |
+| Mike Vick 2010 | `ffc_adp_2010_ppr.json` (214 players) | No | **SUPERSEDED HISTORY:** this pass had not yet completed the later evidence review. The approved 2026-08 ruling now uses the general evidence-based rare/minimal-market mechanism. | 5 (probable, not confirmed in this pass) | Superseded by approved `preseason_market_status = rare_minimal_market`; categorical minimal-market-cost treatment; observed overall/positional ADP, draft round, and draft pick remain null |
 
 - **Decision**: No new ADP source promoted to canonical or
   sensitivity-only status for any of these six cases -- nothing found
@@ -813,7 +873,7 @@ drafted with usable ADP / clearly drafted but usable ADP still missing
 
 | Player-season | Classification | Real-world evidence found | Primary-source verification |
 |---|---|---|---|
-| Mike Vick 2010 | Clearly drafted, usable ADP still missing | NFL.com "2010 Fantasy draft do-over" piece quotes his real, contemporaneous draft position directly: "Michael Vick, QB, Philadelphia Eagles (2010 ADP: 14th round)." A real number exists in a named source. | Not verified against a primary consensus table -- no snapshot date, scoring format, or league size given, and it's not in FFC's 214-player 2010 canonical file. |
+| Mike Vick 2010 | **SUPERSEDED/CORRECTED HISTORY:** formerly classified as clearly drafted with usable ADP missing; the approved 2026-08 ruling is `preseason_market_status = rare_minimal_market` with categorical minimal-market-cost treatment | This investigation originally misread NFL.com's retrospective "2010 Fantasy draft do-over" as contemporaneous acquisition evidence. It was a post-season draft-do-over and is not valid preseason ADP evidence. The approved ruling instead rests on the governed evidence-based rare/minimal-market mechanism. | Observed overall ADP, positional ADP, draft round, and draft pick remain null. No numeric value is inherited from the article, estimated, or fabricated. |
 | Adrian Peterson 2012 | Clearly drafted, usable ADP still missing (strongest of the three "missing" cases) | Bleacher Report's "Complete Fantasy Profile & Draft Strategy" cites, by name, "a 2012 average draft position of 20.69" attributed to **FFToolbox.com** -- a real named ADP aggregator, not a personal ranking (contrast with the previous pass's ESPN opinion-column finding, which this supersedes as the better lead). | Could not reach FFToolbox's own 2012 archive (site has since migrated to fulltimefantasy.com and no longer lists a 2012 page); Wayback Machine unreachable from this environment. The number is real and named but not independently re-derived from a primary table. |
 | Odell Beckham Jr. 2014 | Clearly drafted, usable ADP still missing | A FoxSports "risks and rewards of rookie WRs" piece states "Beckham was a late-round flier at best" and links directly to a real (now-dead) MyFantasyLeague.com 2014 ADP query URL -- confirming a real MFL consensus existed for him that year. | The linked MFL query (`www03.myfantasyleague.com/2014/adp?...`) 404s today; no specific number recovered, only the qualitative "late-round" characterization. |
 | Victor Cruz 2011 | Likely genuinely undrafted / outside normal draft depth | His famous breakout preseason game was August 2010 (his rookie year), not 2011 -- he then missed his entire 2010 season with a hamstring injury, so he entered the 2011 preseason with zero NFL production and a year-old, mostly-forgotten highlight. Real-world context supports minimal 2011 preseason relevance. | Absence from FFC's 2011 archive corroborated two independent ways: the repo's own `ffc_adp_2011_ppr.json` (188 players, matching FFC's live-site metadata exactly -- 600 drafts, 2011-09-06 to 2011-09-09) and a direct live WebFetch of `fantasyfootballcalculator.com/adp/ppr/12-team/all/2011`, which also does not show him. |
@@ -838,9 +898,10 @@ pattern-matching alone.
   corroboration via a live-source refetch, not just the repo snapshot).
   Medium-high for Herbert 2020 and Nacua 2023 (real-world context is
   strong, absence from source is confirmed, but no second source was
-  checked). Medium for Vick 2010, AP 2012, and OBJ 2014 as "drafted but
-  missing" -- each has a real, named, dated-or-nameable source, but
-  none was independently re-derived from a primary table.
+  checked). This pass recorded medium confidence for Vick 2010, AP 2012,
+  and OBJ 2014 as "drafted but missing." **That Vick conclusion is
+  superseded/corrected by the approved 2026-08 ruling**; the retrospective
+  draft-do-over was not valid preseason acquisition evidence.
 - **Next experiment**: if AP 2012's FFToolbox number is ever needed for
   real, contact FFToolbox/FullTimeFantasy directly or find a
   third-party citation that reproduces the underlying table (not just
@@ -872,8 +933,9 @@ skill position -> likely_undrafted; Day 1-2 NFL skill-position rookie
 real production in the last 3 seasons) -> likely_drafted_missing_evidence;
 everything else -> ambiguous.
 
-Validated against the 6 hand-researched ground-truth cases: **5/6
-correct**. The miss (Mike Vick 2010) lands in the safe "ambiguous"
+Validated against the 6 then-current hand-researched ground-truth cases:
+**5/6 correct**. This historical validation predates the corrected
+2026-08 Vick evidence ruling. The miss (Mike Vick 2010) lands in the safe "ambiguous"
 bucket, not a confidently wrong one -- his last real production before
 2010 was 2006, because he missed 2007-2008 entirely (incarceration),
 four years outside even an extended 3-year lookback. Deliberately not
@@ -941,9 +1003,13 @@ boundary, not a gap to work around.
   and matches the classification wording this project already
   chose ("outside normal draft depth") better than a hard undrafted
   claim would.
-- **Mike Vick 2010**: still unresolved by MFL specifically -- MFL's
-  data doesn't reach back that far. The NFL.com "14th round" citation
-  from part 2 remains the only lead.
+- **Mike Vick 2010 -- superseded/corrected history**: MFL does not
+  cover 2010, and the retrospective NFL.com "14th round" draft-do-over
+  is not preseason acquisition evidence. The later approved 2026-08
+  ruling uses the general evidence-based rare/minimal-market mechanism:
+  `preseason_market_status = rare_minimal_market`, categorical minimal-
+  market-cost treatment, and null observed overall ADP, positional ADP,
+  draft round, and draft pick.
 
 **Compatibility caveat, not yet resolved**: this project's own prior
 2025 MFL investigation (see the "2025 Cross-Source Validation" entry
@@ -1628,6 +1694,12 @@ separate step.
 ---
 
 ### 2026-07 -- Final 2025 ADP decision: raw MFL AUG15 canonical, Method B rejected as a numeric input
+
+**Superseded population definition.** The no-normalization conclusion
+remains approved, but the later 2026-08 decision replaces this
+heterogeneous aggregate with the strict governed 147-league
+reconstruction and its 35%/30% participation policy. Implementation of
+that replacement is pending.
 
 - **Date**: 2026-07
 - **Decision**: **Canonical `overall_adp` for 2025, all four positions

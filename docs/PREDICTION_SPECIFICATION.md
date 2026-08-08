@@ -324,6 +324,23 @@ what the model can actually explain.
 
 ## What happens next, per this spec
 
+### Dataset 2 primary-outcome freeze
+
+**Methodology status: APPROVED by Evan.**
+
+**Implementation status: NOT YET IMPLEMENTED.**
+
+Dataset 2 Phase 1 uses three related primary outcome families:
+continuous canonical LWI, Star, and strict bust (frozen-reference
+bottom-tail relative underperformance plus `P < 0`). The broad
+bottom-20% outcome is secondary/contextual, not a fourth primary
+family. Separate BH `q = 0.10` correction applies within each primary
+family, and support across the correlated outcomes is convergent
+evidence rather than independent replication. This Dataset 2 outcome
+freeze does not select Dataset 3's eventual target, temporal split, or
+model form; those remain Dataset 3 decisions before its own development
+or evaluation and do not block Dataset 2 Phase 1.
+
 Dataset 2 (League Winner Traits) research should be organized around
 THIS document's target definition -- specifically, exploring which
 preseason-available signals correlate with a player-season becoming a
@@ -334,7 +351,7 @@ pattern-hunting that might not connect to a well-defined target.
 
 ---
 
-## Open decisions requiring explicit sign-off before Dataset 2 begins
+## Open Dataset 3 decisions (not blockers for Dataset 2 Phase 1)
 
 1. Classification (proposed) vs. regression vs. ordinal/multi-tier
    target -- see section 1.

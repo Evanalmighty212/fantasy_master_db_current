@@ -98,10 +98,75 @@ thresholds are identical.
 
 ## Undrafted player representation
 
-**Design decision**: ONE unified acquisition model -- a verified-
+### Approved preseason-market governance revision
+
+**Methodology status: APPROVED by Evan.**
+
+**Implementation status: NOT YET IMPLEMENTED.**
+
+Preseason acquisition evidence and governed market status are separate
+concepts. The approved three-level status field is
+`ordinary_market`, `rare_minimal_market`, or `participation_unknown`.
+Raw observed ADP, conditional average pick, participation counts or
+percentages, source records, and provenance remain separate fields and
+must never be overwritten by that classification.
+
+A thoroughly researched source absence may support
+`rare_minimal_market` only when player identity is resolved, source
+coverage is adequate for that season and position, multiple reasonable
+contemporaneous sources were searched, no contrary evidence indicates
+ordinary drafting, and the evidence trail is documented. Otherwise the
+status remains `participation_unknown`. Neither status permits an
+invented numeric ADP or an inferred historical FFC selection percentage.
+
+For Michael Vick in 2010, the approved governed classification is
+`preseason_market_status = rare_minimal_market`; the downstream
+acquisition/scoring treatment is categorical minimal market cost through
+the general governed MMC mechanism. Observed overall ADP, positional
+ADP, draft round, and draft pick remain null. The former retrospective
+"14th round" rationale is superseded because it came from a draft
+do-over, not contemporaneous acquisition evidence. The governing
+evidence instead comprises omissions from two deep contemporaneous PPR
+sources, corroboration that Vick went undrafted in approximately 90% of
+Yahoo leagues, and his preseason backup status behind Kevin Kolb.
+"Undrafted in the ordinary market" therefore means
+`rare_minimal_market`, not `ordinary_market`, and must not be implemented
+as a name-specific methodological exception. If the existing storage/
+provenance value `mmc_verified_2010_manual_override` is retained, it
+records this instance of the general governed rule; it does not define
+or justify bespoke Vick-only methodology.
+
+For 2025, the approved canonical acquisition source is the governed
+147-league MFL reconstruction: real, completed, 12-team drafts discovered
+through the PPR/redraft report; configuration-verified single-QB,
+non-IDP, and non-salary; `bestLineup=Yes` and missing-status
+configurations excluded as a conservative best-ball proxy; 14--18
+roster spots; and a complete draft through configured roster size before
+the NFL opener at September 4, 2025 8:20 p.m. Eastern / September 5
+00:20 UTC. Use raw MFL mean picks without normalization. Participation
+of at least 35% defines `ordinary_market`; 30% is the principal
+sensitivity. Observed players below 35% remain
+`rare_minimal_market`, retaining conditional picks and participation
+evidence. Absence from every complete governed draft may establish zero
+participation in this population but never a fabricated ADP. FFToday's
+August 29 12-team PPR consensus remains independent validation only,
+never a blended input. The source record must disclose that MFL QBs were
+selected approximately 15 overall picks earlier than that consensus,
+while RB/WR pricing and within-position ordering were much closer, and
+must version the reconstruction, population rules, timing, provenance,
+and preserved inputs. This source and its governed participation rules
+are not yet live; current generated artifacts remain on the prior
+implementation. Normalization toward a hypothetical FFC market requires
+a separate future methodology decision.
+
+**Current prior implementation, pending the approved governance revision
+above**: ONE unified acquisition model -- a verified-
 undrafted player is NOT scored via a separate path. They receive a
 MODELED overall ADP and then flow through the exact same Component
-1-6 pipeline as every drafted player.
+1-6 pipeline as every drafted player. These modeled proxy fields are not
+observed ADP. Where the approved categorical minimal-market-cost rule
+supersedes this behavior, implementation and coherent regeneration are
+still pending.
 
 **Schema** (added by `04_build_master_dataset.py`):
 ```
@@ -401,8 +466,8 @@ consistency_component
 
 ## Open items (not blocking current use, tracked for follow-up)
 
-1. **Verification research for the 7 known real "league winner"
-   candidates** (Vick 2010, Cruz 2011, Forsett 2014, James Robinson
+1. **Verification research for the remaining known real "league winner"
+   candidates** (Cruz 2011, Forsett 2014, James Robinson
    2020, Nacua 2023, Kyren Williams 2023, Geno Smith 2022) -- the
    MECHANISM to include them once verified now exists (see "Undrafted
    player representation" above), but none are yet confirmed
@@ -411,7 +476,9 @@ consistency_component
    current ADP source (not a matching failure), but "absent from our
    source" and "undrafted everywhere" are different claims -- checking
    additional historical sources (MFL, RTSports, Underdog, etc.) for
-   each is the remaining work. Currently the single largest weakness
+   each is the remaining work. Michael Vick 2010 is no longer open;
+   the approved market-governance revision above supersedes his prior
+   unresolved treatment. This remains a material weakness
    in the whole system -- larger than any open formula question. See
    `docs/LWI_MODEL_CARD.md` and Dataset 5
    (`no_adp_breakout_candidates.csv`) for the broader research
