@@ -14,6 +14,23 @@ mod = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(mod)
 
 
+def test_governed_2025_participation_survives_master_join_projection():
+    source = pd.DataFrame([{
+        "season": 2025, "nflverse_player_id": "P1", "overall_adp": 180.0,
+        "adp_rank": 180, "positional_adp": 60, "source": "mfl_strict_147_pre_kickoff_2025",
+        "position": "WR", "team": "AAA", "match_type": "exact_name_position",
+        "match_confidence": 100.0, "draft_selection_count": 52,
+        "draft_selection_denominator": 147, "draft_selection_rate": 52 / 147,
+        "mfl_reconstruction_identity": "strict-147-test",
+    }])
+    out = mod.build_adp_slim(source).iloc[0]
+    assert out["adp_source"] == "mfl_strict_147_pre_kickoff_2025"
+    assert out["draft_selection_count"] == 52
+    assert out["draft_selection_denominator"] == 147
+    assert out["draft_selection_rate"] == pytest.approx(52 / 147)
+    assert out["mfl_reconstruction_identity"] == "strict-147-test"
+
+
 def test_raw_provider_fields_survive_canonicalization(tmp_path):
     authority_path = ROOT / "data/manual/canonical_player_season_positions.csv"
     authority = mod.load_canonical_position_authority(authority_path)

@@ -67,7 +67,7 @@ validated successfully.
 | Source | Coverage | Automation | Data Quality | Current Grade | Proposed Role |
 |---------|----------|------------|--------------|---------------|---------------|
 | nflverse / nfl_data_py | Fantasy results only | A+ | A+ | A+ | Fantasy results backbone |
-| Fantasy Football Calculator | Verified: strong 2010-2024, absent 2008/2009/2025, contaminated 2007/2008-standard | A | B (2010-2024) / F (2007-2008 standard) | B- | Secondary contributor, 2010-2024 only |
+| Fantasy Football Calculator | Verified: strong 2010 and 2012-2024; 2011 uses the governed pre-kickoff FFToday-hosted FFC snapshot; absent 2008/2009/2025; contaminated 2007/2008-standard | A | B (2010-2024) / F (2007-2008 standard) | B- | Secondary contributor; governed FFToday-hosted FFC snapshot is canonical for 2011 |
 | FantasyPros | Historical pages confirmed | Unknown | A | A- (investigating) | Potential primary backbone |
 | FFToday | Recent seasons | A | B | B- | Recent-year backup |
 | Kaggle datasets | Unknown | TBD | TBD | Pending | Supplemental |
@@ -96,9 +96,12 @@ validated successfully.
   (my own tools are robots.txt-blocked for this site; GitHub's runners
   are not). Every response saved raw and audited -- see
   `docs/ADP_SEASON_SOURCE_PLAN.csv` and the coverage report.
-- **2010-2024: genuinely clean.** Every year has a tight 1-5 day
+- **2010 and 2012-2024: genuinely clean.** Every year has a tight 1-5 day
   collection window in late Aug/early Sept (real preseason snapshots,
-  not contaminated with in-season or later-year data). Usable skill
+  not contaminated with in-season or later-year data). The former
+  September 6-9, 2011 600-draft JSON overlaps the NFL kickoff window
+  and is now timing sensitivity only; the governed September 4-5
+  FFToday-hosted FFC snapshot is canonical for 2011. Usable skill
   players (QB/RB/WR/TE with valid ADP) range from 92 (2012, a notably
   thin year) to 187 (2010).
 - **No single year reaches the 250-player target from FFC alone** --
@@ -139,7 +142,8 @@ validated successfully.
 ### Verdict
 
 Confirmed as a strong (not sole) secondary/tertiary contributor for
-2010-2024. Not usable at all for 2007–2009 or 2025 in its current form
+2010 and 2012-2024. The governed FFToday-hosted pre-kickoff FFC
+snapshot supplies 2011 instead. Not usable at all for 2007–2009 or 2025 in its current form
 -- 2008-2009 are cleanly absent, but 2007-2008's *standard* archives are
 worse than absent: they look present but are contaminated across
 multiple seasons, which is a more dangerous failure mode than a clean
@@ -673,8 +677,12 @@ Not yet evaluated.
 | 2007 | ⭐⭐⭐⭐☆ | FFToday VERIFIED: 185 usable skill players, clean single snapshot (FFC's own archive for this year is broken) |
 | 2008 | ⭐⭐⭐⭐☆ | FFToday VERIFIED: 181 usable skill players, clean single snapshot (FFC's own archive for this year is contaminated) |
 | 2009 | ⭐⭐⭐⭐☆ | FFToday VERIFIED: 176 usable skill players, clean single snapshot; FFC PPR confirmed absent |
-| 2010-2024 | ⭐⭐⭐⭐☆ | FFC VERIFIED clean -- 92-187 usable skill players/year, needs a secondary source layered in to reach 250 every year |
+| 2010 | ⭐⭐⭐⭐☆ | FFC VERIFIED clean; needs a secondary source layered in to reach 250 |
+| 2011 | ⭐⭐⭐⭐☆ | Canonical source is the newly preserved byte-identical copy of the audited FFToday-hosted FFC 12-team PPR snapshot: 374 drafts from Sept. 4-5, SHA-256 `dd26ad40eecab0e3882b4cb9dce3521e7da2c41431ed77db1c3e58f9158d58f0`, 61,275 bytes. The Sept. 6-9 / 600-draft JSON is timing sensitivity only. |
+| 2012-2024 | ⭐⭐⭐⭐☆ | FFC VERIFIED clean -- 92-187 usable skill players/year, needs a secondary source layered in to reach 250 every year |
 | 2025 | ⭐⭐☆☆☆ | FFC confirmed absent. The live grade remains unchanged while the strict reconstructed 147-league MFL population is APPROVED as future canonical acquisition evidence but NOT YET IMPLEMENTED or production-validated; FFToday's August 29 consensus remains independent validation only. See the 2026-08 decision entry. |
+
+**2011 implementation status: NOT YET IMPLEMENTED.** The governed source is registered and byte-validated, but the live 2011 adapter has not yet consumed it.
 
 ---
 
@@ -724,6 +732,25 @@ python run_pipeline.py
 ---
 
 # Decision History
+
+### 2026-08 -- Governed pre-kickoff 2011 FFToday/FFC snapshot
+
+**Methodology status: APPROVED by Evan.**
+
+The canonical 2011 acquisition source is a newly preserved copy whose
+bytes are exactly identical to the previously audited FFToday-hosted
+Fantasy Football Calculator snapshot. It is 12-team PPR, covers 374
+drafts from September 4-5, 2011, is 61,275 bytes, and has SHA-256
+`dd26ad40eecab0e3882b4cb9dce3521e7da2c41431ed77db1c3e58f9158d58f0`.
+This establishes byte identity with the audited snapshot; it does not
+claim recovery of the earlier controlled-storage package.
+
+The existing `data/raw/adp/ffc_adp_2011_ppr.json` covers 600 drafts
+from September 6-9. Because that window overlaps the NFL kickoff, it
+is retained only as a separately named timing sensitivity and must not
+be substituted for the canonical pre-kickoff snapshot.
+
+---
 
 ### 2026-08 -- Strict reconstructed MFL approved for canonical 2025 acquisition cost
 
@@ -876,7 +903,7 @@ drafted with usable ADP / clearly drafted but usable ADP still missing
 | Mike Vick 2010 | **SUPERSEDED/CORRECTED HISTORY:** formerly classified as clearly drafted with usable ADP missing; the approved 2026-08 ruling is `preseason_market_status = rare_minimal_market` with categorical minimal-market-cost treatment | This investigation originally misread NFL.com's retrospective "2010 Fantasy draft do-over" as contemporaneous acquisition evidence. It was a post-season draft-do-over and is not valid preseason ADP evidence. The approved ruling instead rests on the governed evidence-based rare/minimal-market mechanism. | Observed overall ADP, positional ADP, draft round, and draft pick remain null. No numeric value is inherited from the article, estimated, or fabricated. |
 | Adrian Peterson 2012 | Clearly drafted, usable ADP still missing (strongest of the three "missing" cases) | Bleacher Report's "Complete Fantasy Profile & Draft Strategy" cites, by name, "a 2012 average draft position of 20.69" attributed to **FFToolbox.com** -- a real named ADP aggregator, not a personal ranking (contrast with the previous pass's ESPN opinion-column finding, which this supersedes as the better lead). | Could not reach FFToolbox's own 2012 archive (site has since migrated to fulltimefantasy.com and no longer lists a 2012 page); Wayback Machine unreachable from this environment. The number is real and named but not independently re-derived from a primary table. |
 | Odell Beckham Jr. 2014 | Clearly drafted, usable ADP still missing | A FoxSports "risks and rewards of rookie WRs" piece states "Beckham was a late-round flier at best" and links directly to a real (now-dead) MyFantasyLeague.com 2014 ADP query URL -- confirming a real MFL consensus existed for him that year. | The linked MFL query (`www03.myfantasyleague.com/2014/adp?...`) 404s today; no specific number recovered, only the qualitative "late-round" characterization. |
-| Victor Cruz 2011 | Likely genuinely undrafted / outside normal draft depth | His famous breakout preseason game was August 2010 (his rookie year), not 2011 -- he then missed his entire 2010 season with a hamstring injury, so he entered the 2011 preseason with zero NFL production and a year-old, mostly-forgotten highlight. Real-world context supports minimal 2011 preseason relevance. | Absence from FFC's 2011 archive corroborated two independent ways: the repo's own `ffc_adp_2011_ppr.json` (188 players, matching FFC's live-site metadata exactly -- 600 drafts, 2011-09-06 to 2011-09-09) and a direct live WebFetch of `fantasyfootballcalculator.com/adp/ppr/12-team/all/2011`, which also does not show him. |
+| Victor Cruz 2011 | Likely genuinely undrafted / outside normal draft depth | His famous breakout preseason game was August 2010 (his rookie year), not 2011 -- he then missed his entire 2010 season with a hamstring injury, so he entered the 2011 preseason with zero NFL production and a year-old, mostly-forgotten highlight. Real-world context supports minimal 2011 preseason relevance. | This historical audit used the repo's `ffc_adp_2011_ppr.json` (188 players, 600 drafts, Sept. 6-9) plus a live FFC page. That JSON is now timing sensitivity only; it is not the canonical 2011 source. |
 | Justin Herbert 2020 | Likely genuinely undrafted / outside normal draft depth | Real backup to Tyrod Taylor entering 2020 (not his own team's starter); no 2020 ADP found anywhere searched (only 2021 data exists, ADP 32.42/QB4, confirming 2020 fantasy irrelevance rather than a data gap). | Absent from FFC's 203-player 2020 canonical file; no external source of any kind found. |
 | Puka Nacua 2023 | Likely genuinely undrafted / outside normal draft depth | 5th-round NFL pick (177th overall), unremarkable college production ("barely topping 800 receiving yards in his best season"), explicitly characterized as an "unheralded rookie" in dedicated post-hoc breakout-rookie coverage. | Absent from FFC's 202-player 2023 canonical file; no external ADP source of any kind found. |
 

@@ -30,6 +30,7 @@ Writes:
   - dataset2_canonical_outcome_table_data_dictionary.csv
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -39,6 +40,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from lib.player_season_authority import resolved_canonical_position_population
 from lib.dataset2.canonical_outcome_table import OUTCOME_OUTPUT_COLUMNS, build_canonical_outcome_table
 from lib.stars_by_value import production as prod
+from config import DATASET2_BUST_REFERENCE_PATH
 
 MASTER_POPULATION_PATH = "data/master/master_historical_db_with_lwi_2006_2025.csv"
 SBV_EXPORT_PATH = "data/exports/stars_by_value_player_seasons.csv"
@@ -49,11 +51,13 @@ OUTPUT_DIR = Path("data/exports")
 PARQUET_PATH = OUTPUT_DIR / "dataset2_canonical_outcome_table.parquet"
 CSV_PATH = OUTPUT_DIR / "dataset2_canonical_outcome_table.csv"
 DICTIONARY_PATH = OUTPUT_DIR / "dataset2_canonical_outcome_table_data_dictionary.csv"
+BUST_REFERENCE_PATH = Path(DATASET2_BUST_REFERENCE_PATH)
 
 _COLUMN_REGISTRY = [
     {"canonical_column": "outcome_season", "meaning": "The real season the outcome describes (never a lagged/prediction season -- this artifact is outcomes only).", "implementation_status": "implemented", "usable_as_target": False},
     {"canonical_column": "player_id", "meaning": "gsis_id, matches the predictor table's own player_id.", "implementation_status": "implemented", "usable_as_target": False},
     {"canonical_column": "position", "meaning": "From the master population.", "implementation_status": "implemented", "usable_as_target": False},
+    {"canonical_column": "lwi_score", "meaning": "Canonical continuous LWI score. Primary Dataset 2 outcome; standardization occurs in analysis and raw-scale effects remain reported.", "implementation_status": "implemented", "usable_as_target": True},
     {"canonical_column": "real_status", "meaning": "The granular real SBV status, or 'no_sbv_row_found' -- never an aggregated category.", "implementation_status": "implemented", "usable_as_target": False},
     {"canonical_column": "has_real_market_adp", "meaning": "True iff a real fantasy market ADP exists (overall_adp non-null).", "implementation_status": "implemented", "usable_as_target": False},
     {"canonical_column": "adp_round", "meaning": "ceil(overall_adp / TEAMS), via lib.stars_by_value.expected_production.adp_round() -- null if no real ADP.", "implementation_status": "implemented", "usable_as_target": False},
@@ -131,15 +135,23 @@ def main():
     print(f"  P computed for {len(production_df)} real rows (excludes {len(master_population) - len(production_df)} real zero-game rows with null ppg_ppr)")
 
     print("\nBuilding canonical outcome table...")
-    outcome_table = build_canonical_outcome_table(master_population, sbv_status, players_df, ep_lookup, production_df)
+    outcome_table, bust_reference = build_canonical_outcome_table(
+        master_population, sbv_status, players_df, ep_lookup, production_df,
+        return_bust_reference=True,
+    )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     outcome_table.to_parquet(PARQUET_PATH, index=False, engine="fastparquet")
     outcome_table.to_csv(CSV_PATH, index=False)
     pd.DataFrame(_COLUMN_REGISTRY).to_csv(DICTIONARY_PATH, index=False)
+    BUST_REFERENCE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    BUST_REFERENCE_PATH.write_text(json.dumps(bust_reference, sort_keys=True, indent=2) + "\n")
 
     # --- Determinism check ---
-    outcome_table_2 = build_canonical_outcome_table(master_population, sbv_status, players_df, ep_lookup, production_df)
+    outcome_table_2 = build_canonical_outcome_table(
+        master_population, sbv_status, players_df, ep_lookup, production_df,
+        bust_reference=bust_reference,
+    )
     deterministic = (
         outcome_table.to_csv(index=False) == outcome_table_2.to_csv(index=False)
         and list(outcome_table.columns) == list(outcome_table_2.columns)

@@ -71,10 +71,15 @@ FINAL_COLUMNS = [
     "games_played", "fantasy_points_ppr", "ppg_ppr",
     "overall_finish_ppr", "position_finish_ppr",
     "overall_adp", "positional_adp", "adp_source", "adp_rank",
+    "draft_selection_count", "draft_selection_denominator", "draft_selection_rate",
+    "mfl_reconstruction_identity",
     "data_quality_flag",
     "overall_adp_observed", "positional_adp_observed",
     "overall_adp_model", "positional_adp_model",
-    "adp_status", "verification_status",
+    "adp_status", "verification_status", "preseason_market_status",
+    "preseason_market_status_sensitivity_30",
+    "preseason_market_status_authority", "preseason_market_status_evidence_source",
+    "preseason_market_status_evidence_summary",
     "adp_proxy_used", "adp_proxy_reason",
 ]
 
@@ -85,6 +90,20 @@ def flag_row(r):
     if r.get("match_type") in ("fuzzy_low_confidence", "exact_name_position_mismatch"):
         return "matched_needs_review"
     return "matched_clean"
+
+
+def build_adp_slim(matched_clean: pd.DataFrame) -> pd.DataFrame:
+    """Retain governed acquisition provenance through the master join."""
+    columns = [
+        "season", "nflverse_player_id", "overall_adp", "adp_rank", "positional_adp",
+        "source", "position", "team", "match_type", "match_confidence",
+        "draft_selection_count", "draft_selection_denominator", "draft_selection_rate",
+        "mfl_reconstruction_identity",
+    ]
+    return matched_clean.reindex(columns=columns).rename(columns={
+        "nflverse_player_id": "player_id", "source": "adp_source",
+        "position": "adp_source_position", "team": "adp_source_team_raw",
+    })
 
 
 def load_adp_verification():
@@ -284,13 +303,7 @@ def build_master_dataset():
         ~matched.apply(lambda r: (r["season"], r["nflverse_player_id"]) in collision_keys, axis=1)
     ]
 
-    adp_slim = (
-        matched_clean
-        [["season", "nflverse_player_id", "overall_adp", "adp_rank",
-          "positional_adp", "source", "position", "team", "match_type", "match_confidence"]]
-        .rename(columns={"nflverse_player_id": "player_id", "source": "adp_source",
-                         "position": "adp_source_position", "team": "adp_source_team_raw"})
-    )
+    adp_slim = build_adp_slim(matched_clean)
 
     print("Step 4: Joining results (base population) with matched ADP...")
     master = results.merge(adp_slim, on=["season", "player_id"], how="left")
@@ -312,6 +325,11 @@ def build_master_dataset():
     print("Step 4b: Applying ADP status classification and undrafted-player proxy...")
     verification_df = load_adp_verification()
     master = apply_adp_status_and_proxy(master, verification_df)
+    from lib.preseason_market_status import apply_preseason_market_status, load_market_status_overrides
+    master = apply_preseason_market_status(
+        master,
+        load_market_status_overrides("data/manual/preseason_market_status_overrides.csv"),
+    )
 
     missing_cols = [c for c in FINAL_COLUMNS if c not in master.columns]
     if missing_cols:

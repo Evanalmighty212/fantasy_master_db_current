@@ -55,9 +55,7 @@ Two deliberate asymmetries, not oversights:
     MMC" rule.
 
 2010 (MFL structurally unavailable -- never attempted, not "unmatched"):
-  - Named exception: Mike Vick (VICK_2010_GSIS_ID) -> drafted_missing,
-    evidence_drafted_unresolved, regardless of classifier bucket.
-  - Valid override, override_type=minimal_market_cost -> MMC,
+  - Valid governed override, override_type=minimal_market_cost -> MMC,
     mmc_verified_2010_manual_override.
   - Valid override, override_type=usable_adp -> NOT an
     acquisition-cost resolution; returns adp_overall/adp_round, row
@@ -135,25 +133,9 @@ PROVENANCE_MMC_2010_OVERRIDE = "mmc_verified_2010_manual_override"
 PROVENANCE_DRAFTED_UNRESOLVED = "evidence_drafted_unresolved"
 PROVENANCE_AMBIGUOUS_DISAGREEMENT = "evidence_ambiguous_disagreement"
 
-# --- Named historical exception (2010 cohort) -----------------------------
+# Stable identity retained for regression fixtures; routing is governed by
+# the general evidence table, not by a player-specific code branch.
 VICK_2010_GSIS_ID = "00-0020245"
-VICK_2010_EXCEPTION_NOTE = (
-    "Mike Vick, 2010: NFL.com's 'Fantasy draft do-over' piece quotes his real, "
-    "contemporaneous 2010 draft position directly ('Michael Vick, QB, Philadelphia "
-    "Eagles (2010 ADP: 14th round)') -- a real number in a named source, but with no "
-    "snapshot date, scoring format, or league size given, and absent from FFC's "
-    "214-player 2010 canonical file -- does not meet this project's override-quality "
-    "bar (docs/ADP_SOURCE_MATRIX.md, 'No-ADP remediation' part 2). The automated "
-    "classifier lands this row in 'ambiguous' (his last real production before 2010 "
-    "was 2006 -- he missed 2007-2009 entirely -- four years outside even an extended "
-    "lookback), which the settled record explicitly declines to patch further "
-    "('6 examples is too small a set to keep tuning rules against without "
-    "overfitting', part 3). This narrow, named exception is the documented "
-    "alternative: a real, citable source confirms drafted status even though it "
-    "can't supply a usable number. If additional cases of this type are found, "
-    "replace this one-off with a generalized, structured mechanism -- do not "
-    "broaden the 2010 override schema preemptively for a single case."
-)
 
 # --- Routing table: 2011+ -------------------------------------------------
 _ROUTING_2011_PLUS = {
@@ -377,18 +359,10 @@ def route_2011_plus(classifier_bucket: str, mfl_result: str):
 def route_2010(gsis_id: str, overrides_2010_df: pd.DataFrame) -> dict:
     """Returns {"status", "provenance", "adp_overall", "adp_round"}.
     classifier_bucket does NOT drive this decision (see module
-    docstring) except through the named Vick exception -- per the
+    docstring) -- per the
     settled "classifier output alone is never sufficient... for any
     season," which for 2010 is a blanket policy, not merely a
     per-row fallback."""
-    if gsis_id == VICK_2010_GSIS_ID:
-        return {
-            "status": STATUS_DRAFTED_MISSING,
-            "provenance": PROVENANCE_DRAFTED_UNRESOLVED,
-            "adp_overall": None,
-            "adp_round": None,
-        }
-
     override_rows = overrides_2010_df[
         (overrides_2010_df["season"].astype(str) == "2010") & (overrides_2010_df["player_id"] == gsis_id)
     ]
@@ -439,8 +413,8 @@ def classify_row(
     gate-clearing row. Returns a dict: season, player_id,
     classifier_bucket, mfl_result, status, provenance, adp_overall,
     adp_round. For 2010 rows, classifier_bucket is still computed and
-    returned (audit trail) but does not drive status/provenance except
-    via the Vick exception -- see route_2010().
+    returned (audit trail) but does not drive status/provenance; the
+    governed 2010 evidence table controls any resolution.
 
     team/schedule_df: required ONLY for season==2025 rows whose
     classifier_bucket reaches the rookie-QB depth-chart correction

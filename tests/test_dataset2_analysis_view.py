@@ -84,7 +84,7 @@ def _outcome(*rows):
     cols = (
         "outcome_season", "player_id", "position", "canonical_position_status",
         "canonical_position_authority", "historical_input_revision",
-        "real_status", "has_real_market_adp", "adp_round",
+        "lwi_score", "real_status", "has_real_market_adp", "adp_round",
         "star_outcome_eligible", "star_outcome_ineligibility_reason", "star_by_value_label",
         "sbv_score_available", "star_by_value_score",
         "bust_primary_eligible", "bust_primary_ineligibility_reason", "bust_primary_assignment_method",
@@ -108,6 +108,7 @@ def _outcome(*rows):
                 "canonical_position_status": "adp_source",
                 "canonical_position_authority": "adp_source_position",
                 "historical_input_revision": "test-revision",
+                "lwi_score": 12.5,
                 "has_real_market_adp": True, "adp_round": 5,
                 "star_outcome_eligible": star_elig, "star_outcome_ineligibility_reason": None if star_elig else "x",
                 "star_by_value_label": star_lbl,
@@ -167,7 +168,8 @@ class TestOutcomeHandlingForUnmatchedRows:
         row = view.iloc[0]
         for target in targets:
             assert pd.isna(row[target["target_column"]]), f"{target['target_column']} should be null, not False"
-            assert pd.isna(row[target["eligibility_column"]]), f"{target['eligibility_column']} should be null"
+            if target["eligibility_column"] is not None:
+                assert pd.isna(row[target["eligibility_column"]]), f"{target['eligibility_column']} should be null"
 
     def test_unmatched_boolean_columns_are_real_na_not_false(self):
         predictor = _predictor((2026, "FUTURE", "RB", 1.0))
@@ -233,12 +235,13 @@ class TestPredictorWhitelistAndTargetRegistry:
         outcome_only_cols = set(view.columns) - {"prediction_season", "player_id", "position", "observation_season", "fam1_trait"}
         assert set(whitelist).isdisjoint(outcome_only_cols)
 
-    def test_target_registry_matches_the_six_approved_targets(self):
+    def test_target_registry_matches_governed_primary_and_nonprimary_targets(self):
         predictor = _predictor((2015, "P1", "RB", 1.0))
         outcome = _outcome((2015, "P1", "RB", "adp_scored", True, True, True, True, True, True, True, False, True, 5.0))
         _, _, targets, _ = build_dataset2_analysis_view(predictor, _predictor_registry(), outcome)
         target_cols = {t["target_column"] for t in targets}
         assert target_cols == {
+            "lwi_score",
             "star_by_value_label",
             "bust_primary_label",
             "bust_primary_sensitivity_pct25_label",
@@ -246,6 +249,8 @@ class TestPredictorWhitelistAndTargetRegistry:
             "bust_strict_below_replacement_label",
             "underperformance_diagnostic_value",
         }
+        primary = {t["target_column"] for t in targets if t["analysis_role"] == "primary"}
+        assert primary == {"lwi_score", "star_by_value_label", "bust_strict_below_replacement_label"}
         assert "bust_historical_sensitivity_label" not in target_cols
         assert all(t["usable_as_target"] for t in targets)
 

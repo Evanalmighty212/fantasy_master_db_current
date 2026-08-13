@@ -625,26 +625,22 @@ class TestNamedCaseRegression:
         assert result["star_by_value_label"] == 1
 
     def test_vick_2010(self):
-        """Must resolve to unscoreable_drafted_adp_missing with
-        label=NULL -- explicitly NOT label=0, and NOT scored via MMC,
-        regardless of how high P is set."""
+        """Uses governed categorical minimal-market evidence without
+        inventing a numeric ADP."""
         players = self._players(ac.VICK_2010_GSIS_ID, "QB", 2001, 1, 2001)
         history = self._history(
             {"season": 2007, "player_id": ac.VICK_2010_GSIS_ID, "games_played": 0, "fantasy_points_ppr": 0.0},
             {"season": 2008, "player_id": ac.VICK_2010_GSIS_ID, "games_played": 0, "fantasy_points_ppr": 0.0},
             {"season": 2009, "player_id": ac.VICK_2010_GSIS_ID, "games_played": 0, "fantasy_points_ppr": 0.0},
         )
-        overrides = pd.DataFrame(columns=["season", "player_id", "override_type", "adp_overall", "adp_round"])
+        overrides = pd.DataFrame([{"season": 2010, "player_id": ac.VICK_2010_GSIS_ID, "override_type": "minimal_market_cost", "adp_overall": None, "adp_round": None}])
         row = _row(season=2010, position="QB", player_id=ac.VICK_2010_GSIS_ID, data_quality_flag="no_adp_match", P=400.0)
 
         result = labeling.assign_sbv_status(
             row, self._empty_lookup(), players_df=players, history_df=history, overrides_2010_df=overrides,
         )
-        assert result["star_by_value_status"] == labeling.STATUS_DRAFTED_MISSING
-        assert result["star_by_value_provenance_type"] == ac.PROVENANCE_DRAFTED_UNRESOLVED
-        assert result["star_by_value_score"] is None
-        assert result["star_by_value_label"] is None
-        assert result["star_by_value_label"] != 0
+        assert result["star_by_value_status"] == labeling.STATUS_MMC_SCORED
+        assert result["star_by_value_provenance_type"] == ac.PROVENANCE_MMC_2010_OVERRIDE
 
 
 class TestAuditPayloadBuiltDuringSameEvaluation:
@@ -724,23 +720,23 @@ class TestAuditPayloadBuiltDuringSameEvaluation:
         assert payload["evidence_type"] == "mmc_2010_manual_override"
         assert "mmc_2010_manual_overrides.csv" in payload["source_reference"]
 
-    def test_vick_2010_exception_gets_an_audit_payload(self):
+    def test_vick_2010_governed_override_gets_an_audit_payload(self):
         players = pd.DataFrame([{
             "gsis_id": ac.VICK_2010_GSIS_ID, "position": "QB", "draft_year": 2001, "draft_round": 1,
             "draft_pick": 1, "rookie_season": 2001,
         }], columns=["gsis_id", "position", "draft_year", "draft_round", "draft_pick", "rookie_season"])
         history = pd.DataFrame(columns=["season", "player_id", "games_played", "fantasy_points_ppr"])
-        overrides = pd.DataFrame(columns=["season", "player_id", "override_type", "adp_overall", "adp_round"])
+        overrides = pd.DataFrame([{"season": 2010, "player_id": ac.VICK_2010_GSIS_ID, "override_type": "minimal_market_cost", "adp_overall": None, "adp_round": None}])
         row = _row(season=2010, position="QB", player_id=ac.VICK_2010_GSIS_ID, data_quality_flag="no_adp_match", P=400.0)
 
         result = labeling.assign_sbv_status(
             row, self._empty_lookup(), players_df=players, history_df=history, overrides_2010_df=overrides,
         )
-        assert result["star_by_value_status"] == labeling.STATUS_DRAFTED_MISSING
+        assert result["star_by_value_status"] == labeling.STATUS_MMC_SCORED
         payload = result["_audit_payload"]
         assert payload is not None
-        assert payload["evidence_type"] == "drafted_but_adp_unresolved"
-        assert "Vick" in payload["evidence_summary"]
+        assert payload["evidence_type"] == "mmc_2010_manual_override"
+        assert "mmc_2010_manual_overrides.csv" in payload["source_reference"]
 
     def test_ambiguous_2011_plus_gets_an_audit_payload(self):
         players = pd.DataFrame(columns=["gsis_id", "position", "draft_year", "draft_round", "draft_pick", "rookie_season"])

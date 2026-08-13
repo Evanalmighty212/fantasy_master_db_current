@@ -807,15 +807,49 @@ def validate_sbv_config():
 # =====================================================================
 # --- Dataset 2 (League Winner Traits) parameters ---
 # =====================================================================
-# Era boundaries used to stratify Dataset 2 trait analysis so a trait
-# isn't credited merely for correlating with a specific historical
-# period. INITIAL DEFAULTS, not finalized -- reused directly from
-# docs/LEAGUE_WINNER_TRAITS_SPEC.md's "Controlling for era and position
-# effects" section (pre-2011 / 2011-2020 / 2021+, roughly matching
-# known real NFL rule-change eras); that doc's own "Open decisions"
-# list already flags the exact boundaries as still open.
+# [SETTLED METHODOLOGY] Era boundaries used by Dataset 2. During the
+# 2006-2020 discovery fit, the analysis control is pre-2011 versus
+# 2011+. The second boundary is retained for descriptive/application
+# metadata only: 2021-2025 is protected holdout and must never be used
+# to fit an era coefficient.
 # Format: (first_boundary_season, second_boundary_season).
 DATASET2_ERA_BOUNDARIES = (2011, 2021)
+
+# [SETTLED METHODOLOGY] Dataset 2 temporal and inference lock.
+DATASET2_DISCOVERY_START_SEASON = 2006
+DATASET2_DISCOVERY_END_SEASON = 2020
+DATASET2_HOLDOUT_START_SEASON = 2021
+DATASET2_HOLDOUT_END_SEASON = 2025
+DATASET2_MIN_ELIGIBLE_SEASONS_BEFORE_VALIDATION = 5
+DATASET2_PHASE1_RANDOM_SEED = 20260808
+DATASET2_FIRTH_BOOTSTRAP_REPLICATES = 2000
+DATASET2_FIRTH_BOOTSTRAP_MIN_SUCCESS_RATE = 0.99
+DATASET2_PHASE1_BH_Q = 0.10
+DATASET2_LWI_MIN_ABS_STANDARDIZED_BETA = 0.10
+
+# [SETTLED METHODOLOGY] Bust-reference calibration is discovery-only;
+# the fitted reference is frozen before application to protected rows.
+DATASET2_BUST_REFERENCE_VERSION = "dataset2_bust_reference_discovery_2010_2020_v1"
+DATASET2_BUST_REFERENCE_START_SEASON = 2010
+DATASET2_BUST_REFERENCE_END_SEASON = 2020
+DATASET2_BUST_REFERENCE_PATH = "data/processed/dataset2_bust_reference.json"
+
+
+def validate_dataset2_phase1_config():
+    """Fail loudly if the frozen pre-Phase-1 temporal/inference lock drifts."""
+    errors = []
+    if not (DATASET2_DISCOVERY_START_SEASON <= DATASET2_BUST_REFERENCE_START_SEASON <= DATASET2_BUST_REFERENCE_END_SEASON <= DATASET2_DISCOVERY_END_SEASON):
+        errors.append("bust-reference fit must be contained in Dataset 2 discovery seasons")
+    if DATASET2_HOLDOUT_START_SEASON != DATASET2_DISCOVERY_END_SEASON + 1:
+        errors.append("Dataset 2 discovery and holdout windows must be contiguous")
+    if DATASET2_FIRTH_BOOTSTRAP_REPLICATES != 2000:
+        errors.append("Dataset 2 Firth bootstrap replicate count must remain 2000")
+    if not 0 < DATASET2_FIRTH_BOOTSTRAP_MIN_SUCCESS_RATE <= 1:
+        errors.append("Dataset 2 bootstrap minimum success rate must be in (0, 1]")
+    if DATASET2_PHASE1_RANDOM_SEED != 20260808:
+        errors.append("Dataset 2 Phase 1 seed must remain 20260808")
+    if errors:
+        raise ValueError("Invalid Dataset 2 Phase 1 configuration:\n  - " + "\n  - ".join(errors))
 
 # ADP-round buckets for Dataset 2 stratified analysis, first used
 # descriptively in research/dataset2/DATASET2_TRAIT_ROADMAP.md §3j's
@@ -832,8 +866,7 @@ DATASET2_ADP_ROUND_BUCKETS = (
 # Below this many rows, a stratified analysis cell's rate is still
 # reported (never dropped) but flagged confidence_flag="small_sample"
 # per the roadmap's §4.6 "minimum result outputs" confidence taxonomy.
-# An initial, exploratory default -- not yet empirically validated
-# against how noisy small Dataset 2 cells actually turn out to be.
+# Frozen for the pilot as the minimum discovery-reference cell size.
 DATASET2_ANALYSIS_MIN_CELL_SAMPLE_SIZE = 10
 
 # Family #9 (partial-season production splits) minimum-ACTIVE-GAMES
@@ -1136,7 +1169,7 @@ def validate_dataset2_predictor_clustering_config():
         )
 
 
-# --- 2025 MFL ADP: canonical raw value + QB/TE sensitivity-ordering field ---
+# --- 2025 governed MFL reconstruction + sensitivity-ordering field ---
 # NOT under the SBV_* prefix: this feeds the whole master DB (both
 # LWI's overall_adp_model and SBV's expected-production fitting), not
 # an SBV-only adjustment -- see the project-wide-integration decision
@@ -1154,8 +1187,9 @@ def validate_dataset2_predictor_clustering_config():
 # defensible conversion exists; walk-forward validation across
 # 2014-2024 showed the naive "rank IS the ADP" baseline beats every
 # tested historical curve on every metric -- no conversion clears the
-# bar. Per the pre-committed fallback rule: raw MFL AUG15 mean_adp is
-# the canonical overall_adp for ALL FOUR positions (QB/RB/WR/TE alike)
+# bar. Under the approved 2026-08 source policy, the governed strict
+# 147-league reconstruction's raw conditional mean pick is the
+# canonical overall_adp for ALL FOUR positions (QB/RB/WR/TE alike)
 # -- it preserves genuine mean-pick units and historical comparability,
 # even though the QB/TE source bias documented below remains
 # uncorrected in the number actually consumed downstream. Method B's
@@ -1181,7 +1215,10 @@ MFL_2025_CORRECTION_CALIBRATION_PATH = "data/manual/mfl_2025_qb_te_adp_correctio
 # QB/TE bias is a separate, documented fact (see above), never baked
 # into the source label itself and never conflated with
 # FFC/FFToday/FantasyPros' existing adp_source values.
-MFL_2025_ADP_SOURCE = "mfl_aug15_2025"
+MFL_2025_ADP_SOURCE = "mfl_strict_147_pre_kickoff_2025"
+MFL_2025_GOVERNED_LEAGUE_COUNT = 147
+MFL_2025_ORDINARY_MARKET_PARTICIPATION = 0.35
+MFL_2025_PARTICIPATION_SENSITIVITY = 0.30
 # Field name deliberately says RANK, not ADP -- see module docstring
 # in scripts/mfl_2025_adp_correction.py. Populated only for QB/TE;
 # NULL for RB/WR. Never read by any scoring/eligibility consumer --
@@ -1213,6 +1250,12 @@ def validate_mfl_2025_correction_config():
         errors.append("MFL_2025_CORRECTION_CALIBRATION_PATH must end in .csv")
     if not MFL_2025_ADP_SOURCE or not isinstance(MFL_2025_ADP_SOURCE, str):
         errors.append("MFL_2025_ADP_SOURCE must be a non-empty string")
+    if MFL_2025_GOVERNED_LEAGUE_COUNT != 147:
+        errors.append("MFL_2025_GOVERNED_LEAGUE_COUNT must remain the approved 147-league denominator")
+    if not 0 < MFL_2025_PARTICIPATION_SENSITIVITY < MFL_2025_ORDINARY_MARKET_PARTICIPATION <= 1:
+        errors.append(
+            "MFL participation thresholds must satisfy 0 < sensitivity < primary <= 1"
+        )
     if not MFL_2025_SENSITIVITY_RANK_FIELD or "adp" in MFL_2025_SENSITIVITY_RANK_FIELD.lower():
         errors.append(
             "MFL_2025_SENSITIVITY_RANK_FIELD must be a non-empty string and must NOT "

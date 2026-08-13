@@ -1,0 +1,42 @@
+{
+  "manifest_version": 1,
+  "sources": {
+    "fftoday_ffc_2011_pre_kickoff": {
+      "status": "newly_preserved_copy_byte_identical_to_previously_audited_snapshot",
+      "private_archive_relative_path": "fftoday/2011-09-06/fftoday_ffc_2011_12team_ppr_2011-09-04_05.html",
+      "source_url": "https://www.fftoday.com/rankings/11_adp_12_ppr.html",
+      "sha256": "dd26ad40eecab0e3882b4cb9dce3521e7da2c41431ed77db1c3e58f9158d58f0",
+      "byte_count": 61275,
+      "page_date": "2011-09-06",
+      "draft_window": "2011-09-04/2011-09-05",
+      "draft_count": 374,
+      "format": "12-team PPR",
+      "role": "canonical_2011_acquisition_source",
+      "timing_sensitivity": {
+        "path": "data/raw/adp/ffc_adp_2011_ppr.json",
+        "role": "timing_sensitivity_only_not_canonical",
+        "draft_window": "2011-09-06/2011-09-09",
+        "draft_count": 600,
+        "sha256": "0619b681891046d3261f00eb280404ce249e75c7cd777eb271ae572dd4b58a6e",
+        "byte_count": 49752
+      },
+      "provenance_limit": "Private controlled-access copy; public redistribution is not asserted."
+    },
+    "mfl_2025_strict_147_cache_reconstruction": {
+      "status": "newly_reproduced_offline_reconstruction_from_parsed_reserialized_audit_cache_snapshots",
+      "private_archive_relative_path": "mfl/candidate_cache_reconstruction_2026-08-09",
+      "discovered_league_count": 586,
+      "included_league_count": 147,
+      "window_start_inclusive_utc": "2025-08-15T00:00:00Z",
+      "window_end_exclusive_utc": "2025-09-05T00:20:00Z",
+      "ordinary_market_participation_threshold": 0.35,
+      "principal_sensitivity_participation_threshold": 0.30,
+      "included_league_ids_sha256": "e2bfb78d673e93f74ad0a7f3f7b13c55409ec5cd4a83b6527d42572ec2a58431",
+      "league_inclusion_ledger_sha256": "c2975f907b50fe038633bf918c1273081b665295ca579389aaefe71a4cdb6bbb",
+      "reconstruction_manifest_sha256": "0839d11f27d0f19961b09501570446a371e0f3abf71ac90654b0f66efac60883",
+      "reconstruction_script_sha256": "2a6ea7fd6ab4dcf7ef9bd65ccf8e300fd1351a2aa5fb3e693ddc4633c66fbd14",
+      "role": "canonical_2025_acquisition_source_after_governed_implementation",
+      "provenance_limit": "Not original HTTP wire bytes, not an original preserved package, and not independently verified against a separately preserved prior 147-ID list."
+    }
+  }
+}

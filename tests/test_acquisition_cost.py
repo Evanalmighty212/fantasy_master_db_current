@@ -398,10 +398,12 @@ class TestRouting2010:
         cols = ["season", "player_id", "override_type", "adp_overall", "adp_round"]
         return pd.DataFrame(list(rows), columns=cols)
 
-    def test_vick_exception_fires_regardless_of_override_absence(self):
-        result = ac.route_2010(ac.VICK_2010_GSIS_ID, self._overrides())
-        assert result["status"] == ac.STATUS_DRAFTED_MISSING
-        assert result["provenance"] == ac.PROVENANCE_DRAFTED_UNRESOLVED
+    def test_vick_uses_general_minimal_market_override_without_numeric_adp(self):
+        overrides = self._overrides({"season": "2010", "player_id": ac.VICK_2010_GSIS_ID, "override_type": "minimal_market_cost", "adp_overall": None, "adp_round": None})
+        result = ac.route_2010(ac.VICK_2010_GSIS_ID, overrides)
+        assert result["status"] == ac.STATUS_MMC
+        assert result["provenance"] == ac.PROVENANCE_MMC_2010_OVERRIDE
+        assert result["adp_overall"] is None
 
     def test_minimal_market_cost_override_resolves_to_mmc(self):
         overrides = self._overrides({"season": "2010", "player_id": "00-other", "override_type": "minimal_market_cost", "adp_overall": None, "adp_round": None})
@@ -532,27 +534,24 @@ class TestNamedRegressionCases:
         assert result["provenance"] == ac.PROVENANCE_MMC_CORROBORATED
 
     def test_vick_2010(self):
-        """Must resolve to drafted-cost-existed-but-missing, NOT
-        minimal-market-cost -- per explicit correction. The classifier
-        itself lands him in ambiguous (documented: 2007-2009 production
-        gap from incarceration), but the named exception overrides
-        that for the FINAL resolution regardless."""
+        """Governed evidence resolves categorical minimal market cost;
+        it never fabricates numeric ADP."""
         players = _players_df({"gsis_id": ac.VICK_2010_GSIS_ID, "position": "QB", "draft_year": 2001, "draft_round": 1, "draft_pick": 1, "rookie_season": 2001})
         history = _history_df(
             {"season": 2007, "player_id": ac.VICK_2010_GSIS_ID, "games_played": 0, "fantasy_points_ppr": 0.0},
             {"season": 2008, "player_id": ac.VICK_2010_GSIS_ID, "games_played": 0, "fantasy_points_ppr": 0.0},
             {"season": 2009, "player_id": ac.VICK_2010_GSIS_ID, "games_played": 0, "fantasy_points_ppr": 0.0},
         )
-        overrides = pd.DataFrame(columns=["season", "player_id", "override_type", "adp_overall", "adp_round"])
+        overrides = pd.DataFrame([{"season": 2010, "player_id": ac.VICK_2010_GSIS_ID, "override_type": "minimal_market_cost", "adp_overall": None, "adp_round": None}])
 
         result = ac.classify_row(
             2010, ac.VICK_2010_GSIS_ID, "Michael Vick", "QB", players, history,
             overrides_2010_df=overrides,
         )
         assert result["classifier_bucket"] == ac.BUCKET_AMBIGUOUS  # audit trail only -- does not drive the outcome
-        assert result["status"] == ac.STATUS_DRAFTED_MISSING
-        assert result["provenance"] == ac.PROVENANCE_DRAFTED_UNRESOLVED
-        assert result["status"] != ac.STATUS_MMC
+        assert result["status"] == ac.STATUS_MMC
+        assert result["provenance"] == ac.PROVENANCE_MMC_2010_OVERRIDE
+        assert result["adp_overall"] is None
 
 
 class TestClassifyRowValidation:

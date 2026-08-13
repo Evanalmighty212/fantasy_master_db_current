@@ -54,6 +54,8 @@ CANONICAL_COLUMNS = [
     "player_name_original", "player_name_normalized",
     "position", "team", "overall_adp", "adp_rank",
     "times_drafted", "source_quality_flag",
+    "draft_selection_count", "draft_selection_denominator",
+    "draft_selection_rate", "mfl_reconstruction_identity",
 ]
 
 # Contamination check: a real single-season preseason snapshot is a

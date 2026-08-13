@@ -221,12 +221,13 @@ from config import (
     HISTORICAL_INPUT_REVISION,
 )
 from lib.dataset2.common import validate_columns
+from lib.dataset2.bust_reference import apply_bust_reference, fit_bust_reference
 from lib.stars_by_value import expected_production as ep
 from lib.stars_by_value import minimal_market_cost as mmc
 
 MASTER_POPULATION_REQUIRED_COLUMNS = (
     "season", "player_id", "position", "canonical_position_status",
-    "canonical_position_authority", "overall_adp", "games_played",
+    "canonical_position_authority", "overall_adp", "games_played", "lwi_score",
 )
 SBV_STATUS_REQUIRED_COLUMNS = ("season", "player_id", "star_by_value_status", "star_by_value_score", "star_by_value_label")
 PLAYERS_REQUIRED_COLUMNS = ("gsis_id", "draft_round")
@@ -254,6 +255,7 @@ OUTCOME_OUTPUT_COLUMNS = (
     "canonical_position_status",
     "canonical_position_authority",
     "historical_input_revision",
+    "lwi_score",
     "real_status",
     "has_real_market_adp",
     "adp_round",
@@ -331,8 +333,8 @@ def _bust_reason(real_status: str, has_real_adp: bool, is_drafted: bool, pre_201
     raise ValueError(f"Unhandled real_status for bust reason: {real_status!r}")
 
 
-def _assign_bust_primary_labels(out: pd.DataFrame) -> pd.DataFrame:
-    """Implements the approved bust-label formula (proposal doc §23) on
+def _assign_bust_primary_labels(out: pd.DataFrame, bust_reference: dict | None = None) -> pd.DataFrame:
+    """Applies the approved bust-label formula (proposal doc §23) on
     a copy of `out`. Requires `bust_primary_eligible`, `score_like`,
     `P`, `position`, `adp_round`, `outcome_season`, `games_played`
     already present. Adds `bust_primary_assignment_method`,
@@ -340,7 +342,9 @@ def _assign_bust_primary_labels(out: pd.DataFrame) -> pd.DataFrame:
     `bust_primary_sensitivity_pct30_label`, and
     `bust_strict_below_replacement_label`.
 
-    Four assignment methods, in priority order:
+    Empirical distributions and eligible era-cell routing are fitted on
+    2010-2020 only by :mod:`lib.dataset2.bust_reference`; application rows
+    cannot recalibrate them. Four assignment methods, in priority order:
     1. `automatic_zero_game` -- `games_played == 0` within the eligible
        population. `P` is undefined (`production.py` requires non-null
        `ppg_ppr`); labeled True at every threshold by the real,
@@ -368,40 +372,16 @@ def _assign_bust_primary_labels(out: pd.DataFrame) -> pd.DataFrame:
     population by `scripts/build_dataset2_canonical_outcome_table.py`.
     """
     out = out.copy()
-    out["_adp_bucket"] = out["adp_round"].apply(_adp_bucket)
-    out["_era"] = out["outcome_season"].apply(_era_label)
-
+    # If a caller does not provide a previously persisted reference,
+    # fit one from this frame's discovery rows only. Holdout/application
+    # values therefore cannot influence calibration even in a full-range
+    # build. Production drivers may persist and pass this same object.
+    reference = bust_reference if bust_reference is not None else fit_bust_reference(out)
+    assigned = apply_bust_reference(out, reference)
+    pct_final = assigned["bust_reference_percentile"]
+    out["bust_primary_assignment_method"] = assigned["bust_primary_assignment_method"]
     eligible = out["bust_primary_eligible"].astype(bool)
     zero_game = eligible & (out["games_played"] == 0)
-    has_score = eligible & ~zero_game & out["score_like"].notna()
-    lookup_gap = eligible & ~zero_game & ~has_score & out["P"].notna()
-
-    pct_final = pd.Series(pd.NA, index=out.index, dtype="Float64")
-    assignment_method = pd.Series(pd.NA, index=out.index, dtype="object")
-
-    # --- Methods 2/3: era-specific G-score, mechanical fallback to pooled ---
-    sub = out.loc[has_score, ["position", "_adp_bucket", "_era", "score_like"]].copy()
-    sub["_era_cell_n"] = sub.groupby(["position", "_adp_bucket", "_era"])["score_like"].transform("size")
-    sub["_pct_era"] = sub.groupby(["position", "_adp_bucket", "_era"])["score_like"].rank(pct=True, method="average", ascending=True)
-    sub["_pct_pooled"] = sub.groupby(["position", "_adp_bucket"])["score_like"].rank(pct=True, method="average", ascending=True)
-    era_ok = sub["_era_cell_n"] >= DATASET2_ANALYSIS_MIN_CELL_SAMPLE_SIZE
-    pct_final.loc[sub.index] = sub["_pct_era"].where(era_ok, sub["_pct_pooled"])
-    assignment_method.loc[sub.index] = pd.Series(ASSIGNMENT_METHOD_ERA_SPECIFIC, index=sub.index).where(
-        era_ok, ASSIGNMENT_METHOD_POOLED_ERA_FALLBACK
-    )
-
-    # --- Method 4: raw-P fallback for the E_P-lookup coverage gap,
-    # ranked within the SAME real pooled reference population every
-    # eligible real-P row belongs to (not just the gap rows). ---
-    raw_pop = out.loc[eligible & out["P"].notna(), ["position", "_adp_bucket", "P"]].copy()
-    raw_pop["_pct_raw_pooled"] = raw_pop.groupby(["position", "_adp_bucket"])["P"].rank(pct=True, method="average", ascending=True)
-    pct_final.loc[lookup_gap] = raw_pop.loc[lookup_gap, "_pct_raw_pooled"]
-    assignment_method.loc[lookup_gap] = ASSIGNMENT_METHOD_G_RAW_LOOKUP_GAP_FALLBACK
-
-    # --- Method 1: automatic zero-game rule -- bypasses pct_final entirely ---
-    assignment_method.loc[zero_game] = ASSIGNMENT_METHOD_AUTOMATIC_ZERO_GAME
-
-    out["bust_primary_assignment_method"] = assignment_method
 
     def _cutoff_label(cutoff: float) -> pd.Series:
         lbl = pd.Series(pd.NA, index=out.index, dtype="boolean")
@@ -427,7 +407,7 @@ def _assign_bust_primary_labels(out: pd.DataFrame) -> pd.DataFrame:
     strict.loc[zero_game] = True
     out["bust_strict_below_replacement_label"] = strict
 
-    return out.drop(columns=["_adp_bucket", "_era"])
+    return out
 
 
 def build_canonical_outcome_table(
@@ -436,7 +416,9 @@ def build_canonical_outcome_table(
     players_df: pd.DataFrame,
     ep_lookup: pd.DataFrame,
     production_df: pd.DataFrame,
-) -> pd.DataFrame:
+    bust_reference: dict | None = None,
+    return_bust_reference: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
     """
     Builds the canonical outcome table -- one row per (outcome_season,
     player_id), every OUTCOME_OUTPUT_COLUMNS field. `master_population`
@@ -525,7 +507,8 @@ def build_canonical_outcome_table(
         axis=1,
     )
 
-    out = _assign_bust_primary_labels(out)
+    fitted_reference = bust_reference if bust_reference is not None else fit_bust_reference(out)
+    out = _assign_bust_primary_labels(out, bust_reference=fitted_reference)
 
     # Reserved, not computed this round -- historical-sensitivity label
     # values were not in scope this round, only its eligibility. See
@@ -565,4 +548,5 @@ def build_canonical_outcome_table(
 
     out["underperformance_diagnostic_ineligibility_reason"] = out.apply(_diagnostic_reason, axis=1)
 
-    return out[list(OUTCOME_OUTPUT_COLUMNS)].reset_index(drop=True)
+    result = out[list(OUTCOME_OUTPUT_COLUMNS)].reset_index(drop=True)
+    return (result, fitted_reference) if return_bust_reference else result

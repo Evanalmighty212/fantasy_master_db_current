@@ -52,10 +52,11 @@ adds the 4th):
      False (a REAL False, e.g. a below-production-gate Star row).
   4. Outcome eligible, label True.
 
-TARGET SAFETY: `TARGET_REGISTRY` lists exactly the six columns
-approved as usable targets (per
+TARGET SAFETY: `TARGET_REGISTRY` records the three related primary
+outcome families plus their predefined secondary/sensitivity and
+diagnostic measures (per
 research/dataset2/DATASET2_BUST_LABEL_OPERATIONALIZATION_PROPOSAL_2026_07.md):
-`star_by_value_label`, `bust_primary_label`,
+continuous `lwi_score`, `star_by_value_label`, `bust_primary_label`,
 `bust_primary_sensitivity_pct25_label`,
 `bust_primary_sensitivity_pct30_label`,
 `bust_strict_below_replacement_label`, and the continuous
@@ -125,6 +126,7 @@ OUTCOME_JOIN_STATUS_NO_MATCH = "no_outcome_row_matched"
 ROLE_ID = "id"
 ROLE_PREDICTOR = "predictor"
 ROLE_TARGET_LABEL = "target_label"
+ROLE_TARGET_CONTINUOUS = "target_continuous"
 ROLE_TARGET_DIAGNOSTIC = "target_diagnostic"
 ROLE_OUTCOME_ELIGIBILITY = "outcome_eligibility"
 ROLE_OUTCOME_REASON = "outcome_ineligibility_reason"
@@ -132,14 +134,25 @@ ROLE_OUTCOME_ASSIGNMENT_METHOD = "outcome_assignment_method"
 ROLE_OUTCOME_METADATA = "outcome_metadata"
 ROLE_JOIN_STATUS = "join_status"
 
-# The six approved usable targets -- research/dataset2/DATASET2_BUST_LABEL_OPERATIONALIZATION_PROPOSAL_2026_07.md.
+# The approved three-family hierarchy and predefined non-primary measures.
 # bust_historical_sensitivity_label is DELIBERATELY excluded: reserved_not_computed, not usable.
 TARGET_REGISTRY = (
+    {
+        "target_column": "lwi_score",
+        "target_type": "continuous",
+        "eligibility_column": None,
+        "usable_as_target": True,
+        "analysis_role": "primary",
+        "fdr_family": "lwi",
+        "description": "Canonical continuous LWI outcome; standardize within discovery analysis and report raw-scale effects too.",
+    },
     {
         "target_column": "star_by_value_label",
         "target_type": "binary",
         "eligibility_column": "star_outcome_eligible",
         "usable_as_target": True,
+        "analysis_role": "primary",
+        "fdr_family": "star",
         "description": "Star-by-Value outcome label (real False for below-production-gate rows, not a missing value).",
     },
     {
@@ -147,13 +160,17 @@ TARGET_REGISTRY = (
         "target_type": "binary",
         "eligibility_column": "bust_primary_eligible",
         "usable_as_target": True,
-        "description": "Primary bust label -- bottom 20% within (position, ADP bucket, era), G-score ranking with the approved mechanical fallbacks.",
+        "analysis_role": "secondary_contextual",
+        "fdr_family": "bust",
+        "description": "Broad relative-underperformance bottom-20% label; contextual, not the primary bust outcome.",
     },
     {
         "target_column": "bust_primary_sensitivity_pct25_label",
         "target_type": "binary",
         "eligibility_column": "bust_primary_eligible",
         "usable_as_target": True,
+        "analysis_role": "sensitivity",
+        "fdr_family": "bust",
         "description": "Sensitivity: bottom 25%, same ranking pipeline as bust_primary_label -- not the primary target.",
     },
     {
@@ -161,6 +178,8 @@ TARGET_REGISTRY = (
         "target_type": "binary",
         "eligibility_column": "bust_primary_eligible",
         "usable_as_target": True,
+        "analysis_role": "sensitivity",
+        "fdr_family": "bust",
         "description": "Sensitivity: bottom 30%, same ranking pipeline as bust_primary_label -- not the primary target.",
     },
     {
@@ -168,13 +187,17 @@ TARGET_REGISTRY = (
         "target_type": "binary",
         "eligibility_column": "bust_strict_below_replacement_eligible",
         "usable_as_target": True,
-        "description": "bust_primary_label (20%) AND P<0 (real, parameter-free below-replacement floor).",
+        "analysis_role": "primary",
+        "fdr_family": "bust",
+        "description": "Primary strict-bust outcome: discovery-calibrated bottom 20% AND P<0.",
     },
     {
         "target_column": "underperformance_diagnostic_value",
         "target_type": "continuous",
         "eligibility_column": "underperformance_diagnostic_eligible",
         "usable_as_target": True,
+        "analysis_role": "diagnostic",
+        "fdr_family": None,
         "description": "Raw P - E_P, continuous. NOT the same as star_by_value_score (which uses SBV_LAMBDA).",
     },
 )
@@ -184,6 +207,7 @@ TARGET_REGISTRY = (
 # away before this point -- see _OUTCOME_DROP_BEFORE_MERGE /
 # _OUTCOME_RENAME_BEFORE_MERGE).
 _OUTCOME_COLUMN_ROLES = {
+    "lwi_score": ROLE_TARGET_CONTINUOUS,
     "real_status": ROLE_OUTCOME_METADATA,
     "has_real_market_adp": ROLE_OUTCOME_METADATA,
     "adp_round": ROLE_OUTCOME_METADATA,

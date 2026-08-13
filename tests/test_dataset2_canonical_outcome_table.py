@@ -63,7 +63,7 @@ def _master(*rows):
             "season": s, "player_id": p, "position": pos,
             "canonical_position_status": "adp_source",
             "canonical_position_authority": "adp_source_position",
-            "overall_adp": adp, "games_played": gp,
+            "overall_adp": adp, "games_played": gp, "lwi_score": 0.0,
         })
     if not out_rows:
         return pd.DataFrame(columns=cols + ("canonical_position_status", "canonical_position_authority"))
@@ -221,11 +221,11 @@ class TestBustPrimaryAndHistoricalSensitivity:
     def test_ep_out_of_range_bust_eligible_but_diagnostic_ineligible(self):
         # Real ADP resolves to round 9, but the fitted lookup has no
         # cell for (2025, RB, 9) -- real cost known, E_P unavailable.
-        master = _master((2025, "P1", "RB", 100.0))  # adp_round = ceil(100/12) = 9
-        sbv = _sbv((2025, "P1", "unscoreable_expected_production_out_of_range", None, None))
+        master = _master((2020, "P1", "RB", 100.0))  # adp_round = ceil(100/12) = 9
+        sbv = _sbv((2020, "P1", "unscoreable_expected_production_out_of_range", None, None))
         players = _players(("P1", None))
-        ep_lookup = _ep_lookup((2025, "RB", 1, 80.0))  # round 9 not covered
-        production = _production((2025, "P1", 50.0))
+        ep_lookup = _ep_lookup((2020, "RB", 1, 80.0))  # round 9 not covered
+        production = _production((2020, "P1", 50.0))
         out = build_canonical_outcome_table(master, sbv, players, ep_lookup, production)
         row = out.iloc[0]
         assert row["bust_primary_eligible"] == True  # noqa: E712
@@ -239,11 +239,11 @@ class TestBustPrimaryAndHistoricalSensitivity:
         # below_production_gate real-ADP row can ALSO have an
         # out-of-range round -- must not be extrapolated around, same
         # as the ep_out_of_range status.
-        master = _master((2025, "P1", "WR", 200.0))  # adp_round = ceil(200/12) = 17
-        sbv = _sbv((2025, "P1", "below_production_gate", None, 0))
+        master = _master((2020, "P1", "WR", 200.0))  # adp_round = ceil(200/12) = 17
+        sbv = _sbv((2020, "P1", "below_production_gate", None, 0))
         players = _players(("P1", None))
-        ep_lookup = _ep_lookup((2025, "WR", 1, 90.0))  # round 17 not covered
-        production = _production((2025, "P1", 5.0))
+        ep_lookup = _ep_lookup((2020, "WR", 1, 90.0))  # round 17 not covered
+        production = _production((2020, "P1", 5.0))
         out = build_canonical_outcome_table(master, sbv, players, ep_lookup, production)
         row = out.iloc[0]
         assert row["bust_primary_eligible"] == True  # noqa: E712 -- real ADP still grants bust eligibility
@@ -392,18 +392,18 @@ class TestLookupGapFallback:
         # isolates the lookup gap while keeping all three in one real
         # pooled reference population for the G-raw fallback.
         master = _master(
-            (2025, "GAP", "RB", 100.0, 12),   # round 9, no E_P cell
-            (2025, "OK1", "RB", 73.0, 12),    # round 7, has E_P cell
-            (2025, "OK2", "RB", 84.0, 5),     # round 7, has E_P cell, low P -> worst in pool
+            (2020, "GAP", "RB", 100.0, 12),   # round 9, no E_P cell
+            (2020, "OK1", "RB", 73.0, 12),    # round 7, has E_P cell
+            (2020, "OK2", "RB", 84.0, 5),     # round 7, has E_P cell, low P -> worst in pool
         )
         sbv = _sbv(
-            (2025, "GAP", "below_production_gate", None, 0),
-            (2025, "OK1", "adp_scored", 20.0, 1),
-            (2025, "OK2", "below_production_gate", None, 0),
+            (2020, "GAP", "below_production_gate", None, 0),
+            (2020, "OK1", "adp_scored", 20.0, 1),
+            (2020, "OK2", "below_production_gate", None, 0),
         )
         players = _players(("GAP", None), ("OK1", None), ("OK2", None))
-        ep_lookup = _ep_lookup((2025, "RB", 7, 60.0))  # round 9 (GAP's round) NOT covered
-        production = _production((2025, "GAP", 40.0), (2025, "OK1", 90.0), (2025, "OK2", 5.0))
+        ep_lookup = _ep_lookup((2020, "RB", 7, 60.0))  # round 9 (GAP's round) NOT covered
+        production = _production((2020, "GAP", 40.0), (2020, "OK1", 90.0), (2020, "OK2", 5.0))
         out = build_canonical_outcome_table(master, sbv, players, ep_lookup, production)
 
         gap_row = out[out["player_id"] == "GAP"].iloc[0]
