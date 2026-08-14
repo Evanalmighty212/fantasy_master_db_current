@@ -1,6 +1,7 @@
 """Master-schema provenance and canonical-authority regression tests."""
 
 import importlib.util
+import zipfile
 import sys
 from pathlib import Path
 
@@ -51,6 +52,84 @@ def test_master_quality_flag_rejects_unknown_observed_match_literal():
     row = pd.Series({"overall_adp": 42.0, "match_type": "new_unreviewed_match"})
     with pytest.raises(ValueError, match="unknown match_type"):
         mod.flag_row(row)
+
+
+def _xlsx_fixture():
+    return pd.DataFrame({
+        "season": [2024, 2025],
+        "player_id": ["P1", "P2"],
+        "overall_adp": [10.1234567890123, 20.0],
+        "preseason_market_status": ["ordinary_market", "rare_minimal_market"],
+    })
+
+
+def test_validated_xlsx_atomically_replaces_target_and_matches_csv(tmp_path):
+    frame = _xlsx_fixture()
+    csv_path = tmp_path / "master.csv"
+    xlsx_path = tmp_path / "master.xlsx"
+    csv_path.write_text(frame.to_csv(index=False))
+    xlsx_path.write_bytes(b"old workbook")
+
+    mod.write_validated_xlsx(frame, csv_path, xlsx_path)
+
+    with zipfile.ZipFile(xlsx_path) as workbook_zip:
+        assert workbook_zip.testzip() is None
+    mod.validate_xlsx_against_csv(xlsx_path, csv_path)
+    assert not list(tmp_path.glob(".*.tmp.xlsx"))
+
+
+def test_xlsx_write_timeout_preserves_target_cleans_temp_and_raises(tmp_path, monkeypatch):
+    frame = _xlsx_fixture()
+    csv_path = tmp_path / "master.csv"
+    xlsx_path = tmp_path / "master.xlsx"
+    csv_path.write_text(frame.to_csv(index=False))
+    xlsx_path.write_bytes(b"previous valid artifact")
+
+    def timeout(*args, **kwargs):
+        raise TimeoutError("simulated close timeout")
+
+    monkeypatch.setattr(pd.DataFrame, "to_excel", timeout)
+    with pytest.raises(TimeoutError, match="simulated close timeout"):
+        mod.write_validated_xlsx(frame, csv_path, xlsx_path)
+    assert xlsx_path.read_bytes() == b"previous valid artifact"
+    assert not list(tmp_path.glob(".*.tmp.xlsx"))
+
+
+def test_truncated_xlsx_never_replaces_target(tmp_path, monkeypatch):
+    frame = _xlsx_fixture()
+    csv_path = tmp_path / "master.csv"
+    xlsx_path = tmp_path / "master.xlsx"
+    csv_path.write_text(frame.to_csv(index=False))
+    xlsx_path.write_bytes(b"previous valid artifact")
+
+    def write_truncated(_self, path, **kwargs):
+        Path(path).write_bytes(b"not an xlsx")
+
+    monkeypatch.setattr(pd.DataFrame, "to_excel", write_truncated)
+    with pytest.raises(ValueError, match="valid readable ZIP"):
+        mod.write_validated_xlsx(frame, csv_path, xlsx_path)
+    assert xlsx_path.read_bytes() == b"previous valid artifact"
+    assert not list(tmp_path.glob(".*.tmp.xlsx"))
+
+
+def test_semantically_wrong_xlsx_never_replaces_target(tmp_path, monkeypatch):
+    frame = _xlsx_fixture()
+    csv_path = tmp_path / "master.csv"
+    xlsx_path = tmp_path / "master.xlsx"
+    csv_path.write_text(frame.to_csv(index=False))
+    xlsx_path.write_bytes(b"previous valid artifact")
+    original_to_excel = pd.DataFrame.to_excel
+
+    def write_wrong(_self, path, **kwargs):
+        wrong = frame.copy()
+        wrong.loc[0, "player_id"] = "WRONG"
+        original_to_excel(wrong, path, index=False)
+
+    monkeypatch.setattr(pd.DataFrame, "to_excel", write_wrong)
+    with pytest.raises(ValueError, match="player-season keys"):
+        mod.write_validated_xlsx(frame, csv_path, xlsx_path)
+    assert xlsx_path.read_bytes() == b"previous valid artifact"
+    assert not list(tmp_path.glob(".*.tmp.xlsx"))
 
 
 def test_raw_provider_fields_survive_canonicalization(tmp_path):
