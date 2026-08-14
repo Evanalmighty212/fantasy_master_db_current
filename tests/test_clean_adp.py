@@ -90,5 +90,38 @@ class TestContaminationDetection:
         assert flag == "verified_empty"
 
 
+class TestGoverned2011Routing:
+    def test_2011_ppr_uses_governed_html_adapter_not_later_json(self, mod, tmp_path, monkeypatch):
+        later_json = tmp_path / "data" / "raw" / "adp" / "ffc_adp_2011_ppr.json"
+        later_json.write_text("this must never be parsed by the canonical branch")
+        calls = {}
+
+        def load(*, archive_root, manifest_path):
+            calls.update(archive_root=archive_root, manifest_path=manifest_path)
+            return [{"name": "Arian Foster", "position": "RB", "team": "HOU", "overall_adp": 1.4}]
+
+        monkeypatch.setattr(mod, "load_governed_2011_adp", load)
+        archive = tmp_path / "private"
+        manifest = tmp_path / "manifest.json"
+        rows, flag, notes = mod.load_ffc_source(
+            2011, "ppr", private_archive_root=archive, source_manifest_path=manifest,
+        )
+        assert calls == {"archive_root": archive, "manifest_path": manifest}
+        assert rows[0]["source"] == "fftoday_hosted_ffc_pre_kickoff_2011"
+        assert rows[0]["overall_adp"] == 1.4
+        assert rows[0]["times_drafted"] is None
+        assert flag == "governed_pre_kickoff_byte_validated"
+        assert "timing sensitivity only" in notes
+
+    def test_non_2011_ffc_still_uses_existing_json_loader(self, mod, tmp_path):
+        TestContaminationDetection()._write_ffc_json(
+            tmp_path, 2010, "ppr", "2010-09-03", "2010-09-08",
+            [{"name": "Test Player", "position": "RB", "team": "AAA", "adp": 1.5}],
+        )
+        rows, flag, _ = mod.load_ffc_source(2010, "ppr")
+        assert rows[0]["source"] == "fantasyfootballcalculator"
+        assert flag == "verified_clean"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

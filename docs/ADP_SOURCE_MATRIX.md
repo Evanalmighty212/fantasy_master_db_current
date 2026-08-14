@@ -682,7 +682,7 @@ Not yet evaluated.
 | 2012-2024 | ⭐⭐⭐⭐☆ | FFC VERIFIED clean -- 92-187 usable skill players/year, needs a secondary source layered in to reach 250 every year |
 | 2025 | ⭐⭐☆☆☆ | FFC confirmed absent. The live grade remains unchanged while the strict reconstructed 147-league MFL population is APPROVED as future canonical acquisition evidence but NOT YET IMPLEMENTED or production-validated; FFToday's August 29 consensus remains independent validation only. See the 2026-08 decision entry. |
 
-**2011 implementation status: NOT YET IMPLEMENTED.** The governed source is registered and byte-validated, but the live 2011 adapter has not yet consumed it.
+**2011 implementation status: ADAPTER IMPLEMENTED; PRODUCTION REGENERATION NOT YET RUN.** The production clean-ADP path now validates and parses the governed private snapshot. Existing production artifacts still reflect the prior input until an explicitly authorized regeneration.
 
 ---
 

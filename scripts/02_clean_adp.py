@@ -42,6 +42,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 
 from config import SEASONS
+from lib.fftoday_2011_adp import load_governed_2011_adp
+from lib.source_governance import DEFAULT_MANIFEST_PATH, DEFAULT_PRIVATE_ARCHIVE_ROOT
 
 RAW_DIR = Path("data/raw/adp")
 OUT_DIR = Path("data/processed")
@@ -78,8 +80,37 @@ def normalize_name(raw_name: str) -> str:
     return name.strip().lower()
 
 
-def load_ffc_source(year: int, scoring: str):
+def load_ffc_source(
+    year: int,
+    scoring: str,
+    *,
+    private_archive_root: Path = DEFAULT_PRIVATE_ARCHIVE_ROOT,
+    source_manifest_path: Path = DEFAULT_MANIFEST_PATH,
+):
     """Returns (rows, quality_flag, notes) or (None, flag, notes) if unusable."""
+    if year == 2011 and scoring == "ppr":
+        governed_players = load_governed_2011_adp(
+            archive_root=private_archive_root, manifest_path=source_manifest_path,
+        )
+        rows = [{
+            "season": 2011,
+            "source": "fftoday_hosted_ffc_pre_kickoff_2011",
+            "scoring_format": "ppr",
+            "league_size": 12,
+            "player_name_original": player["name"],
+            "player_name_normalized": normalize_name(player["name"]),
+            "position": player["position"],
+            "team": player["team"],
+            "overall_adp": player["overall_adp"],
+            "adp_rank": None,
+            # The page reports 374 total drafts, not per-player selection counts.
+            "times_drafted": None,
+            "source_quality_flag": "governed_pre_kickoff_byte_validated",
+        } for player in governed_players]
+        return rows, "governed_pre_kickoff_byte_validated", (
+            f"{len(rows)} players, 374 drafts, Sept. 4-5; later 600-draft JSON is timing sensitivity only"
+        )
+
     fname = RAW_DIR / f"ffc_adp_{year}_{scoring}.json"
     if not fname.exists():
         return None, "missing_raw_file", f"{fname} not found -- run the fetch step first"
@@ -173,7 +204,11 @@ def parse_source_token(token: str):
     return None, None
 
 
-def main():
+def main(
+    *,
+    private_archive_root: Path = DEFAULT_PRIVATE_ARCHIVE_ROOT,
+    source_manifest_path: Path = DEFAULT_MANIFEST_PATH,
+):
     if not PLAN_PATH.exists():
         raise FileNotFoundError(
             f"{PLAN_PATH} not found -- 02_clean_adp.py requires the "
@@ -204,7 +239,11 @@ def main():
             continue
 
         if loader_name == "ffc":
-            rows, flag, notes = load_ffc_source(season, scoring)
+            rows, flag, notes = load_ffc_source(
+                season, scoring,
+                private_archive_root=private_archive_root,
+                source_manifest_path=source_manifest_path,
+            )
         else:
             rows, flag, notes = load_fftoday_source(season, scoring)
 
