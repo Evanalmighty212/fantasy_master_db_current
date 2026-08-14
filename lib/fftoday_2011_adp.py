@@ -17,8 +17,25 @@ def _normalized_text(soup: BeautifulSoup) -> str:
     return " ".join(soup.get_text(" ", strip=True).split())
 
 
+def _has_expected_draft_window(text: str) -> bool:
+    """Recognize only the governed Sept. 4-5 window after its source label.
+
+    The preserved page uses ``374 drafts between 9/4 - 9/5``. The
+    written-month form remains supported for equivalent archival markup;
+    neither pattern accepts a widened, reversed, or different window.
+    """
+    september_4 = r"(?:9/4(?:/2011|/11)?|sep(?:tember)?\.?\s*4(?:th)?(?:,?\s*2011)?)"
+    september_5 = r"(?:9/5(?:/2011|/11)?|sep(?:tember)?\.?\s*5(?:th)?(?:,?\s*2011)?)"
+    return bool(re.search(
+        rf"\b{EXPECTED_DRAFT_COUNT}\s+drafts?\s+between\s+"
+        rf"{september_4}\s*(?:-|and|to|through)\s*{september_5}\b",
+        text.lower(),
+    ))
+
+
 def _require_page_claims(text: str) -> None:
     lower = text.lower()
+    expected_window = _has_expected_draft_window(lower)
     checks = {
         "12-team format": bool(re.search(r"12\s*[- ]?team", lower)),
         "PPR scoring": "ppr" in lower or "point per reception" in lower,
@@ -27,8 +44,8 @@ def _require_page_claims(text: str) -> None:
             rf"\bdrafts?\b[^.]{{0,30}}\b{EXPECTED_DRAFT_COUNT}\b",
             lower,
         )),
-        "September 4 boundary": bool(re.search(r"sep(?:tember)?\.?\s*4(?:th)?\b", lower)),
-        "September 5 boundary": bool(re.search(r"sep(?:tember)?\.?\s*5(?:th)?\b", lower)),
+        "September 4 boundary": expected_window,
+        "September 5 boundary": expected_window,
         "2011 season/date": "2011" in lower,
     }
     missing = [label for label, present in checks.items() if not present]

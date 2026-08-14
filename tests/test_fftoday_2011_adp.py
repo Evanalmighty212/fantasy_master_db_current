@@ -10,7 +10,9 @@ from lib import fftoday_2011_adp as adapter
 
 def _html(*, metadata: str | None = None, rows: str | None = None) -> bytes:
     metadata = metadata or (
-        "12-Team PPR Data Based On 374 Drafts between Sep. 4, 2011 and Sep. 5, 2011"
+        "Average Draft Position (ADP) All Positions - 9/6/11 ADP History 2011 "
+        "Courtesy of: Fantasy Football Calculator Data Based On: "
+        "374 drafts between 9/4 - 9/5 12 Teams, PPR Scoring"
     )
     rows = rows or """
       <tr><td>Arian Foster</td><td>HOU</td><td>RB</td><td>1.4</td></tr>
@@ -32,11 +34,36 @@ def test_parser_requires_governed_page_claims_and_extracts_skill_rows():
     ]
 
 
-@pytest.mark.parametrize("missing", ["374 Drafts", "12-Team", "PPR", "Sep. 4", "Sep. 5", "2011"])
-def test_parser_fails_when_a_required_source_claim_is_missing(missing):
-    metadata = "12-Team PPR Data Based On 374 Drafts between Sep. 4, 2011 and Sep. 5, 2011"
+def test_written_month_equivalent_is_also_accepted():
+    metadata = (
+        "12-Team PPR 2011 Data Based On: "
+        "374 drafts between September 4, 2011 and September 5, 2011"
+    )
+    assert len(adapter.parse_governed_2011_html(_html(metadata=metadata))) == 2
+
+
+@pytest.mark.parametrize("bad_window", [
+    "374 drafts between 9/3 - 9/5",
+    "374 drafts between 9/4 - 9/6",
+    "374 drafts between 9/5 - 9/4",
+    "374 drafts between 9/4 - 9/15",
+    "374 drafts between 9/4/10 - 9/5/10",
+])
+def test_wrong_numeric_draft_windows_fail(bad_window):
+    metadata = f"2011 12 Teams, PPR Scoring Data Based On: {bad_window}"
+    with pytest.raises(ValueError, match="September 4 boundary|September 5 boundary"):
+        adapter.parse_governed_2011_html(_html(metadata=metadata))
+
+
+@pytest.mark.parametrize("metadata", [
+    "2011 12 Teams, PPR Scoring Data Based On: 473 drafts between 9/4 - 9/5",
+    "2011 10 Teams, PPR Scoring Data Based On: 374 drafts between 9/4 - 9/5",
+    "2011 12 Teams, Standard Scoring Data Based On: 374 drafts between 9/4 - 9/5",
+    "12 Teams, PPR Scoring Data Based On: 374 drafts between 9/4 - 9/5",
+])
+def test_other_governed_page_claims_still_fail_when_wrong(metadata):
     with pytest.raises(ValueError, match="missing required source claim"):
-        adapter.parse_governed_2011_html(_html(metadata=metadata.replace(missing, "REMOVED")))
+        adapter.parse_governed_2011_html(_html(metadata=metadata))
 
 
 def test_loader_validates_private_bytes_before_parsing(tmp_path, monkeypatch):
