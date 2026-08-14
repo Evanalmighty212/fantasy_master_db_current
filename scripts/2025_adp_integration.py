@@ -1,7 +1,7 @@
 """
 scripts/2025_adp_integration.py
 
-Wires the governed 147-league 2025 MFL reconstruction into the normal
+Wires the governed 142-league 2025 MFL reconstruction into the normal
 ADP-clean pipeline. Both governed package roots are explicit inputs;
 there is no diagnostic-directory default and no network fallback.
 
@@ -16,7 +16,7 @@ is the narrow, documented substitute for that one season.
 The governed inputs are parsed/re-serialized audit-cache snapshots,
 not original MFL wire bytes and not a recovered original package.
 Their manifest and hashes are validated before participation or mean
-pick is derived. Players absent from all 147 drafts remain absent.
+pick is derived. Players absent from all 142 drafts remain absent.
 
 Does NOT run player_matching.py or write to the master DB itself --
 that's 04_build_master_dataset.py's job, run unmodified afterward.
@@ -76,7 +76,7 @@ EXCLUDED_2025_ADP_ROWS = {
 # with the disclosed QB/TE ordering bias on record (see
 # docs/ADP_SOURCE_MATRIX.md). Never silently equated to FFC's own
 # quality level.
-SOURCE_QUALITY_FLAG = "governed_mfl_147_offline_reconstruction"
+SOURCE_QUALITY_FLAG = "governed_mfl_142_offline_reconstruction"
 
 
 def _mfl_name_to_first_last(name: str) -> str:

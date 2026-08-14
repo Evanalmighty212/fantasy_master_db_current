@@ -28,14 +28,14 @@ def _governed_rows():
         {
             "player_id": "1", "player_name_original": "Ja'Marr Chase", "position": "WR", "team": "CIN",
             "mfl_mean_adp": 2.0, "times_drafted": 100, "draft_selection_count": 100,
-            "draft_selection_denominator": 147, "draft_selection_rate": 100 / 147,
-            "mfl_reconstruction_identity": "strict-147-test",
+            "draft_selection_denominator": 142, "draft_selection_rate": 100 / 142,
+            "mfl_reconstruction_identity": "strict-142-test",
         },
         {
             "player_id": "2", "player_name_original": "Josh Allen", "position": "QB", "team": "BUF",
             "mfl_mean_adp": 6.3, "times_drafted": 44, "draft_selection_count": 44,
-            "draft_selection_denominator": 147, "draft_selection_rate": 44 / 147,
-            "mfl_reconstruction_identity": "strict-147-test",
+            "draft_selection_denominator": 142, "draft_selection_rate": 44 / 142,
+            "mfl_reconstruction_identity": "strict-142-test",
         },
     ])
 
@@ -73,9 +73,9 @@ def test_clean_rows_preserve_participation_and_raw_mean_pick(monkeypatch):
     chase = rows.set_index("player_name_original").loc["Ja'Marr Chase"]
     assert chase["overall_adp"] == pytest.approx(2.0)
     assert chase["draft_selection_count"] == 100
-    assert chase["draft_selection_denominator"] == 147
-    assert chase["draft_selection_rate"] == pytest.approx(100 / 147)
-    assert chase["mfl_reconstruction_identity"] == "strict-147-test"
+    assert chase["draft_selection_denominator"] == 142
+    assert chase["draft_selection_rate"] == pytest.approx(100 / 142)
+    assert chase["mfl_reconstruction_identity"] == "strict-142-test"
 
 
 def test_names_source_season_and_ranks_are_canonical(monkeypatch):
@@ -98,8 +98,8 @@ def test_amari_cooper_exclusion_remains_narrow(monkeypatch):
     governed.loc[len(governed)] = {
         "player_id": "3", "player_name_original": "Amari Cooper", "position": "WR", "team": "FA",
         "mfl_mean_adp": 156.6, "times_drafted": 10, "draft_selection_count": 10,
-        "draft_selection_denominator": 147, "draft_selection_rate": 10 / 147,
-        "mfl_reconstruction_identity": "strict-147-test",
+        "draft_selection_denominator": 142, "draft_selection_rate": 10 / 142,
+        "mfl_reconstruction_identity": "strict-142-test",
     }
     monkeypatch.setattr(MOD, "_load_governed_mfl_2025_adp", lambda **kwargs: governed)
     rows = MOD.build_2025_adp_clean_rows(archive_root=Path("a"), cache_root=Path("c"))

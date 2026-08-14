@@ -72,13 +72,13 @@ def validate_2025_mfl_reconstruction(
     cache_root: Path,
     validate_cache_objects: bool = True,
 ) -> dict[str, Path]:
-    entry = load_source_manifest(manifest_path)["sources"]["mfl_2025_strict_147_cache_reconstruction"]
+    entry = load_source_manifest(manifest_path)["sources"]["mfl_2025_strict_142_cache_reconstruction"]
     root = Path(archive_root) / entry["private_archive_relative_path"]
     expected = {
         "included_league_ids.txt": entry["included_league_ids_sha256"],
         "league_inclusion_ledger.csv": entry["league_inclusion_ledger_sha256"],
         "reconstruction_manifest.json": entry["reconstruction_manifest_sha256"],
-        "reconstruct_147.py": entry["reconstruction_script_sha256"],
+        entry["reconstruction_script_filename"]: entry["reconstruction_script_sha256"],
     }
     paths = {}
     for name, digest in expected.items():
@@ -97,6 +97,8 @@ def validate_2025_mfl_reconstruction(
         raise GovernedSourceError("MFL reconstruction manifest must retain both provenance-limit flags")
     if reconstruction.get("included_league_count") != entry["included_league_count"]:
         raise GovernedSourceError("MFL reconstruction included-league count disagrees with committed manifest")
+    if reconstruction.get("included_genuine_player_pick_count") != entry["included_genuine_player_pick_count"]:
+        raise GovernedSourceError("MFL reconstruction genuine-player-pick count disagrees with committed manifest")
     for field in (
         "window_start_inclusive_utc", "window_end_exclusive_utc",
         "ordinary_market_participation_threshold", "principal_sensitivity_participation_threshold",
@@ -113,6 +115,21 @@ def validate_2025_mfl_reconstruction(
     for field in required_true:
         if any(row.get(field, "").lower() != "true" for row in included):
             raise GovernedSourceError(f"MFL included ledger row violates {field}")
+    if any(int(row["valid_pick_count"]) != int(row["expected_pick_count"]) for row in included):
+        raise GovernedSourceError("MFL included ledger contains an incomplete genuine-player draft")
+    if sum(int(row["valid_pick_count"]) for row in included) != entry["included_genuine_player_pick_count"]:
+        raise GovernedSourceError("MFL included ledger genuine-player-pick total disagrees with manifest")
+    if entry.get("population_correction"):
+        ledger_by_id = {row["league_id"]: row for row in ledger}
+        for league_id in ("10303", "38839", "60031", "71535"):
+            row = ledger_by_id.get(league_id, {})
+            if row.get("included") != "false" or "non_player_skipped_pick_placeholder" not in row.get("exclusion_reasons", ""):
+                raise GovernedSourceError(f"MFL corrected ledger does not exclude skipped-pick league {league_id}")
+        unresolved = ledger_by_id.get("44425", {})
+        if (unresolved.get("included") != "false"
+                or "unresolved_player_identity" not in unresolved.get("exclusion_reasons", "")
+                or unresolved.get("unresolved_player_identities") != "0801"):
+            raise GovernedSourceError("MFL corrected ledger does not preserve unresolved identity 0801")
     if validate_cache_objects:
         cache_root = Path(cache_root)
         _require_file(

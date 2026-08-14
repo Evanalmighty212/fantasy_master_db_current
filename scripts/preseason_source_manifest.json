@@ -22,21 +22,25 @@
       },
       "provenance_limit": "Private controlled-access copy; public redistribution is not asserted."
     },
-    "mfl_2025_strict_147_cache_reconstruction": {
-      "status": "newly_reproduced_offline_reconstruction_from_parsed_reserialized_audit_cache_snapshots",
-      "private_archive_relative_path": "mfl/candidate_cache_reconstruction_2026-08-09",
+    "mfl_2025_strict_142_cache_reconstruction": {
+      "status": "corrected_offline_reconstruction_from_unchanged_parsed_reserialized_audit_cache_snapshots",
+      "private_archive_relative_path": "mfl/candidate_cache_reconstruction_2026-08-13_142",
       "discovered_league_count": 586,
-      "included_league_count": 147,
+      "included_league_count": 142,
+      "included_genuine_player_pick_count": 27840,
       "window_start_inclusive_utc": "2025-08-15T00:00:00Z",
       "window_end_exclusive_utc": "2025-09-05T00:20:00Z",
       "ordinary_market_participation_threshold": 0.35,
       "principal_sensitivity_participation_threshold": 0.30,
-      "included_league_ids_sha256": "e2bfb78d673e93f74ad0a7f3f7b13c55409ec5cd4a83b6527d42572ec2a58431",
-      "league_inclusion_ledger_sha256": "c2975f907b50fe038633bf918c1273081b665295ca579389aaefe71a4cdb6bbb",
-      "reconstruction_manifest_sha256": "0839d11f27d0f19961b09501570446a371e0f3abf71ac90654b0f66efac60883",
-      "reconstruction_script_sha256": "2a6ea7fd6ab4dcf7ef9bd65ccf8e300fd1351a2aa5fb3e693ddc4633c66fbd14",
+      "included_league_ids_sha256": "30a2b5306b0babc86321fc14c3c21e8f482eecef2fa58aabaee26da8b5104e22",
+      "league_inclusion_ledger_sha256": "a6fc7a7c7ad6c2bd2c710beecb4950a417906d151686170f47da984be2451832",
+      "reconstruction_manifest_sha256": "b5560c5be86b5ce19f4bd3342c4d350a940dae256baab7f2fc3c2d4ee2c46b59",
+      "reconstruction_script_filename": "reconstruct_142.py",
+      "reconstruction_script_sha256": "b13b052f60141b6642b14a86dc61898dbbabc3eecde7631e4fb24ede4ec4b33a",
       "role": "canonical_2025_acquisition_source_after_governed_implementation",
-      "provenance_limit": "Not original HTTP wire bytes, not an original preserved package, and not independently verified against a separately preserved prior 147-ID list."
+      "supersedes": "mfl/candidate_cache_reconstruction_2026-08-09 (147-league package retained as superseded audit history)",
+      "population_correction": "Four leagues with skipped-pick placeholders fail genuine-player completeness; league 44425 fails separately because identity 0801 is unresolved.",
+      "provenance_limit": "Not original HTTP wire bytes or an original preserved package. Corrected deterministically from the unchanged parsed/re-serialized audit cache; the superseded 147-league package is retained for audit history."
     }
   }
 }

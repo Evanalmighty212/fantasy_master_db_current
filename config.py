@@ -1188,7 +1188,7 @@ def validate_dataset2_predictor_clustering_config():
 # 2014-2024 showed the naive "rank IS the ADP" baseline beats every
 # tested historical curve on every metric -- no conversion clears the
 # bar. Under the approved 2026-08 source policy, the governed strict
-# 147-league reconstruction's raw conditional mean pick is the
+# 142-league reconstruction's raw conditional mean pick is the
 # canonical overall_adp for ALL FOUR positions (QB/RB/WR/TE alike)
 # -- it preserves genuine mean-pick units and historical comparability,
 # even though the QB/TE source bias documented below remains
@@ -1215,8 +1215,9 @@ MFL_2025_CORRECTION_CALIBRATION_PATH = "data/manual/mfl_2025_qb_te_adp_correctio
 # QB/TE bias is a separate, documented fact (see above), never baked
 # into the source label itself and never conflated with
 # FFC/FFToday/FantasyPros' existing adp_source values.
-MFL_2025_ADP_SOURCE = "mfl_strict_147_pre_kickoff_2025"
-MFL_2025_GOVERNED_LEAGUE_COUNT = 147
+MFL_2025_ADP_SOURCE = "mfl_strict_142_pre_kickoff_2025"
+MFL_2025_GOVERNED_LEAGUE_COUNT = 142
+MFL_2025_GOVERNED_VALID_PICK_COUNT = 27840
 MFL_2025_ORDINARY_MARKET_PARTICIPATION = 0.35
 MFL_2025_PARTICIPATION_SENSITIVITY = 0.30
 # Field name deliberately says RANK, not ADP -- see module docstring
@@ -1250,8 +1251,10 @@ def validate_mfl_2025_correction_config():
         errors.append("MFL_2025_CORRECTION_CALIBRATION_PATH must end in .csv")
     if not MFL_2025_ADP_SOURCE or not isinstance(MFL_2025_ADP_SOURCE, str):
         errors.append("MFL_2025_ADP_SOURCE must be a non-empty string")
-    if MFL_2025_GOVERNED_LEAGUE_COUNT != 147:
-        errors.append("MFL_2025_GOVERNED_LEAGUE_COUNT must remain the approved 147-league denominator")
+    if MFL_2025_GOVERNED_LEAGUE_COUNT != 142:
+        errors.append("MFL_2025_GOVERNED_LEAGUE_COUNT must remain the approved 142-league denominator")
+    if MFL_2025_GOVERNED_VALID_PICK_COUNT != 27840:
+        errors.append("MFL_2025_GOVERNED_VALID_PICK_COUNT must remain 27,840")
     if not 0 < MFL_2025_PARTICIPATION_SENSITIVITY < MFL_2025_ORDINARY_MARKET_PARTICIPATION <= 1:
         errors.append(
             "MFL participation thresholds must satisfy 0 < sensitivity < primary <= 1"

@@ -54,8 +54,8 @@ def test_governed_participation_overrides_presence_in_source_list():
     rows = pd.DataFrame([{
         "season": 2025, "player_id": "DEEP", "overall_adp": 210.5,
         "match_type": "exact_name_position", "adp_source": MFL_2025_ADP_SOURCE,
-        "draft_selection_count": 29, "draft_selection_denominator": 147,
-        "draft_selection_rate": 29 / 147,
+        "draft_selection_count": 29, "draft_selection_denominator": 142,
+        "draft_selection_rate": 29 / 142,
     }])
     empty = pd.DataFrame(columns=[
         "season", "player_id", "preseason_market_status", "evidence_source",
@@ -66,27 +66,27 @@ def test_governed_participation_overrides_presence_in_source_list():
     assert result["overall_adp"] == 210.5  # conditional pick retained as provenance
 
 
-def test_governed_147_denominator_and_35_30_boundaries_are_explicit():
+def test_governed_142_denominator_and_35_30_boundaries_are_explicit():
     rows = pd.DataFrame([
-        {"season": 2025, "player_id": "P52", "overall_adp": 180.0,
+        {"season": 2025, "player_id": "P50", "overall_adp": 180.0,
          "match_type": "exact_name_position", "adp_source": MFL_2025_ADP_SOURCE,
-         "draft_selection_count": 52, "draft_selection_denominator": 147,
-         "draft_selection_rate": 52 / 147},
-        {"season": 2025, "player_id": "P45", "overall_adp": 190.0,
+         "draft_selection_count": 50, "draft_selection_denominator": 142,
+         "draft_selection_rate": 50 / 142},
+        {"season": 2025, "player_id": "P43", "overall_adp": 190.0,
          "match_type": "exact_name_position", "adp_source": MFL_2025_ADP_SOURCE,
-         "draft_selection_count": 45, "draft_selection_denominator": 147,
-         "draft_selection_rate": 45 / 147},
-        {"season": 2025, "player_id": "P44", "overall_adp": 200.0,
+         "draft_selection_count": 43, "draft_selection_denominator": 142,
+         "draft_selection_rate": 43 / 142},
+        {"season": 2025, "player_id": "P42", "overall_adp": 200.0,
          "match_type": "exact_name_position", "adp_source": MFL_2025_ADP_SOURCE,
-         "draft_selection_count": 44, "draft_selection_denominator": 147,
-         "draft_selection_rate": 44 / 147},
+         "draft_selection_count": 42, "draft_selection_denominator": 142,
+         "draft_selection_rate": 42 / 142},
     ])
     empty = pd.DataFrame(columns=list(OVERRIDE_REQUIRED))
     result = apply_preseason_market_status(rows, empty).set_index("player_id")
-    assert result.loc["P52", "preseason_market_status"] == ORDINARY
-    assert result.loc["P45", "preseason_market_status"] == RARE_MINIMAL
-    assert result.loc["P45", "preseason_market_status_sensitivity_30"] == ORDINARY
-    assert result.loc["P44", "preseason_market_status_sensitivity_30"] == RARE_MINIMAL
+    assert result.loc["P50", "preseason_market_status"] == ORDINARY
+    assert result.loc["P43", "preseason_market_status"] == RARE_MINIMAL
+    assert result.loc["P43", "preseason_market_status_sensitivity_30"] == ORDINARY
+    assert result.loc["P42", "preseason_market_status_sensitivity_30"] == RARE_MINIMAL
 
 
 def test_governed_2025_missing_or_inconsistent_participation_fails_loudly():
@@ -95,8 +95,8 @@ def test_governed_2025_missing_or_inconsistent_participation_fails_loudly():
     empty = pd.DataFrame(columns=list(OVERRIDE_REQUIRED))
     with pytest.raises(ValueError, match="lack participation provenance"):
         apply_preseason_market_status(pd.DataFrame([base]), empty)
-    invalid = {**base, "draft_selection_count": 52, "draft_selection_denominator": 146,
-               "draft_selection_rate": 52 / 147}
+    invalid = {**base, "draft_selection_count": 50, "draft_selection_denominator": 141,
+               "draft_selection_rate": 50 / 142}
     with pytest.raises(ValueError, match="invalid participation provenance"):
         apply_preseason_market_status(pd.DataFrame([invalid]), empty)
 
@@ -104,8 +104,8 @@ def test_governed_2025_missing_or_inconsistent_participation_fails_loudly():
 def test_governed_participation_does_not_override_identity_conflict():
     row = {"season": 2025, "player_id": "CONFLICT", "overall_adp": 20.0,
            "match_type": "exact_name_position_mismatch", "adp_source": MFL_2025_ADP_SOURCE,
-           "draft_selection_count": 100, "draft_selection_denominator": 147,
-           "draft_selection_rate": 100 / 147}
+           "draft_selection_count": 100, "draft_selection_denominator": 142,
+           "draft_selection_rate": 100 / 142}
     empty = pd.DataFrame(columns=list(OVERRIDE_REQUIRED))
     result = apply_preseason_market_status(pd.DataFrame([row]), empty).iloc[0]
     assert result["preseason_market_status"] == UNKNOWN

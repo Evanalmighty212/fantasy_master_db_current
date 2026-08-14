@@ -26,8 +26,9 @@ def test_live_manifest_records_exact_governed_fingerprints():
     assert ffc["role"] == "canonical_2011_acquisition_source"
     assert ffc["timing_sensitivity"]["path"] == "data/raw/adp/ffc_adp_2011_ppr.json"
     assert ffc["timing_sensitivity"]["role"] == "timing_sensitivity_only_not_canonical"
-    mfl = sources["mfl_2025_strict_147_cache_reconstruction"]
-    assert mfl["included_league_count"] == 147
+    mfl = sources["mfl_2025_strict_142_cache_reconstruction"]
+    assert mfl["included_league_count"] == 142
+    assert mfl["included_genuine_player_pick_count"] == 27840
     assert mfl["window_end_exclusive_utc"] == "2025-09-05T00:20:00Z"
     assert "Not original HTTP wire bytes" in mfl["provenance_limit"]
 
@@ -68,26 +69,28 @@ def test_2025_validation_requires_hashes_count_and_provenance_flags(tmp_path):
     files = {
         "included_league_ids.txt": b"1\n2\n",
         "league_inclusion_ledger.csv": (
-            b"league_id,included,discovery_filter_ppr_redraft_real_12team,draft_complete,all_picks_in_window\n"
-            b"1,true,true,true,true\n2,true,true,true,true\n"
+            b"league_id,included,discovery_filter_ppr_redraft_real_12team,draft_complete,all_picks_in_window,valid_pick_count,expected_pick_count\n"
+            b"1,true,true,true,true,1,1\n2,true,true,true,true,1,1\n"
         ),
         "reconstruction_manifest.json": json.dumps({
             "not_original_http_bytes": True,
             "not_original_audited_package": True,
             "included_league_count": 2,
+            "included_genuine_player_pick_count": 2,
             "window_start_inclusive_utc": "start",
             "window_end_exclusive_utc": "end",
             "ordinary_market_participation_threshold": 0.35,
             "principal_sensitivity_participation_threshold": 0.30,
         }).encode(),
-        "reconstruct_147.py": b"# deterministic fixture\n",
+        "reconstruct_142.py": b"# deterministic fixture\n",
     }
     hashes = {name: _write(root / name, body) for name, body in files.items()}
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"manifest_version": 1, "sources": {
-        "mfl_2025_strict_147_cache_reconstruction": {
+        "mfl_2025_strict_142_cache_reconstruction": {
             "private_archive_relative_path": "mfl/package",
                 "included_league_count": 2,
+                "included_genuine_player_pick_count": 2,
                 "window_start_inclusive_utc": "start",
                 "window_end_exclusive_utc": "end",
                 "ordinary_market_participation_threshold": 0.35,
@@ -95,7 +98,8 @@ def test_2025_validation_requires_hashes_count_and_provenance_flags(tmp_path):
             "included_league_ids_sha256": hashes["included_league_ids.txt"],
             "league_inclusion_ledger_sha256": hashes["league_inclusion_ledger.csv"],
             "reconstruction_manifest_sha256": hashes["reconstruction_manifest.json"],
-            "reconstruction_script_sha256": hashes["reconstruct_147.py"],
+            "reconstruction_script_filename": "reconstruct_142.py",
+            "reconstruction_script_sha256": hashes["reconstruct_142.py"],
         }
     }}))
     assert set(validate_2025_mfl_reconstruction(

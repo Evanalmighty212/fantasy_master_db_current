@@ -106,7 +106,7 @@ def apply_preseason_market_status(rows: pd.DataFrame, overrides: pd.DataFrame) -
         out.loc[governed_clean, "preseason_market_status_sensitivity_30"] = clean_rate.map(
             lambda value: classify_participation(value, ordinary_threshold=MFL_2025_PARTICIPATION_SENSITIVITY)
         ).values
-        out.loc[governed_clean, "preseason_market_status_authority"] = "governed_draft_participation_147_leagues"
+        out.loc[governed_clean, "preseason_market_status_authority"] = "governed_draft_participation_142_leagues"
 
     governed = overrides[list(OVERRIDE_REQUIRED)].copy()
     merged = out.merge(governed, on=["season", "player_id"], how="left", suffixes=("", "_override"), validate="many_to_one")

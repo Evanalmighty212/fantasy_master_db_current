@@ -137,7 +137,7 @@ records this instance of the general governed rule; it does not define
 or justify bespoke Vick-only methodology.
 
 For 2025, the approved canonical acquisition source is the governed
-147-league MFL reconstruction: real, completed, 12-team drafts discovered
+142-league MFL reconstruction: real, completed, 12-team drafts discovered
 through the PPR/redraft report; configuration-verified single-QB,
 non-IDP, and non-salary; `bestLineup=Yes` and missing-status
 configurations excluded as a conservative best-ball proxy; 14--18
@@ -158,6 +158,13 @@ and preserved inputs. This source and its governed participation rules
 are not yet live; current generated artifacts remain on the prior
 implementation. Normalization toward a hypothetical FFC market requires
 a separate future methodology decision.
+
+The 142-league population corrects the superseded 147-league accounting.
+Four leagues with commissioner-skipped draft slots fail genuine-player
+completeness, and league 44425 is excluded separately because identity
+`0801` cannot be resolved. The corrected population contains 27,840
+directory-resolved selections. The old package remains preserved only as
+superseded audit history.
 
 **Current prior implementation, pending the approved governance revision
 above**: ONE unified acquisition model -- a verified-

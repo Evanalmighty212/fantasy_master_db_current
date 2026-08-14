@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from config import MFL_2025_GOVERNED_LEAGUE_COUNT
+from config import MFL_2025_GOVERNED_LEAGUE_COUNT, MFL_2025_GOVERNED_VALID_PICK_COUNT
 from lib.source_governance import DEFAULT_MANIFEST_PATH, validate_2025_mfl_reconstruction
 
 GOVERNED_LEAGUE_COUNT = MFL_2025_GOVERNED_LEAGUE_COUNT
@@ -24,6 +24,37 @@ def _as_list(value):
     if value is None:
         return []
     return value if isinstance(value, list) else [value]
+
+
+def normalize_governed_league_picks(
+    picks: list[dict], *, player_ids: set[str], league_id: str, expected_pick_count: int,
+) -> list[tuple[str, int]]:
+    """Return genuine directory-resolved selections and fail on any bad slot."""
+    normalized: list[tuple[str, int]] = []
+    seen: set[str] = set()
+    for pick in picks:
+        player_id = str(pick.get("player", "")).strip()
+        comments = str(pick.get("comments", "")).lower()
+        if player_id in {"", "----", "0000"} and "pick skipped" in comments:
+            raise ValueError(f"league {league_id} contains a non-player skipped-pick placeholder")
+        if player_id not in player_ids:
+            raise ValueError(f"league {league_id} contains unresolved player identity {player_id!r}")
+        if player_id in seen:
+            raise ValueError(f"league {league_id} selected player {player_id} more than once")
+        seen.add(player_id)
+        try:
+            round_number = int(pick["round"])
+            pick_in_round = int(pick["pick"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"league {league_id} has an invalid pick coordinate") from exc
+        if round_number < 1 or not 1 <= pick_in_round <= 12:
+            raise ValueError(f"league {league_id} has an out-of-range pick coordinate")
+        normalized.append((player_id, (round_number - 1) * 12 + pick_in_round))
+    if len(normalized) != expected_pick_count:
+        raise ValueError(
+            f"league {league_id} has {len(normalized)} genuine picks; expected {expected_pick_count}"
+        )
+    return normalized
 
 
 def derive_governed_2025_participation(
@@ -45,7 +76,7 @@ def derive_governed_2025_participation(
     with package["league_inclusion_ledger.csv"].open(newline="") as handle:
         included = [row for row in csv.DictReader(handle) if row["included"].lower() == "true"]
     if len(included) != GOVERNED_LEAGUE_COUNT:
-        raise ValueError("included reconstruction ledger does not contain exactly 147 leagues")
+        raise ValueError(f"included reconstruction ledger does not contain exactly {GOVERNED_LEAGUE_COUNT} leagues")
 
     player_obj = json.loads((Path(cache_root) / reconstruction["player_directory_cache_file"]).read_text())
     players = {
@@ -60,24 +91,21 @@ def derive_governed_2025_participation(
         league_id = league["league_id"]
         draft_obj = json.loads((Path(cache_root) / league["draft_cache_file"]).read_text())
         units = _as_list(draft_obj.get("draftResults", {}).get("draftUnit"))
-        seen_in_league: set[str] = set()
+        raw_picks = []
         for unit in units:
-            for pick in _as_list(unit.get("draftPick")):
-                player_id = str(pick.get("player", "")).strip()
-                if not player_id:
-                    raise ValueError(f"league {league_id} has a draft pick without player identity")
-                if player_id in seen_in_league:
-                    raise ValueError(f"league {league_id} selected player {player_id} more than once")
-                seen_in_league.add(player_id)
-                try:
-                    round_number = int(pick["round"])
-                    pick_in_round = int(pick["pick"])
-                except (KeyError, TypeError, ValueError) as exc:
-                    raise ValueError(f"league {league_id} has an invalid pick coordinate") from exc
-                if round_number < 1 or not 1 <= pick_in_round <= 12:
-                    raise ValueError(f"league {league_id} has an out-of-range pick coordinate")
-                leagues_by_player[player_id].add(league_id)
-                picks_by_player[player_id].append((round_number - 1) * 12 + pick_in_round)
+            raw_picks.extend(_as_list(unit.get("draftPick")))
+        normalized = normalize_governed_league_picks(
+            raw_picks, player_ids=set(players), league_id=league_id,
+            expected_pick_count=int(league["expected_pick_count"]),
+        )
+        for player_id, overall_pick in normalized:
+            leagues_by_player[player_id].add(league_id)
+            picks_by_player[player_id].append(overall_pick)
+
+    if sum(len(picks) for picks in picks_by_player.values()) != MFL_2025_GOVERNED_VALID_PICK_COUNT:
+        raise ValueError(
+            f"governed reconstruction does not contain {MFL_2025_GOVERNED_VALID_PICK_COUNT} genuine picks"
+        )
 
     rows = []
     for player_id in sorted(leagues_by_player):
