@@ -33,8 +33,9 @@ def test_vick_is_categorical_minimal_market_without_numeric_adp():
 
 def test_clean_observed_adp_is_ordinary_but_conflict_is_unknown():
     rows = pd.DataFrame([
-        {"season": 2012, "player_id": "A", "overall_adp": 20.0, "match_type": "exact_name_position"},
+        {"season": 2012, "player_id": "A", "overall_adp": 20.0, "match_type": "roster_directory_exact"},
         {"season": 2012, "player_id": "B", "overall_adp": 20.0, "match_type": "exact_name_position_mismatch"},
+        {"season": 2012, "player_id": "C", "overall_adp": 21.0, "match_type": "fuzzy_low_confidence"},
     ])
     empty = pd.DataFrame(columns=[
         "season", "player_id", "preseason_market_status", "evidence_source",
@@ -43,6 +44,31 @@ def test_clean_observed_adp_is_ordinary_but_conflict_is_unknown():
     result = apply_preseason_market_status(rows, empty).set_index("player_id")
     assert result.loc["A", "preseason_market_status"] == ORDINARY
     assert result.loc["B", "preseason_market_status"] == UNKNOWN
+    assert result.loc["C", "preseason_market_status"] == UNKNOWN
+
+
+@pytest.mark.parametrize(
+    "match_type",
+    ["manual_override", "roster_directory_exact", "exact_name_position", "fuzzy_high_confidence"],
+)
+def test_every_governed_clean_match_literal_is_ordinary_market(match_type):
+    rows = pd.DataFrame([{
+        "season": 2012, "player_id": "A", "overall_adp": 20.0, "match_type": match_type,
+    }])
+    empty = pd.DataFrame(columns=list(OVERRIDE_REQUIRED))
+    result = apply_preseason_market_status(rows, empty).iloc[0]
+    assert result["preseason_market_status"] == ORDINARY
+    assert result["preseason_market_status_authority"] == "clean_observed_adp_source"
+
+
+def test_unknown_observed_adp_match_literal_fails_loudly():
+    rows = pd.DataFrame([{
+        "season": 2012, "player_id": "A", "overall_adp": 20.0,
+        "match_type": "new_unreviewed_match",
+    }])
+    empty = pd.DataFrame(columns=list(OVERRIDE_REQUIRED))
+    with pytest.raises(ValueError, match="unknown match_type"):
+        apply_preseason_market_status(rows, empty)
 
 
 def test_governed_participation_boundary_is_inclusive_without_changing_pick():

@@ -48,6 +48,7 @@ from config import (
     HISTORICAL_INPUT_REVISION,
 )
 import player_matching
+from lib.match_quality import CLEAN_MATCH_TYPES, REVIEW_MATCH_TYPES, data_quality_flag
 from lib.player_season_authority import (
     add_canonical_fantasy_position,
     add_canonical_team,
@@ -85,11 +86,7 @@ FINAL_COLUMNS = [
 
 
 def flag_row(r):
-    if pd.isna(r["overall_adp"]):
-        return "no_adp_match"
-    if r.get("match_type") in ("fuzzy_low_confidence", "exact_name_position_mismatch"):
-        return "matched_needs_review"
-    return "matched_clean"
+    return data_quality_flag(r["overall_adp"], r.get("match_type"))
 
 
 def build_adp_slim(matched_clean: pd.DataFrame) -> pd.DataFrame:
@@ -415,6 +412,7 @@ def build_master_dataset():
             "season": season,
             "total_attempted": total_attempted,
             "exact_name_position": counts.get("exact_name_position", 0),
+            "roster_directory_exact": counts.get("roster_directory_exact", 0),
             "exact_name_position_mismatch": counts.get("exact_name_position_mismatch", 0),
             "manual_override": counts.get("manual_override", 0),
             "fuzzy_high_confidence": counts.get("fuzzy_high_confidence", 0),
@@ -423,12 +421,12 @@ def build_master_dataset():
             "duplicate_needs_override": len(season_dupes),
             "collision_excluded_from_join": len(season_collisions),
             "clean_match_pct": (
-                round(counts.get("exact_name_position", 0) / total_attempted * 100, 1)
+                round(sum(counts.get(value, 0) for value in CLEAN_MATCH_TYPES)
+                      / total_attempted * 100, 1)
                 if total_attempted else 0
             ),
             "needs_review_pct": (
-                round((counts.get("exact_name_position_mismatch", 0)
-                       + counts.get("fuzzy_low_confidence", 0)
+                round((sum(counts.get(value, 0) for value in REVIEW_MATCH_TYPES)
                        + len(season_dupes) + len(season_collisions)) / total_attempted * 100, 1)
                 if total_attempted else 0
             ),

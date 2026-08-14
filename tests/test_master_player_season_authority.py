@@ -31,6 +31,28 @@ def test_governed_2025_participation_survives_master_join_projection():
     assert out["mfl_reconstruction_identity"] == "strict-142-test"
 
 
+@pytest.mark.parametrize(
+    "match_type,expected",
+    [
+        ("manual_override", "matched_clean"),
+        ("roster_directory_exact", "matched_clean"),
+        ("exact_name_position", "matched_clean"),
+        ("fuzzy_high_confidence", "matched_clean"),
+        ("exact_name_position_mismatch", "matched_needs_review"),
+        ("fuzzy_low_confidence", "matched_needs_review"),
+    ],
+)
+def test_master_quality_flag_uses_shared_real_match_literals(match_type, expected):
+    row = pd.Series({"overall_adp": 42.0, "match_type": match_type})
+    assert mod.flag_row(row) == expected
+
+
+def test_master_quality_flag_rejects_unknown_observed_match_literal():
+    row = pd.Series({"overall_adp": 42.0, "match_type": "new_unreviewed_match"})
+    with pytest.raises(ValueError, match="unknown match_type"):
+        mod.flag_row(row)
+
+
 def test_raw_provider_fields_survive_canonicalization(tmp_path):
     authority_path = ROOT / "data/manual/canonical_player_season_positions.csv"
     authority = mod.load_canonical_position_authority(authority_path)

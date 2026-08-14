@@ -11,6 +11,7 @@ from config import (
     MFL_2025_ORDINARY_MARKET_PARTICIPATION,
     MFL_2025_PARTICIPATION_SENSITIVITY,
 )
+from lib.match_quality import is_clean_match_type, validate_observed_adp_match_types
 
 ORDINARY = "ordinary_market"
 RARE_MINIMAL = "rare_minimal_market"
@@ -64,9 +65,9 @@ def apply_preseason_market_status(rows: pd.DataFrame, overrides: pd.DataFrame) -
     out["preseason_market_status"] = UNKNOWN
     out["preseason_market_status_sensitivity_30"] = UNKNOWN
     out["preseason_market_status_authority"] = "no_governed_participation_evidence"
-    clean = out["overall_adp"].notna() & out["match_type"].isin(
-        ["exact_name_position", "manual_override", "fuzzy_high_confidence"]
-    )
+    observed = out["overall_adp"].notna()
+    validate_observed_adp_match_types(out.loc[observed, "match_type"])
+    clean = observed & out["match_type"].map(is_clean_match_type)
     out.loc[clean, "preseason_market_status"] = ORDINARY
     out.loc[clean, "preseason_market_status_sensitivity_30"] = ORDINARY
     out.loc[clean, "preseason_market_status_authority"] = "clean_observed_adp_source"
