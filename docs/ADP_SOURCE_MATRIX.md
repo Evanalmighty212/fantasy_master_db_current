@@ -43,17 +43,17 @@ An ADP source is considered "production ready" only if it satisfies all of the f
 methodology and its governed market-participation rules: APPROVED by
 Evan.**
 
-**Implementation status for those rules: IMPLEMENTED; production regeneration not yet completed.**
+**Implementation status for those rules: IMPLEMENTED; clean-ADP/master
+regeneration accepted, downstream LWI/SBV regeneration pending.**
 
 The approved 2025 acquisition source is the strict reconstructed
 142-league MFL population described in the decision-history entry below.
 It uses raw observed mean picks without normalization, a 35%
 ordinary-market participation boundary, and a 30% principal sensitivity.
 This season-specific approval does not make MFL the historical backbone
-for other seasons. The live source grade and current generated artifacts
-still describe the prior implementation; no grade upgrade occurs until
-the approved source is preserved, implemented, regenerated, and
-validated successfully.
+for other seasons. The governed source is now live in the accepted
+clean-ADP and base-master artifacts; downstream LWI/SBV artifacts remain
+on their prior regeneration state.
 
 - Primary source (to be determined)
 - Secondary validation source
@@ -74,7 +74,7 @@ validated successfully.
 | GitHub repositories | Unknown | TBD | TBD | Pending | Supplemental |
 | Internet Archive | Unknown | Low | TBD | Pending | Historical recovery |
 | Sleeper | Unknown | TBD | TBD | Pending | Modern validation |
-| MyFantasyLeague | Current live evidence: 254 configuration-valid leagues; approved replacement: corrected strict 142-league reconstruction for 2025, implemented but not yet production-regenerated | A (isolated diagnostic pipeline) | B (real QB source shift vs. FFToday validation) | B- | Canonical 2025 acquisition source after coherent regeneration and validation; 30% sensitivity retained |
+| MyFantasyLeague | Corrected strict 142-league reconstruction for 2025, implemented and accepted in clean ADP/base master; downstream LWI/SBV regeneration pending | A (isolated diagnostic pipeline) | B (real QB source shift vs. FFToday validation) | B- | Canonical 2025 acquisition source; 30% sensitivity retained |
 | RTSports | Unknown | TBD | TBD | Pending | Candidate |
 | Commercial APIs | Unknown | Varies | High | Pending | Last resort |
 
@@ -680,9 +680,12 @@ Not yet evaluated.
 | 2010 | ⭐⭐⭐⭐☆ | FFC VERIFIED clean; needs a secondary source layered in to reach 250 |
 | 2011 | ⭐⭐⭐⭐☆ | Canonical source is the newly preserved byte-identical copy of the audited FFToday-hosted FFC 12-team PPR snapshot: 374 drafts from Sept. 4-5, SHA-256 `dd26ad40eecab0e3882b4cb9dce3521e7da2c41431ed77db1c3e58f9158d58f0`, 61,275 bytes. The Sept. 6-9 / 600-draft JSON is timing sensitivity only. |
 | 2012-2024 | ⭐⭐⭐⭐☆ | FFC VERIFIED clean -- 92-187 usable skill players/year, needs a secondary source layered in to reach 250 every year |
-| 2025 | ⭐⭐☆☆☆ | FFC confirmed absent. The live grade remains unchanged while the corrected strict 142-league / 27,840-selection MFL population is approved and implemented but not yet production-regenerated; FFToday's August 29 consensus remains independent validation only. See the 2026-08 decision entry. |
+| 2025 | ⭐⭐☆☆☆ | FFC confirmed absent. The corrected strict 142-league / 27,840-selection MFL population is approved and accepted in clean ADP/base master; downstream LWI/SBV regeneration remains pending. FFToday's August 29 consensus remains independent validation only. See the 2026-08 decision entry. |
 
-**2011 implementation status: ADAPTER IMPLEMENTED; PRODUCTION REGENERATION NOT YET RUN.** The production clean-ADP path now validates and parses the governed private snapshot. Existing production artifacts still reflect the prior input until an explicitly authorized regeneration.
+**2011 implementation status: ADAPTER IMPLEMENTED; CLEAN-ADP/MASTER
+REGENERATION ACCEPTED.** The production clean-ADP path validates and
+parses the governed private snapshot. Downstream LWI/SBV regeneration
+remains pending.
 
 ---
 
@@ -756,10 +759,11 @@ be substituted for the canonical pre-kickoff snapshot.
 
 **Methodology status: APPROVED by Evan.**
 
-**Implementation status: IMPLEMENTED; PRODUCTION REGENERATION NOT YET COMPLETED.**
+**Implementation status: IMPLEMENTED; CLEAN-ADP/MASTER REGENERATION
+ACCEPTED; DOWNSTREAM LWI/SBV REGENERATION PENDING.**
 
-The approved future canonical 2025 source is the governed 142-league
-reconstruction, pending production validation:
+The approved canonical 2025 source is the governed 142-league
+reconstruction, accepted in clean ADP and the base master:
 real completed drafts, 12 teams, PPR/redraft-report-discovered,
 configuration-verified single-QB, non-IDP, non-salary, 14--18 roster
 spots, and complete through configured roster size. Configurations with
@@ -784,9 +788,9 @@ rules, timing, provenance, and hashes must be preserved under the
 governed reproducibility policy. Any normalization toward a hypothetical
 FFC market requires a separate future methodology decision.
 
-Current generated artifacts and the live source grade still represent
-the prior implementation. Neither changes until governed preservation,
-implementation, coherent regeneration, and validation succeed.
+Clean ADP and the base master now represent this governed source.
+Downstream LWI/SBV artifacts remain on their prior regeneration state
+until their separately authorized coherent rebuild and validation succeed.
 
 The 142-league revision corrects the superseded 147-league population
 accounting. Leagues 10303, 38839, 60031, and 71535 are excluded because
@@ -1736,7 +1740,8 @@ separate step.
 remains approved, but the later 2026-08 decision replaces this
 heterogeneous aggregate with the corrected strict governed 142-league
 reconstruction and its 35%/30% participation policy. Implementation of
-that replacement is complete; production regeneration remains pending.
+that replacement is complete and accepted in clean ADP/base master;
+downstream LWI/SBV regeneration remains pending.
 
 - **Date**: 2026-07
 - **Decision**: **Canonical `overall_adp` for 2025, all four positions

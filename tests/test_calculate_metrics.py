@@ -17,6 +17,7 @@ ever regresses.
 
 import importlib.util
 import sys
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -53,6 +54,83 @@ def config_mod(tmp_path, monkeypatch):
     sys.modules["test_config"] = c
     spec.loader.exec_module(c)
     return c
+
+
+def _lwi_output_fixture():
+    final = pd.DataFrame({
+        "season": [2024, 2025],
+        "player_id": ["P1", "P2"],
+        "lwi_score": [81.1234567890123, 72.0],
+    })
+    report = pd.DataFrame({
+        "season": [2024, 2025],
+        "lwi_eligibility_flag": ["eligible", "eligible"],
+        "row_count": [1, 1],
+    })
+    return final, report
+
+
+def test_lwi_outputs_install_validated_xlsx_before_diagnostics(mod, tmp_path):
+    final, report = _lwi_output_fixture()
+    master_dir = tmp_path / "master"
+    validation_dir = tmp_path / "validation"
+
+    out_csv = mod.write_lwi_outputs(
+        final, report, master_dir=master_dir, validation_dir=validation_dir,
+    )
+    out_xlsx = master_dir / "master_historical_db_with_lwi_2006_2025.xlsx"
+
+    with zipfile.ZipFile(out_xlsx) as workbook_zip:
+        assert workbook_zip.testzip() is None
+    assert out_csv.exists()
+    assert (validation_dir / "lwi_eligibility_report.csv").exists()
+    assert not list(master_dir.glob(".*.tmp.xlsx"))
+
+
+def test_lwi_xlsx_timeout_preserves_target_cleans_temp_and_blocks_diagnostics(
+    mod, tmp_path, monkeypatch,
+):
+    final, report = _lwi_output_fixture()
+    master_dir = tmp_path / "master"
+    validation_dir = tmp_path / "validation"
+    master_dir.mkdir()
+    target = master_dir / "master_historical_db_with_lwi_2006_2025.xlsx"
+    target.write_bytes(b"previous valid LWI workbook")
+
+    def timeout(*args, **kwargs):
+        raise TimeoutError("simulated LWI close timeout")
+
+    monkeypatch.setattr(pd.DataFrame, "to_excel", timeout)
+    with pytest.raises(TimeoutError, match="simulated LWI close timeout"):
+        mod.write_lwi_outputs(
+            final, report, master_dir=master_dir, validation_dir=validation_dir,
+        )
+    assert target.read_bytes() == b"previous valid LWI workbook"
+    assert not (validation_dir / "lwi_eligibility_report.csv").exists()
+    assert not list(master_dir.glob(".*.tmp.xlsx"))
+
+
+def test_lwi_corrupt_xlsx_preserves_target_and_blocks_diagnostics(
+    mod, tmp_path, monkeypatch,
+):
+    final, report = _lwi_output_fixture()
+    master_dir = tmp_path / "master"
+    validation_dir = tmp_path / "validation"
+    master_dir.mkdir()
+    target = master_dir / "master_historical_db_with_lwi_2006_2025.xlsx"
+    target.write_bytes(b"previous valid LWI workbook")
+
+    def write_corrupt(_self, path, **kwargs):
+        Path(path).write_bytes(b"not an xlsx")
+
+    monkeypatch.setattr(pd.DataFrame, "to_excel", write_corrupt)
+    with pytest.raises(ValueError, match="valid readable ZIP"):
+        mod.write_lwi_outputs(
+            final, report, master_dir=master_dir, validation_dir=validation_dir,
+        )
+    assert target.read_bytes() == b"previous valid LWI workbook"
+    assert not (validation_dir / "lwi_eligibility_report.csv").exists()
+    assert not list(master_dir.glob(".*.tmp.xlsx"))
 
 
 class TestMinMaxNormalize:

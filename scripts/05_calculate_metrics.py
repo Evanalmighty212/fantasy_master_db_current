@@ -39,6 +39,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd
 from lib.player_season_authority import canonical_position_resolved_mask
+from lib.xlsx_export import write_validated_xlsx
 from sklearn.isotonic import IsotonicRegression
 
 from config import (
@@ -60,6 +61,25 @@ MASTER_PATH = Path(f"data/master/master_historical_db_{SEASONS[0]}_{SEASONS[-1]}
 WEEKLY_PATH = Path(f"data/raw/nflverse/weekly_results_ppr_{SEASONS[0]}_{SEASONS[-1]}.csv")
 MASTER_DIR = Path("data/master")
 VALIDATION_DIR = Path("data/exports/validation")
+
+
+def write_lwi_outputs(
+    final: pd.DataFrame,
+    eligibility_report: pd.DataFrame,
+    *,
+    master_dir: Path = MASTER_DIR,
+    validation_dir: Path = VALIDATION_DIR,
+) -> Path:
+    """Write LWI outputs, aborting before diagnostics on XLSX failure."""
+    master_dir.mkdir(parents=True, exist_ok=True)
+    out_csv = master_dir / f"master_historical_db_with_lwi_{SEASONS[0]}_{SEASONS[-1]}.csv"
+    out_xlsx = master_dir / f"master_historical_db_with_lwi_{SEASONS[0]}_{SEASONS[-1]}.xlsx"
+    final.to_csv(out_csv, index=False)
+    write_validated_xlsx(final, out_csv, out_xlsx)
+
+    validation_dir.mkdir(parents=True, exist_ok=True)
+    eligibility_report.to_csv(validation_dir / "lwi_eligibility_report.csv", index=False)
+    return out_csv
 
 
 def config_fingerprint():
@@ -539,20 +559,11 @@ def calculate_lwi():
     )
 
     print("Step 9: Writing output...")
-    MASTER_DIR.mkdir(parents=True, exist_ok=True)
-    out_csv = MASTER_DIR / f"master_historical_db_with_lwi_{SEASONS[0]}_{SEASONS[-1]}.csv"
-    final.to_csv(out_csv, index=False)
-    try:
-        final.to_excel(MASTER_DIR / f"master_historical_db_with_lwi_{SEASONS[0]}_{SEASONS[-1]}.xlsx", index=False)
-    except Exception as e:
-        print(f"  xlsx export skipped ({e})")
-
-    VALIDATION_DIR.mkdir(parents=True, exist_ok=True)
     elig_report = (
         master.groupby(["season", "lwi_eligibility_flag"]).size()
         .reset_index(name="row_count")
     )
-    elig_report.to_csv(VALIDATION_DIR / "lwi_eligibility_report.csv", index=False)
+    out_csv = write_lwi_outputs(final, elig_report)
 
     print(f"\nDone. {len(eligible)} rows scored, {len(ineligible)} rows ineligible.")
     print(f"Master DB with LWI -> {out_csv}")

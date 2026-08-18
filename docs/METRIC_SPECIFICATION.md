@@ -102,7 +102,8 @@ thresholds are identical.
 
 **Methodology status: APPROVED by Evan.**
 
-**Implementation status: NOT YET IMPLEMENTED.**
+**Implementation status: IMPLEMENTED in clean ADP/base master;
+downstream LWI/SBV regeneration pending.**
 
 Preseason acquisition evidence and governed market status are separate
 concepts. The approved three-level status field is
@@ -155,9 +156,10 @@ selected approximately 15 overall picks earlier than that consensus,
 while RB/WR pricing and within-position ordering were much closer, and
 must version the reconstruction, population rules, timing, provenance,
 and preserved inputs. This source and its governed participation rules
-are not yet live; current generated artifacts remain on the prior
-implementation. Normalization toward a hypothetical FFC market requires
-a separate future methodology decision.
+are live in the accepted clean-ADP and base-master artifacts; downstream
+LWI/SBV artifacts remain on their prior regeneration state. Normalization
+toward a hypothetical FFC market requires a separate future methodology
+decision.
 
 The 142-league population corrects the superseded 147-league accounting.
 Four leagues with commissioner-skipped draft slots fail genuine-player
@@ -166,14 +168,14 @@ completeness, and league 44425 is excluded separately because identity
 directory-resolved selections. The old package remains preserved only as
 superseded audit history.
 
-**Current prior implementation, pending the approved governance revision
-above**: ONE unified acquisition model -- a verified-
+**Downstream scoring behavior, pending coherent LWI/SBV regeneration**:
+ONE unified acquisition model -- a verified-
 undrafted player is NOT scored via a separate path. They receive a
 MODELED overall ADP and then flow through the exact same Component
 1-6 pipeline as every drafted player. These modeled proxy fields are not
 observed ADP. Where the approved categorical minimal-market-cost rule
-supersedes this behavior, implementation and coherent regeneration are
-still pending.
+supersedes this behavior, downstream coherent regeneration remains
+pending.
 
 **Schema** (added by `04_build_master_dataset.py`):
 ```
