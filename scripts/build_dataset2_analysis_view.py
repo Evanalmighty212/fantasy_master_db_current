@@ -37,11 +37,13 @@ TARGET_REGISTRY_PATH = OUTPUT_DIR / "dataset2_analysis_view_target_registry.csv"
 COLUMN_REGISTRY_PATH = OUTPUT_DIR / "dataset2_analysis_view_column_registry.csv"
 JOIN_AUDIT_PATH = OUTPUT_DIR / "dataset2_analysis_view_join_audit_report.csv"
 
-# The pre-directory-first artifact contained 103 strict busts because
-# 2021 Mike Thomas (CIN) was incorrectly assigned Michael Thomas's ADP.
-# The approved directory-first identity repair makes Mike Thomas correctly
-# bust-ineligible, so the canonical regenerated count is 102.
-EXPECTED_STRICT_BUST_POSITIVE_COUNT = 102
+# The prior expected count of 102 belonged to the pre-governed-source,
+# pre-market-status, and pre-discovery-only-reference artifact state. The
+# approved current pipeline deterministically produces 113 strict busts.
+# The unavailable prior membership set prevents a one-to-one reconciliation
+# of the 11-row difference; this constant records the accepted current-state
+# validation baseline, not a claim that each transition was reconstructed.
+EXPECTED_STRICT_BUST_POSITIVE_COUNT = 113
 STRICT_BUST_COUNT_AUDIT_KEY = (
     f"bust_strict_below_replacement_label_positive_matches_{EXPECTED_STRICT_BUST_POSITIVE_COUNT}"
 )

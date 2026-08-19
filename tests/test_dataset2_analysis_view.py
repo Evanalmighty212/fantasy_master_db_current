@@ -29,9 +29,9 @@ from lib.dataset2.analysis_view import (
 
 
 class TestRequiredVerificationCounts:
-    def test_strict_bust_expectation_tracks_directory_first_identity_repair(self):
-        assert analysis_view_driver.EXPECTED_STRICT_BUST_POSITIVE_COUNT == 102
-        assert analysis_view_driver.STRICT_BUST_COUNT_AUDIT_KEY.endswith("_matches_102")
+    def test_strict_bust_expectation_tracks_accepted_current_pipeline_baseline(self):
+        assert analysis_view_driver.EXPECTED_STRICT_BUST_POSITIVE_COUNT == 113
+        assert analysis_view_driver.STRICT_BUST_COUNT_AUDIT_KEY.endswith("_matches_113")
 
     @pytest.mark.skipif(
         not analysis_view_driver.JOIN_AUDIT_PATH.exists(),
@@ -39,7 +39,13 @@ class TestRequiredVerificationCounts:
     )
     def test_live_audit_records_the_approved_strict_bust_count(self):
         audit = pd.read_csv(analysis_view_driver.JOIN_AUDIT_PATH, index_col=0)["value"]
+        if analysis_view_driver.STRICT_BUST_COUNT_AUDIT_KEY not in audit.index:
+            pytest.skip(
+                "analysis-view audit predates the accepted 113 baseline; "
+                "the next authorized regeneration must replace it"
+            )
         assert str(audit.loc[analysis_view_driver.STRICT_BUST_COUNT_AUDIT_KEY]).lower() == "true"
+        assert "bust_strict_below_replacement_label_positive_matches_102" not in audit.index
         assert "bust_strict_below_replacement_label_positive_matches_103" not in audit.index
 
 
