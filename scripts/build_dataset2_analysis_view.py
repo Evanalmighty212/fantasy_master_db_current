@@ -47,6 +47,52 @@ STRICT_BUST_COUNT_AUDIT_KEY = (
 )
 
 
+def summarize_target_counts(view, targets):
+    """Validate target-registry references and return descriptive counts.
+
+    A null ``eligibility_column`` means the frozen registry defines no
+    separate eligibility flag for that target (currently continuous
+    ``lwi_score`` only).  In that case, non-null target values are the
+    available analysis population; no eligibility rule is inferred.
+    A named eligibility column, by contrast, must exist and remains the
+    sole source of that target's eligible count.
+    """
+    counts = []
+    for target in targets:
+        target_column = target["target_column"]
+        if target_column not in view.columns:
+            raise RuntimeError(
+                f"Target registry references missing target column: {target_column}"
+            )
+
+        eligibility_column = target["eligibility_column"]
+        if eligibility_column is None or pd.isna(eligibility_column):
+            n_eligible = int(view[target_column].notna().sum())
+            eligibility_basis = "non_null_target_no_separate_eligibility_column"
+        else:
+            if eligibility_column not in view.columns:
+                raise RuntimeError(
+                    "Target registry references missing eligibility column: "
+                    f"{eligibility_column} (target={target_column})"
+                )
+            n_eligible = int(view[eligibility_column].sum())
+            eligibility_basis = eligibility_column
+
+        n_positive = None
+        if target["target_type"] == "binary":
+            n_positive = int((view[target_column] == True).sum())  # noqa: E712
+        counts.append(
+            {
+                "target_column": target_column,
+                "target_type": target["target_type"],
+                "eligible_count": n_eligible,
+                "positive_count": n_positive,
+                "eligibility_basis": eligibility_basis,
+            }
+        )
+    return counts
+
+
 def main():
     print("Loading already-built predictor and outcome artifacts (read-only, no recomputation)...")
     predictor_df = pd.read_parquet(PREDICTOR_PARQUET_PATH)
@@ -57,13 +103,6 @@ def main():
 
     print("\nBuilding analysis view (join only)...")
     view, whitelist, targets, column_registry = build_dataset2_analysis_view(predictor_df, predictor_registry, outcome_df)
-
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    view.to_parquet(VIEW_PARQUET_PATH, index=False, engine="fastparquet")
-    view.to_csv(VIEW_CSV_PATH, index=False)
-    pd.DataFrame({"predictor_column": whitelist}).to_csv(WHITELIST_PATH, index=False)
-    pd.DataFrame(targets).to_csv(TARGET_REGISTRY_PATH, index=False)
-    column_registry.to_csv(COLUMN_REGISTRY_PATH, index=False)
 
     # --- Determinism + input-order independence, verified against real data ---
     view_2, whitelist_2, targets_2, registry_2 = build_dataset2_analysis_view(predictor_df, predictor_registry, outcome_df)
@@ -114,18 +153,21 @@ def main():
         audit[f"dtype_boolean_{col}"] = dtype_ok
 
     print("\n--- Eligible / positive counts for every implemented target ---")
-    for t in targets:
-        col = t["target_column"]
-        elig_col = t["eligibility_column"]
-        if t["target_type"] == "binary":
-            n_eligible = int(view[elig_col].sum())
-            n_true = int((view[col] == True).sum())  # noqa: E712
-            print(f"  {col}: eligible={n_eligible}  positive={n_true}  rate={n_true / n_eligible * 100:.1f}%")
+    target_counts = summarize_target_counts(view, targets)
+    for counts in target_counts:
+        col = counts["target_column"]
+        n_eligible = counts["eligible_count"]
+        n_true = counts["positive_count"]
+        if counts["target_type"] == "binary":
+            rate = n_true / n_eligible * 100 if n_eligible else float("nan")
+            print(f"  {col}: eligible={n_eligible}  positive={n_true}  rate={rate:.1f}%")
             audit[f"{col}_eligible"] = n_eligible
             audit[f"{col}_positive"] = n_true
         else:
-            n_eligible = int(view[elig_col].sum())
-            print(f"  {col}: eligible={n_eligible} (continuous -- no positive count)")
+            print(
+                f"  {col}: available={n_eligible} "
+                f"(continuous; basis={counts['eligibility_basis']})"
+            )
             audit[f"{col}_eligible"] = n_eligible
 
     print("\n--- Required verification counts ---")
@@ -143,6 +185,16 @@ def main():
     audit["bust_primary_label_positive_matches_522"] = bust_primary_true == 522
     audit[STRICT_BUST_COUNT_AUDIT_KEY] = bust_strict_true == EXPECTED_STRICT_BUST_POSITIVE_COUNT
 
+    # All construction, registry-reference, determinism, dtype, and audit
+    # validation above completes before any production artifact is written.
+    # A validation failure therefore cannot promote a partial analysis-view
+    # CSV, Parquet, registry, whitelist, or audit report.
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    view.to_parquet(VIEW_PARQUET_PATH, index=False, engine="fastparquet")
+    view.to_csv(VIEW_CSV_PATH, index=False)
+    pd.DataFrame({"predictor_column": whitelist}).to_csv(WHITELIST_PATH, index=False)
+    pd.DataFrame(targets).to_csv(TARGET_REGISTRY_PATH, index=False)
+    column_registry.to_csv(COLUMN_REGISTRY_PATH, index=False)
     pd.DataFrame([audit]).T.rename(columns={0: "value"}).to_csv(JOIN_AUDIT_PATH)
 
     print(f"\nWrote:\n  {VIEW_PARQUET_PATH}\n  {VIEW_CSV_PATH}\n  {WHITELIST_PATH}\n  {TARGET_REGISTRY_PATH}\n  {COLUMN_REGISTRY_PATH}\n  {JOIN_AUDIT_PATH}")

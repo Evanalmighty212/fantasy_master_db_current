@@ -43,6 +43,99 @@ class TestRequiredVerificationCounts:
         assert "bust_strict_below_replacement_label_positive_matches_103" not in audit.index
 
 
+class TestTargetEligibilityValidation:
+    def test_declared_eligibility_column_governs_count(self):
+        view = pd.DataFrame(
+            {
+                "star_by_value_label": pd.Series([True, False, pd.NA], dtype="boolean"),
+                "star_outcome_eligible": pd.Series([True, True, False], dtype="boolean"),
+            }
+        )
+        targets = [
+            {
+                "target_column": "star_by_value_label",
+                "target_type": "binary",
+                "eligibility_column": "star_outcome_eligible",
+            }
+        ]
+
+        counts = analysis_view_driver.summarize_target_counts(view, targets)
+
+        assert counts == [
+            {
+                "target_column": "star_by_value_label",
+                "target_type": "binary",
+                "eligible_count": 2,
+                "positive_count": 1,
+                "eligibility_basis": "star_outcome_eligible",
+            }
+        ]
+
+    def test_no_eligibility_column_uses_non_null_target_availability(self):
+        view = pd.DataFrame({"lwi_score": [12.5, pd.NA, -3.0]})
+        targets = [
+            {
+                "target_column": "lwi_score",
+                "target_type": "continuous",
+                "eligibility_column": None,
+            }
+        ]
+
+        counts = analysis_view_driver.summarize_target_counts(view, targets)
+
+        assert counts[0]["eligible_count"] == 2
+        assert counts[0]["positive_count"] is None
+        assert counts[0]["eligibility_basis"] == "non_null_target_no_separate_eligibility_column"
+
+    def test_missing_declared_eligibility_column_fails_loudly(self):
+        view = pd.DataFrame({"star_by_value_label": pd.Series([True], dtype="boolean")})
+        targets = [
+            {
+                "target_column": "star_by_value_label",
+                "target_type": "binary",
+                "eligibility_column": "missing_eligibility",
+            }
+        ]
+
+        with pytest.raises(RuntimeError, match="missing eligibility column: missing_eligibility"):
+            analysis_view_driver.summarize_target_counts(view, targets)
+
+    def test_registry_validation_failure_occurs_before_any_production_write(self, monkeypatch, tmp_path):
+        predictor = _predictor((2015, "P1", "RB", 1.0))
+        outcome = _outcome(
+            (2015, "P1", "RB", "adp_scored", True, True, True, True, True, True, True, False, True, 5.0)
+        )
+        view, whitelist, targets, registry = build_dataset2_analysis_view(
+            predictor, _predictor_registry(), outcome
+        )
+        invalid_targets = [dict(t) for t in targets]
+        invalid_targets[0]["eligibility_column"] = "does_not_exist"
+
+        monkeypatch.setattr(analysis_view_driver.pd, "read_parquet", lambda path: predictor if "predictor" in str(path) else outcome)
+        monkeypatch.setattr(analysis_view_driver.pd, "read_csv", lambda path: _predictor_registry())
+        monkeypatch.setattr(
+            analysis_view_driver,
+            "build_dataset2_analysis_view",
+            lambda *args: (view, whitelist, invalid_targets, registry),
+        )
+        output_paths = {
+            "OUTPUT_DIR": tmp_path,
+            "VIEW_PARQUET_PATH": tmp_path / "view.parquet",
+            "VIEW_CSV_PATH": tmp_path / "view.csv",
+            "WHITELIST_PATH": tmp_path / "whitelist.csv",
+            "TARGET_REGISTRY_PATH": tmp_path / "targets.csv",
+            "COLUMN_REGISTRY_PATH": tmp_path / "columns.csv",
+            "JOIN_AUDIT_PATH": tmp_path / "audit.csv",
+        }
+        for name, path in output_paths.items():
+            monkeypatch.setattr(analysis_view_driver, name, path)
+
+        with pytest.raises(RuntimeError, match="missing eligibility column: does_not_exist"):
+            analysis_view_driver.main()
+
+        assert list(tmp_path.iterdir()) == []
+
+
 def _predictor(*rows, extra_cols=None):
     """rows: (prediction_season, player_id, position, fam1_trait)."""
     out_rows = []
