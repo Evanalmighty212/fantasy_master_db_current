@@ -85,7 +85,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-from lib.dataset2.common import validate_columns
+from lib.dataset2.common import predictor_registry_role, validate_columns
 from lib.preseason_market_status import STATUSES as PRESEASON_MARKET_STATUS_VALUES
 
 SHARED_SPINE_METADATA_COLUMNS = (
@@ -134,10 +134,7 @@ OUTCOME_NULLABLE_BOOLEAN_COLUMNS = (
 OUTCOME_JOIN_STATUS_MATCHED = "outcome_matched"
 OUTCOME_JOIN_STATUS_NO_MATCH = "no_outcome_row_matched"
 
-ROLE_ID = "id"
 ROLE_PREDICTOR = "predictor"
-ROLE_CONTROL = "control"
-ROLE_PREDICTOR_METADATA = "predictor_metadata"
 ROLE_TARGET_LABEL = "target_label"
 ROLE_TARGET_CONTINUOUS = "target_continuous"
 ROLE_TARGET_DIAGNOSTIC = "target_diagnostic"
@@ -245,16 +242,6 @@ _OUTCOME_COLUMN_ROLES = {
     "underperformance_diagnostic_ineligibility_reason": ROLE_OUTCOME_REASON,
     "underperformance_diagnostic_value": ROLE_TARGET_DIAGNOSTIC,
 }
-
-
-def _predictor_role(family_number: str) -> str:
-    if family_number == "N/A (spine)":
-        return ROLE_ID
-    if family_number == "N/A (preseason control)":
-        return ROLE_CONTROL
-    if family_number == "N/A (preseason metadata)":
-        return ROLE_PREDICTOR_METADATA
-    return ROLE_PREDICTOR
 
 
 def build_dataset2_analysis_view(
@@ -391,7 +378,7 @@ def build_dataset2_analysis_view(
 
     # --- Predictor whitelist: mechanical, from the predictor table's own registry ---
     registry = predictor_column_registry.copy()
-    registry["role"] = registry["family_number"].apply(_predictor_role)
+    registry["role"] = registry["family_number"].apply(predictor_registry_role)
     registry["source_artifact"] = "predictor"
     predictor_whitelist = registry.loc[registry["role"] == ROLE_PREDICTOR, "canonical_column"].tolist()
 

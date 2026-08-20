@@ -28,15 +28,24 @@ from config import (
 )
 from lib.player_season_authority import FRANCHISE_TEAM_ERAS, canonical_team
 
-# family_number tag for identity/spine columns in the canonical
-# predictor table's own data dictionary (prediction_season, player_id,
-# position, observation_season) -- see
-# lib/dataset2/analysis_view.py::_predictor_role(), which encodes the
-# same real distinction for the analysis-view whitelist. Kept as its
-# own constant here (not re-imported from analysis_view.py) since
-# derive_predictor_whitelist_from_registry() below deliberately never
-# reads the analysis view or anything view-derived.
+# Explicit family classifications for non-candidate columns in the
+# canonical predictor table's own data dictionary. This is the shared
+# authority for both the inventory/clustering whitelist and the joined
+# analysis-view whitelist; neither path infers eligibility from column
+# names or from a blanket "anything except spine" shortcut.
 DATASET2_SPINE_FAMILY_NUMBER = "N/A (spine)"
+DATASET2_PRESEASON_CONTROL_FAMILY_NUMBER = "N/A (preseason control)"
+DATASET2_PRESEASON_METADATA_FAMILY_NUMBER = "N/A (preseason metadata)"
+DATASET2_REGISTRY_ROLE_ID = "id"
+DATASET2_REGISTRY_ROLE_CONTROL = "control"
+DATASET2_REGISTRY_ROLE_METADATA = "predictor_metadata"
+DATASET2_REGISTRY_ROLE_PREDICTOR = "predictor"
+
+_DATASET2_NONPREDICTOR_ROLE_BY_FAMILY = {
+    DATASET2_SPINE_FAMILY_NUMBER: DATASET2_REGISTRY_ROLE_ID,
+    DATASET2_PRESEASON_CONTROL_FAMILY_NUMBER: DATASET2_REGISTRY_ROLE_CONTROL,
+    DATASET2_PRESEASON_METADATA_FAMILY_NUMBER: DATASET2_REGISTRY_ROLE_METADATA,
+}
 
 
 def season_length(season: int) -> int:
@@ -418,13 +427,24 @@ def filter_to_historical_predictor_rows(predictor_df: pd.DataFrame) -> pd.DataFr
     return predictor_df.loc[mask].copy()
 
 
+def predictor_registry_role(family_number: str) -> str:
+    """Resolve an explicit registry classification to its analysis role."""
+    if family_number in _DATASET2_NONPREDICTOR_ROLE_BY_FAMILY:
+        return _DATASET2_NONPREDICTOR_ROLE_BY_FAMILY[family_number]
+    # Several legitimate cross-cutting predictor families deliberately
+    # carry an N/A-prefixed family identifier (for example Source A/B).
+    # Only the exact governed non-candidate classifications above are
+    # excluded; never blanket-ban the N/A prefix.
+    return DATASET2_REGISTRY_ROLE_PREDICTOR
+
+
 def derive_predictor_whitelist_from_registry(registry: pd.DataFrame) -> list:
     """Mechanically derives the predictor-column whitelist from the
     canonical predictor table's own data dictionary
-    (`canonical_column`/`family_number`), excluding identity/spine
-    fields (`family_number == DATASET2_SPINE_FAMILY_NUMBER`) -- never a
-    hand-maintained list, and never the analysis-view whitelist (which
-    is derived from the joined view, not the predictor table alone).
+    (`canonical_column`/`family_number`), admitting only rows explicitly
+    classified by :func:`predictor_registry_role` as predictors. Spine,
+    control, and predictor-metadata rows remain in the table/dictionary
+    but cannot enter inventory, similarity, or clustering.
 
     Sorted for deterministic downstream iteration order -- this
     project's own documented hash-randomization determinism bug (see
@@ -432,9 +452,8 @@ def derive_predictor_whitelist_from_registry(registry: pd.DataFrame) -> list:
     module docstring) makes unsorted set/list construction a real,
     previously-caught failure mode here, not a hypothetical one."""
     validate_columns(registry, ("canonical_column", "family_number"), "registry")
-    return sorted(
-        registry.loc[registry["family_number"] != DATASET2_SPINE_FAMILY_NUMBER, "canonical_column"].tolist()
-    )
+    roles = registry["family_number"].map(predictor_registry_role)
+    return sorted(registry.loc[roles == DATASET2_REGISTRY_ROLE_PREDICTOR, "canonical_column"].tolist())
 
 
 def classify_column_constancy(full_range_df: pd.DataFrame, fit_df: pd.DataFrame, columns) -> dict:

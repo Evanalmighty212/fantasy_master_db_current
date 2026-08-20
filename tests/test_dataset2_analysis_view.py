@@ -48,8 +48,17 @@ class TestRequiredVerificationCounts:
         assert "bust_strict_below_replacement_label_positive_matches_102" not in audit.index
         assert "bust_strict_below_replacement_label_positive_matches_103" not in audit.index
 
+    def test_stale_primary_bust_exact_count_is_not_an_acceptance_key(self):
+        assert "bust_primary_label" in analysis_view_driver.NON_REPORTABLE_EXACT_COUNT_TARGETS
+
 
 class TestTargetEligibilityValidation:
+    def test_invalid_governed_bust_reference_fails_loudly(self, tmp_path):
+        path = tmp_path / "bust_reference.json"
+        path.write_text("{}")
+        with pytest.raises(RuntimeError, match="Governed bust reference validation failed"):
+            analysis_view_driver.load_governed_bust_reference(path)
+
     def test_declared_eligibility_column_governs_count(self):
         view = pd.DataFrame(
             {
@@ -106,6 +115,21 @@ class TestTargetEligibilityValidation:
         with pytest.raises(RuntimeError, match="missing eligibility column: missing_eligibility"):
             analysis_view_driver.summarize_target_counts(view, targets)
 
+    def test_primary_bust_summary_does_not_materialize_an_exact_positive_count(self):
+        view = pd.DataFrame(
+            {
+                "bust_primary_label": pd.Series([True, False], dtype="boolean"),
+                "bust_primary_eligible": pd.Series([True, True], dtype="boolean"),
+            }
+        )
+        targets = [{
+            "target_column": "bust_primary_label",
+            "target_type": "binary",
+            "eligibility_column": "bust_primary_eligible",
+        }]
+        counts = analysis_view_driver.summarize_target_counts(view, targets)
+        assert counts[0]["positive_count"] is None
+
     def test_registry_validation_failure_occurs_before_any_production_write(self, monkeypatch, tmp_path):
         predictor = _predictor((2015, "P1", "RB", 1.0))
         outcome = _outcome(
@@ -119,6 +143,7 @@ class TestTargetEligibilityValidation:
 
         monkeypatch.setattr(analysis_view_driver.pd, "read_parquet", lambda path: predictor if "predictor" in str(path) else outcome)
         monkeypatch.setattr(analysis_view_driver.pd, "read_csv", lambda path: _predictor_registry())
+        monkeypatch.setattr(analysis_view_driver, "load_governed_bust_reference", lambda: {})
         monkeypatch.setattr(
             analysis_view_driver,
             "build_dataset2_analysis_view",
@@ -140,6 +165,96 @@ class TestTargetEligibilityValidation:
             analysis_view_driver.main()
 
         assert list(tmp_path.iterdir()) == []
+
+    def test_failed_mandatory_audit_writes_no_analysis_view_outputs(self, monkeypatch, tmp_path):
+        predictor = _predictor((2015, "P1", "RB", 1.0))
+        outcome = _outcome(
+            (2015, "P1", "RB", "adp_scored", True, True, True, True, True, True, True, False, True, 5.0)
+        )
+        monkeypatch.setattr(
+            analysis_view_driver.pd,
+            "read_parquet",
+            lambda path: predictor if "predictor" in str(path) else outcome,
+        )
+        monkeypatch.setattr(analysis_view_driver.pd, "read_csv", lambda path: _predictor_registry())
+        monkeypatch.setattr(analysis_view_driver, "load_governed_bust_reference", lambda: {})
+        monkeypatch.setattr(
+            analysis_view_driver,
+            "build_mandatory_invariants",
+            lambda **kwargs: {"synthetic_mandatory_failure": False},
+        )
+        output_paths = {
+            "OUTPUT_DIR": tmp_path,
+            "VIEW_PARQUET_PATH": tmp_path / "view.parquet",
+            "VIEW_CSV_PATH": tmp_path / "view.csv",
+            "WHITELIST_PATH": tmp_path / "whitelist.csv",
+            "TARGET_REGISTRY_PATH": tmp_path / "targets.csv",
+            "COLUMN_REGISTRY_PATH": tmp_path / "columns.csv",
+            "JOIN_AUDIT_PATH": tmp_path / "audit.csv",
+        }
+        for name, path in output_paths.items():
+            monkeypatch.setattr(analysis_view_driver, name, path)
+
+        with pytest.raises(RuntimeError, match="synthetic_mandatory_failure"):
+            analysis_view_driver.main()
+        assert list(tmp_path.iterdir()) == []
+
+
+class TestMandatorySemanticInvariants:
+    @staticmethod
+    def _audit():
+        return {
+            "outcome_rows_no_predictor_match": 0,
+            "2026_all_targets_null": True,
+            "deterministic_rebuild": True,
+            "input_order_independent": True,
+            "duplicate_key_count": 0,
+            "no_x_y_suffix_columns": True,
+            "no_duplicate_column_names": True,
+            "dtype_boolean_bust_primary_label": True,
+            analysis_view_driver.STRICT_BUST_COUNT_AUDIT_KEY: True,
+        }
+
+    def test_governed_eligibility_and_structural_invariants_pass(self, monkeypatch):
+        monkeypatch.setattr(analysis_view_driver, "validate_bust_reference", lambda reference: None)
+        predictor = pd.DataFrame({"prediction_season": [2015], "player_id": ["P1"]})
+        view = predictor.copy()
+        outcome = pd.DataFrame({
+            "outcome_season": [2015],
+            "has_real_market_adp": [True],
+            "bust_primary_eligible": pd.Series([True], dtype="boolean"),
+            "bust_strict_below_replacement_eligible": pd.Series([True], dtype="boolean"),
+            "bust_primary_label": pd.Series([False], dtype="boolean"),
+        })
+        invariants = analysis_view_driver.build_mandatory_invariants(
+            view=view,
+            predictor_df=predictor,
+            outcome_df=outcome,
+            audit=self._audit(),
+            bust_reference={"synthetic": True},
+        )
+        assert all(invariants.values())
+
+    def test_eligibility_rule_drift_is_a_named_mandatory_failure(self, monkeypatch):
+        monkeypatch.setattr(analysis_view_driver, "validate_bust_reference", lambda reference: None)
+        predictor = pd.DataFrame({"prediction_season": [2015], "player_id": ["P1"]})
+        outcome = pd.DataFrame({
+            "outcome_season": [2015],
+            "has_real_market_adp": [True],
+            "bust_primary_eligible": pd.Series([False], dtype="boolean"),
+            "bust_strict_below_replacement_eligible": pd.Series([False], dtype="boolean"),
+            "bust_primary_label": pd.Series([pd.NA], dtype="boolean"),
+        })
+        invariants = analysis_view_driver.build_mandatory_invariants(
+            view=predictor.copy(),
+            predictor_df=predictor,
+            outcome_df=outcome,
+            audit=self._audit(),
+            bust_reference={"synthetic": True},
+        )
+        assert not invariants["bust_primary_eligibility_rule_consistent"]
+        with pytest.raises(RuntimeError, match="bust_primary_eligibility_rule_consistent"):
+            analysis_view_driver.require_mandatory_invariants(invariants)
 
 
 def _predictor(*rows, extra_cols=None):

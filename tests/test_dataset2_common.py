@@ -30,6 +30,7 @@ from lib.dataset2.common import (
     derive_predictor_whitelist_from_registry,
     filter_to_discovery_fit_predictor_rows,
     filter_to_historical_predictor_rows,
+    predictor_registry_role,
     real_reg_week_slots,
     season_length,
     week1_kickoff_by_team,
@@ -589,8 +590,8 @@ class TestDerivePredictorWhitelistFromRegistry:
         """Real predictor columns legitimately contain 'eligible' in
         their name (e.g. Family #9's efficiency_volume_eligible_*
         flags) -- a naive substring ban would wrongly exclude 60 real
-        predictors from the whitelist. Exclusion must be mechanical via
-        family_number == spine, never name-based."""
+        predictors from the whitelist. Exclusion must use the explicit
+        registry classification, never name matching."""
         registry = pd.DataFrame(
             {
                 "canonical_column": [
@@ -602,6 +603,36 @@ class TestDerivePredictorWhitelistFromRegistry:
         )
         whitelist = derive_predictor_whitelist_from_registry(registry)
         assert "fam9_team_final_4_qb_passing_efficiency_volume_eligible_exploratory" in whitelist
+
+    def test_excludes_all_preseason_control_and_metadata_fields(self):
+        market_fields = [
+            "preseason_market_status",
+            "preseason_market_status_sensitivity_30",
+            "preseason_market_status_authority",
+            "preseason_market_status_evidence_source",
+            "preseason_market_status_evidence_summary",
+        ]
+        registry = pd.DataFrame({
+            "canonical_column": market_fields + ["fam1_experience_years"],
+            "family_number": [
+                "N/A (preseason control)",
+                "N/A (preseason metadata)",
+                "N/A (preseason metadata)",
+                "N/A (preseason metadata)",
+                "N/A (preseason metadata)",
+                "1",
+            ],
+        })
+        assert derive_predictor_whitelist_from_registry(registry) == ["fam1_experience_years"]
+        assert predictor_registry_role("N/A (preseason control)") == "control"
+        assert predictor_registry_role("N/A (preseason metadata)") == "predictor_metadata"
+
+    def test_legitimate_na_prefixed_cross_cutting_family_remains_a_predictor(self):
+        registry = pd.DataFrame({
+            "canonical_column": ["srcB_prior_season_offense_pct"],
+            "family_number": ["N/A (Source B base variable, cross-cutting)"],
+        })
+        assert derive_predictor_whitelist_from_registry(registry) == ["srcB_prior_season_offense_pct"]
 
     def test_sorted_deterministic(self):
         registry = pd.DataFrame({"canonical_column": ["z_col", "a_col"], "family_number": ["1", "1"]})

@@ -769,11 +769,13 @@ trusted.
 **Confirmation that no target was opened**: the outcome table
 (`data/exports/dataset2_canonical_outcome_table.parquet`) was not
 recomputed or read by any step in this round except
-`build_dataset2_analysis_view.py`'s existing read-only join (which
-re-verified its own hardcoded expected counts --
-`bust_primary_label` positive=522, `bust_strict_below_replacement_label`
-positive=103, `star_by_value_label` positive=76 -- all UNCHANGED from
-before this round, confirming the outcome table itself is untouched).
+`build_dataset2_analysis_view.py`'s existing read-only join. At that
+time it re-verified hardcoded counts from the then-current artifact
+state, including a broad-primary-bust total that was later superseded
+by governed-source, market-status, and discovery-only-reference work.
+That historical total is not a current acceptance criterion; current
+validation uses the governed frozen-reference and label/eligibility
+invariants instead.
 No descriptive screening, regression, FDR calculation, or advancement
 decision was run against any trait-outcome relationship.
 

@@ -39,6 +39,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent / "research" / "datas
 
 import config
 import trait_analysis_pipeline_predictor_inventory as tapi
+from lib.dataset2.common import predictor_registry_role
 
 _REQUIRED_ARTIFACTS = (
     tapi.PREDICTOR_TABLE_PATH,
@@ -129,11 +130,25 @@ class TestDiscoveryFitSourcing:
     def test_whitelist_derived_from_canonical_registry(self, discovery_fit_whitelist, discovery_fit_registry):
         expected = sorted(
             discovery_fit_registry.loc[
-                discovery_fit_registry["family_number"] != "N/A (spine)", "canonical_column"
+                discovery_fit_registry["family_number"].map(predictor_registry_role) == "predictor",
+                "canonical_column",
             ].tolist()
         )
         assert discovery_fit_whitelist == expected
         assert len(discovery_fit_whitelist) == 440
+
+    def test_preseason_control_and_metadata_never_enter_inventory_or_clustering_whitelist(
+        self, discovery_fit_whitelist, discovery_fit_inv,
+    ):
+        excluded = {
+            "preseason_market_status",
+            "preseason_market_status_sensitivity_30",
+            "preseason_market_status_authority",
+            "preseason_market_status_evidence_source",
+            "preseason_market_status_evidence_summary",
+        }
+        assert excluded.isdisjoint(discovery_fit_whitelist)
+        assert excluded.isdisjoint(set(discovery_fit_inv["column"]))
 
     @pytest.mark.skipif(
         _OUTCOME_ARTIFACT_MISSING,

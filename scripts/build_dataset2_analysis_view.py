@@ -17,6 +17,7 @@ Writes:
   - dataset2_analysis_view_join_audit_report.csv
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -24,6 +25,11 @@ import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from lib.dataset2.analysis_view import build_dataset2_analysis_view
+from lib.dataset2.bust_reference import validate_bust_reference
+from config import (
+    DATASET2_BUST_REFERENCE_PATH,
+    SBV_FIRST_SCOREABLE_SEASON,
+)
 
 PREDICTOR_PARQUET_PATH = "data/exports/dataset2_canonical_predictor_table.parquet"
 PREDICTOR_DICTIONARY_PATH = "data/exports/dataset2_canonical_predictor_table_data_dictionary.csv"
@@ -36,6 +42,7 @@ WHITELIST_PATH = OUTPUT_DIR / "dataset2_analysis_view_predictor_whitelist.csv"
 TARGET_REGISTRY_PATH = OUTPUT_DIR / "dataset2_analysis_view_target_registry.csv"
 COLUMN_REGISTRY_PATH = OUTPUT_DIR / "dataset2_analysis_view_column_registry.csv"
 JOIN_AUDIT_PATH = OUTPUT_DIR / "dataset2_analysis_view_join_audit_report.csv"
+BUST_REFERENCE_PATH = Path(DATASET2_BUST_REFERENCE_PATH)
 
 # The prior expected count of 102 belonged to the pre-governed-source,
 # pre-market-status, and pre-discovery-only-reference artifact state. The
@@ -47,6 +54,8 @@ EXPECTED_STRICT_BUST_POSITIVE_COUNT = 113
 STRICT_BUST_COUNT_AUDIT_KEY = (
     f"bust_strict_below_replacement_label_positive_matches_{EXPECTED_STRICT_BUST_POSITIVE_COUNT}"
 )
+
+NON_REPORTABLE_EXACT_COUNT_TARGETS = {"bust_primary_label"}
 
 
 def summarize_target_counts(view, targets):
@@ -81,7 +90,7 @@ def summarize_target_counts(view, targets):
             eligibility_basis = eligibility_column
 
         n_positive = None
-        if target["target_type"] == "binary":
+        if target["target_type"] == "binary" and target_column not in NON_REPORTABLE_EXACT_COUNT_TARGETS:
             n_positive = int((view[target_column] == True).sum())  # noqa: E712
         counts.append(
             {
@@ -95,11 +104,74 @@ def summarize_target_counts(view, targets):
     return counts
 
 
+def load_governed_bust_reference(path: Path = BUST_REFERENCE_PATH) -> dict:
+    """Load and validate the frozen discovery-only bust reference."""
+    try:
+        reference = json.loads(path.read_text())
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Governed bust reference is missing: {path}") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Governed bust reference is unreadable or invalid JSON: {path}") from exc
+    try:
+        validate_bust_reference(reference)
+    except ValueError as exc:
+        raise RuntimeError(f"Governed bust reference validation failed: {exc}") from exc
+    return reference
+
+
+def build_mandatory_invariants(
+    *, view, predictor_df, outcome_df, audit, bust_reference,
+) -> dict[str, bool]:
+    """Return semantic/governed acceptance invariants without target totals."""
+    try:
+        validate_bust_reference(bust_reference)
+        governed_reference_valid = True
+    except ValueError:
+        governed_reference_valid = False
+    outcome_seasons = pd.to_numeric(outcome_df["outcome_season"], errors="coerce")
+    expected_primary_eligible = (
+        outcome_df["has_real_market_adp"].fillna(False).astype(bool)
+        & outcome_seasons.ge(SBV_FIRST_SCOREABLE_SEASON)
+    )
+    actual_primary_eligible = outcome_df["bust_primary_eligible"].fillna(False).astype(bool)
+    strict_eligible = outcome_df["bust_strict_below_replacement_eligible"].fillna(False).astype(bool)
+    primary_label_present = outcome_df["bust_primary_label"].notna()
+
+    invariants = {
+        "governed_bust_reference_valid": governed_reference_valid,
+        "bust_primary_eligibility_rule_consistent": bool(actual_primary_eligible.equals(expected_primary_eligible)),
+        "strict_bust_eligibility_matches_primary": bool(strict_eligible.equals(actual_primary_eligible)),
+        "bust_primary_label_presence_matches_eligibility": bool(primary_label_present.equals(actual_primary_eligible)),
+        "analysis_view_preserves_predictor_row_count": len(view) == len(predictor_df),
+        "all_outcome_keys_preserved": audit["outcome_rows_no_predictor_match"] == 0,
+        "future_targets_are_null": bool(audit["2026_all_targets_null"]),
+        "deterministic_rebuild": bool(audit["deterministic_rebuild"]),
+        "input_order_independent": bool(audit["input_order_independent"]),
+        "no_duplicate_keys": audit["duplicate_key_count"] == 0,
+        "no_x_y_suffix_columns": bool(audit["no_x_y_suffix_columns"]),
+        "no_duplicate_column_names": bool(audit["no_duplicate_column_names"]),
+        STRICT_BUST_COUNT_AUDIT_KEY: bool(audit[STRICT_BUST_COUNT_AUDIT_KEY]),
+    }
+    invariants.update({
+        key: bool(value)
+        for key, value in audit.items()
+        if key.startswith("dtype_boolean_")
+    })
+    return invariants
+
+
+def require_mandatory_invariants(invariants: dict[str, bool]) -> None:
+    failed = sorted(name for name, passed in invariants.items() if not passed)
+    if failed:
+        raise RuntimeError(f"Mandatory analysis-view audit invariant(s) failed: {failed}")
+
+
 def main():
     print("Loading already-built predictor and outcome artifacts (read-only, no recomputation)...")
     predictor_df = pd.read_parquet(PREDICTOR_PARQUET_PATH)
     predictor_registry = pd.read_csv(PREDICTOR_DICTIONARY_PATH)
     outcome_df = pd.read_parquet(OUTCOME_PARQUET_PATH)
+    bust_reference = load_governed_bust_reference()
     print(f"  predictor: {len(predictor_df)} rows, {len(predictor_df.columns)} columns")
     print(f"  outcome:   {len(outcome_df)} rows, {len(outcome_df.columns)} columns")
 
@@ -160,11 +232,14 @@ def main():
         col = counts["target_column"]
         n_eligible = counts["eligible_count"]
         n_true = counts["positive_count"]
-        if counts["target_type"] == "binary":
+        if counts["target_type"] == "binary" and n_true is not None:
             rate = n_true / n_eligible * 100 if n_eligible else float("nan")
             print(f"  {col}: eligible={n_eligible}  positive={n_true}  rate={rate:.1f}%")
             audit[f"{col}_eligible"] = n_eligible
             audit[f"{col}_positive"] = n_true
+        elif counts["target_type"] == "binary":
+            print(f"  {col}: eligible={n_eligible}  positive count intentionally not materialized")
+            audit[f"{col}_eligible"] = n_eligible
         else:
             print(
                 f"  {col}: available={n_eligible} "
@@ -173,22 +248,30 @@ def main():
             audit[f"{col}_eligible"] = n_eligible
 
     print("\n--- Required verification counts ---")
-    bust_primary_true = int((view["bust_primary_label"] == True).sum())  # noqa: E712
     bust_strict_true = int((view["bust_strict_below_replacement_label"] == True).sum())  # noqa: E712
     star_eligible = int(view["star_outcome_eligible"].sum())
     star_true = int((view["star_by_value_label"] == True).sum())  # noqa: E712
-    print(f"bust_primary_label positive count: {bust_primary_true} (expected 522)")
     print(
         "bust_strict_below_replacement_label positive count: "
         f"{bust_strict_true} (expected {EXPECTED_STRICT_BUST_POSITIVE_COUNT})"
     )
     print(f"star_outcome_eligible count: {star_eligible}")
     print(f"star_by_value_label positive count: {star_true}")
-    audit["bust_primary_label_positive_matches_522"] = bust_primary_true == 522
     audit[STRICT_BUST_COUNT_AUDIT_KEY] = bust_strict_true == EXPECTED_STRICT_BUST_POSITIVE_COUNT
 
-    # All construction, registry-reference, determinism, dtype, and audit
-    # validation above completes before any production artifact is written.
+    mandatory_invariants = build_mandatory_invariants(
+        view=view,
+        predictor_df=predictor_df,
+        outcome_df=outcome_df,
+        audit=audit,
+        bust_reference=bust_reference,
+    )
+    audit.update(mandatory_invariants)
+    require_mandatory_invariants(mandatory_invariants)
+
+    # All construction, registry-reference, determinism, dtype, semantic,
+    # governed-reference, and audit validation above completes before any
+    # production artifact is written.
     # A validation failure therefore cannot promote a partial analysis-view
     # CSV, Parquet, registry, whitelist, or audit report.
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
