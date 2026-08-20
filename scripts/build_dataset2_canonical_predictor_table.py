@@ -49,6 +49,10 @@ MASTER_POPULATION_PATH = "data/master/master_historical_db_with_lwi_2006_2025.cs
 PLAYERS_PATH = "data/raw/nflverse/reference/players.csv"
 WEEKLY_GLOB = "data/raw/nflverse/annual/stats_player_week_*.csv"
 SNAP_COUNTS_GLOB = "data/raw/nflverse/annual/snap_counts_*.csv"
+GOVERNED_PRE2025_DEPTH_CHART_SEASONS = tuple(range(2006, 2025))
+PRE2025_DEPTH_CHART_REQUIRED_COLUMNS = {
+    "season", "club_code", "week", "game_type", "depth_team", "position", "gsis_id",
+}
 
 OUTPUT_DIR = Path("data/exports")
 PARQUET_PATH = OUTPUT_DIR / "dataset2_canonical_predictor_table.parquet"
@@ -86,10 +90,97 @@ def _load_snap_counts() -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
-def _load_depth_charts_pre2025() -> pd.DataFrame:
-    root = Path("data/raw/nflverse/annual")
-    files = [f for f in sorted(root.glob("depth_charts_*.csv")) if "2025" not in f.name]
-    frames = [pd.read_csv(f, low_memory=False) for f in files]
+class DepthChartSourceIntegrityError(RuntimeError):
+    """One governed depth-chart season cannot be trusted or parsed."""
+
+
+def _governed_depth_chart_path(season: int) -> Path:
+    return nflverse_source.DEPTH_CHARTS_CACHE_DIR / f"depth_charts_{season}.csv"
+
+
+def _load_depth_charts_pre2025(
+    seasons=GOVERNED_PRE2025_DEPTH_CHART_SEASONS,
+) -> pd.DataFrame:
+    """Validate and parse every governed 2006-2024 depth-chart source.
+
+    This is deliberately an explicit season preflight rather than a glob:
+    a missing season, extra file, or opaque list-comprehension parse failure
+    must never silently change Dataset 2 Families 10/86. Local presence is
+    required here; canonical pipeline execution does not perform an implicit
+    network reacquisition. ``fetch_depth_chart_raw`` then enforces the
+    committed manifest entry and SHA-256 before any CSV is parsed.
+    """
+    governed_paths: list[tuple[int, Path]] = []
+    for season in seasons:
+        path = _governed_depth_chart_path(season)
+        if not path.is_file():
+            raise DepthChartSourceIntegrityError(
+                f"depth-chart source missing for season {season}: {path}. "
+                "Restore/reacquire the governed manifest-pinned input; do not skip the season."
+            )
+        try:
+            validated_path = nflverse_source.fetch_depth_chart_raw(season)
+        except RuntimeError as exc:
+            category = "hash mismatch" if "INTEGRITY CHECK FAILED" in str(exc) else "manifest validation failure"
+            raise DepthChartSourceIntegrityError(
+                f"depth-chart {category} for season {season} at {path}: {exc}"
+            ) from exc
+        except OSError as exc:
+            raise DepthChartSourceIntegrityError(
+                f"depth-chart source unreadable for season {season} at {path}: {exc}"
+            ) from exc
+        validated_path = Path(validated_path)
+        if validated_path != path:
+            raise DepthChartSourceIntegrityError(
+                f"depth-chart manifest path disagreement for season {season}: expected {path}, got {validated_path}"
+            )
+        governed_paths.append((season, path))
+
+    frames: list[pd.DataFrame] = []
+    for season, path in governed_paths:
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            raise DepthChartSourceIntegrityError(
+                f"depth-chart source unreadable for season {season} at {path}: {exc}"
+            ) from exc
+        if not raw.strip():
+            raise DepthChartSourceIntegrityError(
+                f"depth-chart source blank/headerless for season {season} at {path}: no CSV content"
+            )
+        first_line = raw.splitlines()[0].decode("utf-8", errors="replace")
+        header_columns = {column.strip().strip('"') for column in first_line.split(",")}
+        if not PRE2025_DEPTH_CHART_REQUIRED_COLUMNS <= header_columns:
+            if not (PRE2025_DEPTH_CHART_REQUIRED_COLUMNS & header_columns):
+                category = "blank/headerless"
+            else:
+                category = "malformed CSV/schema"
+            missing = sorted(PRE2025_DEPTH_CHART_REQUIRED_COLUMNS - header_columns)
+            raise DepthChartSourceIntegrityError(
+                f"depth-chart source {category} for season {season} at {path}: "
+                f"required header columns missing {missing}"
+            )
+        try:
+            frame = pd.read_csv(path, low_memory=False)
+        except pd.errors.EmptyDataError as exc:
+            raise DepthChartSourceIntegrityError(
+                f"depth-chart source blank/headerless for season {season} at {path}: {exc}"
+            ) from exc
+        except (pd.errors.ParserError, UnicodeDecodeError, ValueError) as exc:
+            raise DepthChartSourceIntegrityError(
+                f"depth-chart source malformed CSV for season {season} at {path}: {exc}"
+            ) from exc
+        missing_columns = sorted(PRE2025_DEPTH_CHART_REQUIRED_COLUMNS - set(frame.columns))
+        if missing_columns:
+            raise DepthChartSourceIntegrityError(
+                f"depth-chart source malformed CSV/schema for season {season} at {path}: "
+                f"required columns missing {missing_columns}"
+            )
+        if frame.empty:
+            raise DepthChartSourceIntegrityError(
+                f"depth-chart source blank/headerless for season {season} at {path}: header has no data rows"
+            )
+        frames.append(frame)
     return pd.concat(frames, ignore_index=True)
 
 
