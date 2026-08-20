@@ -8,7 +8,7 @@ accepted artifacts is a separate authorization.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Sequence
 
 import numpy as np
@@ -83,6 +83,15 @@ CONTROL_LEVELS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("era", ("pre_2011", "2011_plus"), "pre_2011"),
 )
 
+FIXED_CATEGORICAL_REFERENCES = {
+    "fam9_team_game_window_status": "applicable",
+    "fam10_depth_chart_status": "starter",
+}
+FREQUENCY_DERIVED_TEAM_REFERENCES = {
+    "fam10_depth_chart_team",
+    "fam4_nfl_draft_team",
+}
+
 
 @dataclass(frozen=True)
 class PredictorDefinition:
@@ -91,6 +100,19 @@ class PredictorDefinition:
     cluster_id: str
     is_cluster_representative: bool
     reference_level: str | None = None
+
+
+@dataclass(frozen=True)
+class CategoricalReferenceRecord:
+    predictor_column: str
+    reference_level: str
+    reference_frequency: int
+    eligible_nonnull_n: int
+    selection_method: str
+
+    @property
+    def reference_share(self) -> float:
+        return self.reference_frequency / self.eligible_nonnull_n
 
 
 @dataclass(frozen=True)
@@ -163,6 +185,7 @@ class Phase1Package:
     primary_results: pd.DataFrame
     incremental_results: tuple[IncrementalResult, ...]
     robustness_results: tuple[RobustnessResult, ...]
+    categorical_references: tuple[CategoricalReferenceRecord, ...]
 
 
 def strict_bust_practical_effect_passes(odds_ratios: Sequence[float]) -> bool:
@@ -237,6 +260,59 @@ def discovery_fit_rows(rows: pd.DataFrame, target: TargetDefinition, predictor_c
     if selected.empty:
         raise ValueError(f"no eligible 2010-2020 rows for {predictor_column} and {target.family}")
     return selected
+
+
+def resolve_categorical_references(
+    rows: pd.DataFrame,
+    predictors: Sequence[PredictorDefinition],
+) -> tuple[tuple[PredictorDefinition, ...], tuple[CategoricalReferenceRecord, ...]]:
+    """Resolve and audit categorical references without consulting outcomes."""
+    seasons = _validated_seasons(rows)
+    discovery = rows.loc[
+        seasons.between(DATASET2_BUST_REFERENCE_START_SEASON, DATASET2_DISCOVERY_END_SEASON)
+    ]
+    resolved = []
+    records = []
+    for predictor in predictors:
+        if predictor.kind != "categorical":
+            resolved.append(predictor)
+            continue
+        if predictor.column not in discovery:
+            raise ValueError(f"categorical predictor is absent from Phase 1 rows: {predictor.column}")
+        values = discovery[predictor.column].dropna().astype(str)
+        counts = values.value_counts()
+        if counts.empty:
+            raise ValueError(f"categorical reference cannot be derived from no eligible values: {predictor.column}")
+
+        if predictor.column in FIXED_CATEGORICAL_REFERENCES:
+            reference = FIXED_CATEGORICAL_REFERENCES[predictor.column]
+            method = "fixed_governed_status_reference"
+        elif predictor.column in FREQUENCY_DERIVED_TEAM_REFERENCES:
+            ranked = sorted(counts.items(), key=lambda item: (-int(item[1]), str(item[0])))
+            reference = str(ranked[0][0])
+            method = "most_frequent_discovery_category_alphabetical_tiebreak"
+        elif predictor.reference_level is not None:
+            reference = predictor.reference_level
+            method = "explicit_predictor_definition"
+        else:
+            raise ValueError(f"categorical predictor has no governed reference rule: {predictor.column}")
+
+        if predictor.reference_level is not None and predictor.reference_level != reference:
+            raise ValueError(
+                f"declared reference {predictor.reference_level!r} disagrees with governed "
+                f"reference {reference!r} for {predictor.column}"
+            )
+        if reference not in counts:
+            raise ValueError(f"governed categorical reference is absent for {predictor.column}: {reference}")
+        resolved.append(replace(predictor, reference_level=reference))
+        records.append(CategoricalReferenceRecord(
+            predictor_column=predictor.column,
+            reference_level=reference,
+            reference_frequency=int(counts[reference]),
+            eligible_nonnull_n=int(len(values)),
+            selection_method=method,
+        ))
+    return tuple(resolved), tuple(records)
 
 
 def validate_predictor_definitions(
@@ -590,8 +666,9 @@ def run_phase1(
     synthetic_test_mode: bool = False,
 ) -> Phase1Package:
     """Run all three frozen primary families on caller-supplied rows only."""
-    validate_predictor_definitions(predictors, predictor_whitelist)
     _validated_seasons(rows)  # reject holdout before any target-specific filtering
+    predictors, categorical_references = resolve_categorical_references(rows, predictors)
+    validate_predictor_definitions(predictors, predictor_whitelist)
     if not synthetic_test_mode and (
         bootstrap_replicates != DATASET2_FIRTH_BOOTSTRAP_REPLICATES
         or seed != DATASET2_PHASE1_RANDOM_SEED
@@ -633,4 +710,9 @@ def run_phase1(
                 signs = [np.sign(values[index] - null) == np.sign(full - null) for _, values in fold_estimates]
                 statuses.append("all_folds_same_direction" if all(signs) else "mixed_fold_directions")
             robustness.append(RobustnessResult(target.family, predictor.column, result.estimates, tuple(fold_estimates), tuple(statuses)))
-    return Phase1Package(assemble_results(model_results), tuple(incrementals), tuple(robustness))
+    return Phase1Package(
+        assemble_results(model_results),
+        tuple(incrementals),
+        tuple(robustness),
+        categorical_references,
+    )

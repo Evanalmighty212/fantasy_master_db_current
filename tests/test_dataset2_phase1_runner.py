@@ -23,6 +23,7 @@ from lib.dataset2.phase1_runner import (
     incremental_validation,
     null_centered_bootstrap_p_value,
     null_centered_joint_bootstrap_p_value,
+    resolve_categorical_references,
     run_phase1,
     strict_bust_practical_effect_passes,
     validate_predictor_definitions,
@@ -159,6 +160,118 @@ def test_predictor_registry_blocks_outcomes_and_requires_categorical_reference()
         )
 
 
+def test_fixed_status_references_are_resolved_and_audited():
+    rows = pd.DataFrame({
+        "prediction_season": [2010, 2011, 2012, 2013, 2014],
+        "fam9_team_game_window_status": [
+            "applicable", "applicable", "unavailable_traded", "applicable", None,
+        ],
+        "fam10_depth_chart_status": ["starter", "backup", "deeper", "starter", "backup"],
+    })
+    predictors = [
+        PredictorDefinition("fam9_team_game_window_status", "categorical", "c1", True),
+        PredictorDefinition("fam10_depth_chart_status", "categorical", "c2", True),
+    ]
+    resolved, records = resolve_categorical_references(rows, predictors)
+    assert [predictor.reference_level for predictor in resolved] == ["applicable", "starter"]
+    assert [(record.reference_level, record.reference_frequency, record.eligible_nonnull_n) for record in records] == [
+        ("applicable", 3, 4),
+        ("starter", 2, 5),
+    ]
+    assert all(record.selection_method == "fixed_governed_status_reference" for record in records)
+
+
+def test_team_reference_uses_frequency_then_alphabetical_tiebreak():
+    rows = pd.DataFrame({
+        "prediction_season": [2010, 2011, 2012, 2013, 2014, 2015],
+        "fam10_depth_chart_team": ["CIN", "CIN", "BUF", "CIN", "BUF", None],
+        "fam4_nfl_draft_team": ["SEA", "ARI", "SEA", "ARI", None, None],
+    })
+    predictors = [
+        PredictorDefinition("fam10_depth_chart_team", "categorical", "c1", True),
+        PredictorDefinition("fam4_nfl_draft_team", "categorical", "c2", True),
+    ]
+    resolved, records = resolve_categorical_references(rows, predictors)
+    assert [predictor.reference_level for predictor in resolved] == ["CIN", "ARI"]
+    assert records[0].reference_frequency == 3
+    assert records[0].reference_share == pytest.approx(3 / 5)
+    assert records[1].reference_frequency == 2
+    assert records[1].selection_method == "most_frequent_discovery_category_alphabetical_tiebreak"
+
+
+def test_absent_fixed_status_reference_fails_loudly():
+    rows = pd.DataFrame({
+        "prediction_season": [2010, 2011],
+        "fam10_depth_chart_status": ["backup", "deeper"],
+    })
+    predictor = PredictorDefinition("fam10_depth_chart_status", "categorical", "c", True)
+    with pytest.raises(ValueError, match="governed categorical reference is absent"):
+        resolve_categorical_references(rows, [predictor])
+
+
+def test_team_reference_with_no_eligible_values_fails_loudly():
+    rows = pd.DataFrame({
+        "prediction_season": [2010, 2011],
+        "fam4_nfl_draft_team": [None, None],
+    })
+    predictor = PredictorDefinition("fam4_nfl_draft_team", "categorical", "c", True)
+    with pytest.raises(ValueError, match="cannot be derived"):
+        resolve_categorical_references(rows, [predictor])
+
+
+def test_missing_categorical_predictor_column_fails_loudly():
+    rows = pd.DataFrame({
+        "prediction_season": [2010, 2011],
+        "fam10_depth_chart_status": ["starter", "backup"],
+    })
+    predictor = PredictorDefinition("fam9_team_game_window_status", "categorical", "c", True)
+    with pytest.raises(ValueError, match="absent from Phase 1 rows"):
+        resolve_categorical_references(rows, [predictor])
+
+
+def test_declared_reference_conflicting_with_governed_reference_fails_loudly():
+    rows = pd.DataFrame({
+        "prediction_season": [2010, 2011, 2012],
+        "fam9_team_game_window_status": ["applicable", "applicable", "unavailable_traded"],
+    })
+    predictor = PredictorDefinition(
+        "fam9_team_game_window_status", "categorical", "c", True,
+        reference_level="unavailable_traded",
+    )
+    with pytest.raises(ValueError, match="disagrees with governed reference"):
+        resolve_categorical_references(rows, [predictor])
+
+
+def test_joint_categorical_lwi_test_is_reference_invariant():
+    rows = _synthetic_rows()
+    outcome_sd = float(rows["lwi_score"].std(ddof=1))
+    low = _fit_lwi(rows, PRIMARY_TARGETS[0], _predictor("categorical"), outcome_sd)
+    middle_predictor = PredictorDefinition(
+        "trait_category", "categorical", "cluster_001", True, reference_level="middle",
+    )
+    middle = _fit_lwi(rows, PRIMARY_TARGETS[0], middle_predictor, outcome_sd)
+    assert low.primary_p_value == pytest.approx(middle.primary_p_value, rel=1e-10, abs=1e-12)
+
+
+def test_joint_categorical_firth_bootstrap_test_is_reference_invariant():
+    rows = _synthetic_rows()
+    rng = np.random.default_rng(99)
+    probabilities = rows["trait_category"].map({"low": 0.08, "middle": 0.22, "high": 0.38})
+    rows["star_by_value_label"] = (rng.random(len(rows)) < probabilities).astype(int)
+    low = _fit_firth(
+        rows, PRIMARY_TARGETS[1], _predictor("categorical"),
+        replicates=20, seed=20260808, minimum_success_rate=0.99,
+    )
+    middle_predictor = PredictorDefinition(
+        "trait_category", "categorical", "cluster_001", True, reference_level="middle",
+    )
+    middle = _fit_firth(
+        rows, PRIMARY_TARGETS[1], middle_predictor,
+        replicates=20, seed=20260808, minimum_success_rate=0.99,
+    )
+    assert low.primary_p_value == middle.primary_p_value
+
+
 def test_continuous_lwi_fit_reports_standardized_and_native_effects():
     rows = _synthetic_rows()
     outcome_sd = float(rows["lwi_score"].std(ddof=1))
@@ -234,6 +347,7 @@ def test_end_to_end_runner_assembles_three_primary_families_from_synthetic_rows(
     assert len(package.incremental_results) == 3
     assert len(package.robustness_results) == 3
     assert set(package.primary_results["predictor_column"]) == {"trait"}
+    assert package.categorical_references == ()
 
 
 def test_phase1_runner_module_has_no_artifact_loader_or_repository_path():

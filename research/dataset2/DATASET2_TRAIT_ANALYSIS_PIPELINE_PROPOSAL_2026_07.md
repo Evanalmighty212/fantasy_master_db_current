@@ -921,6 +921,15 @@ document while preserving those passages as decision history:
   category-versus-reference contrasts are reported as effect details,
   not as separate primary hypotheses. Acquisition-cost and position
   controls remain controls and do not enter the candidate FDR family.
+  The fixed reference is `applicable` for
+  `fam9_team_game_window_status` and `starter` for
+  `fam10_depth_chart_status`. For `fam10_depth_chart_team` and
+  `fam4_nfl_draft_team`, choose the most frequent non-null 2010--2020
+  discovery category outcome-free, with alphabetical tie-breaking; the
+  current governed discovery inputs select `CIN` for both. Record the
+  chosen reference, frequency, denominator, and method in the run
+  manifest, and fail loudly if a fixed reference is absent or a team
+  reference cannot be derived.
 - Temporal incremental validation uses expanding discovery windows,
   not the grouped random folds proposed in §8. The protected
   2021--2025 holdout remains untouched during fitting and tuning.

@@ -506,6 +506,16 @@ with the standard finite-sample correction; sign-tail and bootstrap-t
 p-values are not used. For a categorical predictor, all governed
 category-versus-reference coefficients contribute to one joint primary
 test. Those contrasts are effect details, not separate FDR hypotheses.
+The governed references are `applicable` for
+`fam9_team_game_window_status` and `starter` for
+`fam10_depth_chart_status`. For `fam10_depth_chart_team` and
+`fam4_nfl_draft_team`, select the most frequent non-null 2010--2020
+discovery category without consulting any outcome, breaking frequency
+ties alphabetically. The currently governed discovery inputs select
+`CIN` for both team predictors. The Phase 1 manifest records each chosen
+reference, its discovery frequency and denominator, and the selection
+method; an absent fixed reference or an underivable team reference fails
+loudly.
 Baseline acquisition-cost and position controls are controls rather than
 candidate hypotheses. Separate Benjamini-Hochberg `q = 0.10` correction
 is applied within each primary family.
