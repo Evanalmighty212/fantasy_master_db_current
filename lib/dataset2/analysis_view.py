@@ -86,17 +86,28 @@ import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from lib.dataset2.common import validate_columns
+from lib.preseason_market_status import STATUSES as PRESEASON_MARKET_STATUS_VALUES
 
 SHARED_SPINE_METADATA_COLUMNS = (
     "canonical_position_status", "canonical_position_authority", "historical_input_revision",
 )
-PREDICTOR_REQUIRED_COLUMNS = ("prediction_season", "player_id", "position") + SHARED_SPINE_METADATA_COLUMNS
+PRESEASON_MARKET_METADATA_COLUMNS = (
+    "preseason_market_status", "preseason_market_status_sensitivity_30",
+    "preseason_market_status_authority", "preseason_market_status_evidence_source",
+    "preseason_market_status_evidence_summary",
+)
+PREDICTOR_REQUIRED_COLUMNS = (
+    ("prediction_season", "player_id", "position")
+    + SHARED_SPINE_METADATA_COLUMNS
+    + PRESEASON_MARKET_METADATA_COLUMNS
+)
 OUTCOME_REQUIRED_COLUMNS = ("outcome_season", "player_id", "position") + SHARED_SPINE_METADATA_COLUMNS
 PREDICTOR_COLUMN_REGISTRY_REQUIRED_COLUMNS = ("canonical_column", "family_number")
 
 PREDICTOR_SPINE_COLUMNS = (
     "prediction_season", "player_id", "position", "canonical_position_status",
-    "canonical_position_authority", "historical_input_revision", "observation_season",
+    "canonical_position_authority", "historical_input_revision",
+    *PRESEASON_MARKET_METADATA_COLUMNS, "observation_season",
 )
 _OUTCOME_DROP_BEFORE_MERGE = ("position",) + SHARED_SPINE_METADATA_COLUMNS
 _OUTCOME_RENAME_BEFORE_MERGE = {"outcome_season": "prediction_season"}
@@ -125,6 +136,8 @@ OUTCOME_JOIN_STATUS_NO_MATCH = "no_outcome_row_matched"
 
 ROLE_ID = "id"
 ROLE_PREDICTOR = "predictor"
+ROLE_CONTROL = "control"
+ROLE_PREDICTOR_METADATA = "predictor_metadata"
 ROLE_TARGET_LABEL = "target_label"
 ROLE_TARGET_CONTINUOUS = "target_continuous"
 ROLE_TARGET_DIAGNOSTIC = "target_diagnostic"
@@ -235,7 +248,13 @@ _OUTCOME_COLUMN_ROLES = {
 
 
 def _predictor_role(family_number: str) -> str:
-    return ROLE_ID if family_number == "N/A (spine)" else ROLE_PREDICTOR
+    if family_number == "N/A (spine)":
+        return ROLE_ID
+    if family_number == "N/A (preseason control)":
+        return ROLE_CONTROL
+    if family_number == "N/A (preseason metadata)":
+        return ROLE_PREDICTOR_METADATA
+    return ROLE_PREDICTOR
 
 
 def build_dataset2_analysis_view(
@@ -254,9 +273,52 @@ def build_dataset2_analysis_view(
     -- used only to derive the predictor whitelist mechanically, never
     recomputed here.
     """
+    if "real_status" in predictor_df.columns:
+        raise ValueError(
+            "predictor_df contains outcome-side real_status; it cannot substitute for "
+            "predictor-side preseason_market_status"
+        )
+    outcome_market_collisions = sorted(set(PRESEASON_MARKET_METADATA_COLUMNS) & set(outcome_df.columns))
+    if outcome_market_collisions:
+        raise ValueError(
+            "outcome_df contains predictor-side preseason market metadata: "
+            f"{outcome_market_collisions}; outcome-side substitution/collision is forbidden"
+        )
     validate_columns(predictor_df, PREDICTOR_REQUIRED_COLUMNS, "predictor_df")
     validate_columns(outcome_df, OUTCOME_REQUIRED_COLUMNS, "outcome_df")
     validate_columns(predictor_column_registry, PREDICTOR_COLUMN_REGISTRY_REQUIRED_COLUMNS, "predictor_column_registry")
+    historical = pd.to_numeric(predictor_df["prediction_season"], errors="coerce").le(2025)
+    for column in ("preseason_market_status", "preseason_market_status_sensitivity_30"):
+        if predictor_df.loc[historical, column].isna().any():
+            raise ValueError(f"historical predictor rows require non-null predictor-side {column}")
+        unexpected = sorted(
+            set(predictor_df.loc[historical, column].astype(str)) - PRESEASON_MARKET_STATUS_VALUES
+        )
+        if unexpected:
+            raise ValueError(f"historical predictor rows contain unknown {column} values: {unexpected}")
+    if predictor_df.loc[historical, "preseason_market_status_authority"].isna().any():
+        raise ValueError(
+            "historical predictor rows require non-null predictor-side preseason_market_status_authority"
+        )
+    registry_market_rows = predictor_column_registry.loc[
+        predictor_column_registry["canonical_column"].isin(PRESEASON_MARKET_METADATA_COLUMNS)
+    ]
+    if set(registry_market_rows["canonical_column"]) != set(PRESEASON_MARKET_METADATA_COLUMNS):
+        raise ValueError("predictor registry is missing required preseason market metadata rows")
+    expected_market_families = {
+        "preseason_market_status": "N/A (preseason control)",
+        **{
+            column: "N/A (preseason metadata)"
+            for column in PRESEASON_MARKET_METADATA_COLUMNS
+            if column != "preseason_market_status"
+        },
+    }
+    actual_market_families = registry_market_rows.set_index("canonical_column")["family_number"].to_dict()
+    if actual_market_families != expected_market_families:
+        raise ValueError(
+            "predictor registry misclassifies preseason market metadata: "
+            f"expected {expected_market_families}, got {actual_market_families}"
+        )
 
     if predictor_df.duplicated(subset=["prediction_season", "player_id"]).any():
         raise RuntimeError("predictor_df has duplicate (prediction_season, player_id) keys -- not a valid spine.")

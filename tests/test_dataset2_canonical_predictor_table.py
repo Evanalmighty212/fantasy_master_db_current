@@ -34,6 +34,11 @@ def _population(*rows):
     out["canonical_position_status"] = "adp_source"
     out["canonical_position_authority"] = "adp_source_position"
     out["historical_input_revision"] = "test-input-revision"
+    out["preseason_market_status"] = "ordinary_market"
+    out["preseason_market_status_sensitivity_30"] = "ordinary_market"
+    out["preseason_market_status_authority"] = "clean_observed_adp_source"
+    out["preseason_market_status_evidence_source"] = pd.NA
+    out["preseason_market_status_evidence_summary"] = pd.NA
     return out
 
 
@@ -154,6 +159,35 @@ class TestGrainAudits:
         assert set(out["canonical_position_status"]) == {"adp_source"}
         assert set(out["canonical_position_authority"]) == {"adp_source_position"}
         assert set(out["historical_input_revision"]) == {"test-input-revision"}
+        master_backed = out[out["prediction_season"].isin(pop["season"])]
+        assert set(master_backed["preseason_market_status"]) == {"ordinary_market"}
+        assert set(master_backed["preseason_market_status_sensitivity_30"]) == {"ordinary_market"}
+        assert set(master_backed["preseason_market_status_authority"]) == {"clean_observed_adp_source"}
+        market_registry = registry.set_index("canonical_column")
+        assert market_registry.loc["preseason_market_status", "family_number"] == "N/A (preseason control)"
+        assert (
+            market_registry.loc["preseason_market_status_authority", "family_number"]
+            == "N/A (preseason metadata)"
+        )
+
+    def test_missing_predictor_side_market_status_fails_loudly(self):
+        pop = _population((2015, "P1", "RB", "AAA", 16, 10.0, 20, 5)).drop(
+            columns="preseason_market_status"
+        )
+        players = _players(("P1", "PfrP1", "1995-01-01", 2013, 70, 210, 2013, 3, 80, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA"))
+        with pytest.raises(ValueError, match="preseason_market_status"):
+            _build(pop, players, weekly)
+
+    def test_outcome_real_status_cannot_substitute_for_preseason_market_status(self):
+        pop = _population((2015, "P1", "RB", "AAA", 16, 10.0, 20, 5)).drop(
+            columns="preseason_market_status"
+        )
+        pop["real_status"] = "adp_scored"
+        players = _players(("P1", "PfrP1", "1995-01-01", 2013, 70, 210, 2013, 3, 80, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2015, "P1", AAA_2015_WEEKS, "AAA"))
+        with pytest.raises(ValueError, match="outcome-side real_status"):
+            _build(pop, players, weekly)
 
     def test_no_duplicate_canonical_column_names(self):
         pop = _population((2015, "P1", "RB", "AAA", 16, 10.0, 20, 5))

@@ -159,6 +159,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from lib.preseason_market_status import STATUSES as PRESEASON_MARKET_STATUS_VALUES
+
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from lib.dataset2.common import apply_source_coverage_null_mask, validate_columns
 from lib.dataset2.depth_chart_traits import build_depth_chart_traits
@@ -188,6 +190,19 @@ MASTER_POPULATION_REQUIRED_COLUMNS = (
     "canonical_position_status",
     "canonical_position_authority",
     "historical_input_revision",
+    "preseason_market_status",
+    "preseason_market_status_sensitivity_30",
+    "preseason_market_status_authority",
+    "preseason_market_status_evidence_source",
+    "preseason_market_status_evidence_summary",
+)
+
+PRESEASON_MARKET_METADATA_COLUMNS = (
+    "preseason_market_status",
+    "preseason_market_status_sensitivity_30",
+    "preseason_market_status_authority",
+    "preseason_market_status_evidence_source",
+    "preseason_market_status_evidence_summary",
 )
 
 PLAYERS_REQUIRED_COLUMNS = ("gsis_id", "pfr_id", "birth_date", "rookie_season", "height", "weight", "draft_year", "draft_round", "draft_pick", "draft_team")
@@ -824,7 +839,20 @@ def build_canonical_predictor_table(
     canonical column); `deferred_families` = DEFERRED_FAMILIES as a
     DataFrame.
     """
+    if "real_status" in master_population.columns:
+        raise ValueError(
+            "master_population contains outcome-side real_status; predictor-side preseason market "
+            "metadata must come from preseason_market_status, never an outcome substitution"
+        )
     validate_columns(master_population, MASTER_POPULATION_REQUIRED_COLUMNS, "master_population")
+    for column in ("preseason_market_status", "preseason_market_status_sensitivity_30"):
+        if master_population[column].isna().any():
+            raise ValueError(f"master_population {column} may not be null for historical rows")
+        unexpected = sorted(set(master_population[column].astype(str)) - PRESEASON_MARKET_STATUS_VALUES)
+        if unexpected:
+            raise ValueError(f"master_population {column} contains unknown values: {unexpected}")
+    if master_population["preseason_market_status_authority"].isna().any():
+        raise ValueError("master_population preseason_market_status_authority may not be null")
     validate_columns(players_df, PLAYERS_REQUIRED_COLUMNS, "players_df")
     validate_columns(schedule_df, SCHEDULE_REQUIRED_COLUMNS, "schedule_df")
 
@@ -916,7 +944,9 @@ def build_canonical_predictor_table(
     authority_columns = [
         "canonical_position_status", "canonical_position_authority", "historical_input_revision",
     ]
-    spine = population[["season", "player_id", "position"] + authority_columns].rename(
+    spine = population[
+        ["season", "player_id", "position"] + authority_columns + list(PRESEASON_MARKET_METADATA_COLUMNS)
+    ].rename(
         columns={"season": "prediction_season"}
     )
     fam9_keys = fam9_preseason[["prediction_season", "player_id", "position"]]
@@ -958,7 +988,8 @@ def build_canonical_predictor_table(
         raise RuntimeError(f"Canonical column-name collision(s) detected in final table: {dupes}")
 
     column_order = (
-        ["prediction_season", "player_id", "position"] + authority_columns + ["observation_season"]
+        ["prediction_season", "player_id", "position"] + authority_columns
+        + list(PRESEASON_MARKET_METADATA_COLUMNS) + ["observation_season"]
         + [c for c in fam1_4_6.columns if c not in ("season", "player_id")]
         + [c for c in fam7.columns if c not in ("season", "player_id")]
         + [c for c in fam8_39_44.columns if c not in ("season", "player_id")]
@@ -970,7 +1001,10 @@ def build_canonical_predictor_table(
         + [c for c in fam18.columns if c not in ("season", "player_id")]
         + fam9_cols
     )
-    identity_columns = ["prediction_season", "player_id", "position"] + authority_columns + ["observation_season"]
+    identity_columns = (
+        ["prediction_season", "player_id", "position"] + authority_columns
+        + list(PRESEASON_MARKET_METADATA_COLUMNS) + ["observation_season"]
+    )
     out = out[identity_columns + [c for c in column_order if c not in identity_columns]]
     out = out.sort_values(["prediction_season", "player_id"]).reset_index(drop=True)
 
@@ -1037,9 +1071,49 @@ def build_canonical_predictor_table(
             min_season, max_season + 1, "object", "Never null",
             "Metadata only; prohibited as a model predictor", "historical_input_revision",
         ),
+        _registry_row(
+            "preseason_market_status", "N/A (preseason control)",
+            "Preseason acquisition-cost control", "governed master player-season input",
+            min_season, max_season, "object",
+            "Never null for historical master rows; future application-only rows may be null",
+            "Same-season preseason evidence; control only, never a candidate predictor",
+            "preseason_market_status",
+        ),
+        _registry_row(
+            "preseason_market_status_sensitivity_30", "N/A (preseason metadata)",
+            "Preseason acquisition-cost sensitivity metadata", "governed master player-season input",
+            min_season, max_season, "object",
+            "Never null for historical master rows; future application-only rows may be null",
+            "Metadata for the governed 30% sensitivity; prohibited as a candidate predictor",
+            "preseason_market_status_sensitivity_30",
+        ),
+        _registry_row(
+            "preseason_market_status_authority", "N/A (preseason metadata)",
+            "Preseason acquisition-cost provenance", "governed master player-season input",
+            min_season, max_season, "object",
+            "Never null for historical master rows; future application-only rows may be null",
+            "Provenance metadata; prohibited as a model predictor",
+            "preseason_market_status_authority",
+        ),
+        _registry_row(
+            "preseason_market_status_evidence_source", "N/A (preseason metadata)",
+            "Preseason acquisition-cost provenance", "governed master player-season input",
+            min_season, max_season, "object",
+            "May be null when no manual evidence source applies",
+            "Provenance metadata; prohibited as a model predictor",
+            "preseason_market_status_evidence_source",
+        ),
+        _registry_row(
+            "preseason_market_status_evidence_summary", "N/A (preseason metadata)",
+            "Preseason acquisition-cost provenance", "governed master player-season input",
+            min_season, max_season, "object",
+            "May be null when no manual evidence summary applies",
+            "Provenance metadata; prohibited as a model predictor",
+            "preseason_market_status_evidence_summary",
+        ),
     ]
     registry_rows.insert(
-        6,
+        11,
         _registry_row(
             "observation_season", "N/A (spine)", "Table identity",
             "family #9's own observation season (see partial_season_canonical.py)",

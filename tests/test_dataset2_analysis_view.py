@@ -152,11 +152,19 @@ def _predictor(*rows, extra_cols=None):
             "canonical_position_status": "adp_source",
             "canonical_position_authority": "adp_source_position",
             "historical_input_revision": "test-revision",
+            "preseason_market_status": "ordinary_market",
+            "preseason_market_status_sensitivity_30": "ordinary_market",
+            "preseason_market_status_authority": "clean_observed_adp_source",
+            "preseason_market_status_evidence_source": None,
+            "preseason_market_status_evidence_summary": None,
             "observation_season": ps - 1, "fam1_trait": trait,
         })
     cols = [
         "prediction_season", "player_id", "position", "canonical_position_status",
         "canonical_position_authority", "historical_input_revision", "observation_season", "fam1_trait",
+        "preseason_market_status", "preseason_market_status_sensitivity_30",
+        "preseason_market_status_authority", "preseason_market_status_evidence_source",
+        "preseason_market_status_evidence_summary",
     ]
     df = pd.DataFrame(out_rows, columns=cols) if out_rows else pd.DataFrame(columns=cols)
     return df
@@ -171,6 +179,11 @@ def _predictor_registry():
             {"canonical_column": "canonical_position_status", "family_number": "N/A (spine)"},
             {"canonical_column": "canonical_position_authority", "family_number": "N/A (spine)"},
             {"canonical_column": "historical_input_revision", "family_number": "N/A (spine)"},
+            {"canonical_column": "preseason_market_status", "family_number": "N/A (preseason control)"},
+            {"canonical_column": "preseason_market_status_sensitivity_30", "family_number": "N/A (preseason metadata)"},
+            {"canonical_column": "preseason_market_status_authority", "family_number": "N/A (preseason metadata)"},
+            {"canonical_column": "preseason_market_status_evidence_source", "family_number": "N/A (preseason metadata)"},
+            {"canonical_column": "preseason_market_status_evidence_summary", "family_number": "N/A (preseason metadata)"},
             {"canonical_column": "observation_season", "family_number": "N/A (spine)"},
             {"canonical_column": "fam1_trait", "family_number": "1"},
         ]
@@ -371,6 +384,50 @@ class TestPredictorWhitelistAndTargetRegistry:
 
 
 class TestStructuralIntegrity:
+    def test_predictor_side_preseason_market_metadata_is_preserved_and_not_whitelisted(self):
+        predictor = _predictor((2015, "P1", "RB", 1.0))
+        outcome = _outcome((2015, "P1", "RB", "adp_scored", True, True, True, True, True, True, True, False, True, 5.0))
+        view, whitelist, _, registry = build_dataset2_analysis_view(predictor, _predictor_registry(), outcome)
+
+        for column in (
+            "preseason_market_status",
+            "preseason_market_status_sensitivity_30",
+            "preseason_market_status_authority",
+            "preseason_market_status_evidence_source",
+            "preseason_market_status_evidence_summary",
+        ):
+            assert view.loc[0, column] == predictor.loc[0, column] or (
+                pd.isna(view.loc[0, column]) and pd.isna(predictor.loc[0, column])
+            )
+            assert column not in whitelist
+        roles = registry.set_index("canonical_column")["role"]
+        assert roles["preseason_market_status"] == "control"
+        assert roles["preseason_market_status_authority"] == "predictor_metadata"
+
+    def test_missing_predictor_side_preseason_market_status_fails_loudly(self):
+        predictor = _predictor((2015, "P1", "RB", 1.0)).drop(columns=["preseason_market_status"])
+        with pytest.raises(ValueError, match="predictor_df is missing required columns.*preseason_market_status"):
+            build_dataset2_analysis_view(predictor, _predictor_registry(), _outcome())
+
+    def test_null_historical_predictor_side_preseason_market_status_fails_loudly(self):
+        predictor = _predictor((2015, "P1", "RB", 1.0))
+        predictor.loc[0, "preseason_market_status"] = None
+        with pytest.raises(ValueError, match="require non-null predictor-side preseason_market_status"):
+            build_dataset2_analysis_view(predictor, _predictor_registry(), _outcome())
+
+    def test_outcome_real_status_cannot_substitute_for_predictor_market_status(self):
+        predictor = _predictor((2015, "P1", "RB", 1.0))
+        predictor["real_status"] = "adp_scored"
+        with pytest.raises(ValueError, match="outcome-side real_status"):
+            build_dataset2_analysis_view(predictor, _predictor_registry(), _outcome())
+
+    def test_outcome_side_market_status_collision_fails_loudly(self):
+        predictor = _predictor((2015, "P1", "RB", 1.0))
+        outcome = _outcome((2015, "P1", "RB", "adp_scored", True, True, True, True, True, True, True, False, True, 5.0))
+        outcome["preseason_market_status"] = "ordinary_market"
+        with pytest.raises(ValueError, match="outcome_df contains predictor-side preseason market metadata"):
+            build_dataset2_analysis_view(predictor, _predictor_registry(), outcome)
+
     def test_equal_shared_metadata_is_retained_once_from_predictor(self):
         predictor = _predictor((2015, "P1", "RB", 1.0))
         outcome = _outcome((2015, "P1", "RB", "adp_scored", True, True, True, True, True, True, True, False, True, 5.0))
