@@ -464,7 +464,7 @@ rather than re-deriving conclusions from the underlying research prose.
 
 **Methodology status: APPROVED by Evan.**
 
-**Implementation status: NOT YET IMPLEMENTED.**
+**Implementation status: PHASE 1 RUNNER IMPLEMENTED; REAL PHASE 1 NOT RUN.**
 
 Dataset 2 has three related primary outcome families: continuous LWI,
 Star, and strict bust. Strict bust means bottom-tail relative
@@ -500,23 +500,33 @@ frozen once rather than recomputed per trait.
 Rare-Star Firth inference uses 2,000 player-cluster bootstrap replicates
 with a fixed recorded seed, resampling players with all seasons together
 and retaining repeated sampled players correctly. Convergence,
-failed-replicate, and successful-fit safeguards fail loudly. Separate
-Benjamini-Hochberg `q = 0.10` correction is applied within each primary
-family. Agreement across correlated outcomes is convergent evidence, not
-independent replication. Robustness is reported in descriptive tiers,
-not enforced by an automatic 80%-or-discard rule.
+failed-replicate, and successful-fit safeguards fail loudly. Its primary
+p-value is the two-sided, null-centered player-cluster bootstrap p-value
+with the standard finite-sample correction; sign-tail and bootstrap-t
+p-values are not used. For a categorical predictor, all governed
+category-versus-reference coefficients contribute to one joint primary
+test. Those contrasts are effect details, not separate FDR hypotheses.
+Baseline acquisition-cost and position controls are controls rather than
+candidate hypotheses. Separate Benjamini-Hochberg `q = 0.10` correction
+is applied within each primary family.
 
-The strict-bust practical-effect advancement threshold remains an Evan
-decision after corrected implementation and discovery-only prevalence
-verification. Dataset 3's temporal split and model decisions remain
-separate unresolved work and do not block Dataset 2 Phase 1.
+Continuous-LWI expanding-window validation reports out-of-window MAE,
+RMSE, and R-squared improvement for trait-plus-controls versus
+controls-only. These three values are descriptive and are not automatic
+advancement gates. Agreement across correlated outcomes is convergent
+evidence, not independent replication. Robustness is reported in
+descriptive tiers, not enforced by an automatic 80%-or-discard rule.
 
-Phase 1 has not begun. It cannot begin until these approved rules are
-implemented, frozen references and source inputs are versioned, derived
-artifacts are regenerated coherently, structural and deterministic
-validation passes, the governing documents accurately describe the live
-implementation, and Evan explicitly decides the strict-bust
-practical-effect gate.
+The strict-bust practical-effect gate is an adjusted Firth odds ratio of
+at least `1.20` for an increase or at most the exact reciprocal
+`1 / 1.20` for a decrease. Documentation may display that reciprocal as
+approximately `0.83`; governed code must derive the exact reciprocal and
+must not substitute the rounded display value. Continuous predictors use
+a one-discovery-period-SD increase and categorical predictors use their
+explicitly governed contrasts.
+
+Phase 1 has not begun. Dataset 3's temporal split and model decisions
+remain separate unresolved work and do not block Dataset 2 Phase 1.
 
 0. **Not a Dataset 2 decision, flagged here only to route it
    correctly**: whether Dataset 3's eventual model predicts a

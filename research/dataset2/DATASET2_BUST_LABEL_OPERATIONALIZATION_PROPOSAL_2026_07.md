@@ -789,7 +789,7 @@ this project's own decision-history conventions.
 
 **Methodology status: APPROVED by Evan.**
 
-**Implementation status: NOT YET IMPLEMENTED.**
+**Implementation status: PHASE 1 RUNNER IMPLEMENTED; REAL PHASE 1 NOT RUN.**
 
 The existing full-period calibration and broad-primary designation above
 are superseded for Dataset 2 Phase 1. Fit complete empirical references
@@ -808,7 +808,10 @@ relative underperformance **and** `P < 0`. The prior broad bottom-20%
 label remains secondary/contextual under the recommended explicit name
 `relative_underperformance_bottom20`; 25% and 30% remain sensitivities.
 The discovery-only pre-implementation diagnostic is 54 of 1,746 eligible
-(approximately 3.09%), not a governed production result. The strict-bust
-practical-effect advancement threshold remains an explicit Evan decision
-after corrected implementation and discovery-only prevalence
-verification.
+(approximately 3.09%), not a Phase 1 result. The strict-bust practical-
+effect gate is an adjusted Firth odds ratio of at least `1.20` for an
+increase or at most the exact reciprocal `1 / 1.20` for a decrease.
+Documentation may display the reciprocal as approximately `0.83`, but
+governed code derives and uses the exact reciprocal. Continuous
+predictors use a one-discovery-period-SD increase; categorical predictors
+use their explicitly governed contrasts.

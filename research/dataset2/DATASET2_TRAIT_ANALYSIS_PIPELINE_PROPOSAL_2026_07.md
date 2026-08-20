@@ -880,7 +880,7 @@ byte-identical across two independent runs):
 
 **Methodology status: APPROVED by Evan.**
 
-**Implementation status: NOT YET IMPLEMENTED.**
+**Implementation status: PHASE 1 RUNNER IMPLEMENTED; REAL PHASE 1 NOT RUN.**
 
 The following rules supersede conflicting proposals earlier in this
 document while preserving those passages as decision history:
@@ -907,29 +907,40 @@ document while preserving those passages as decision history:
   replicates with a fixed recorded seed. Players and all their seasons
   are resampled together; repeated sampled players are retained
   correctly. Convergence, failed-replicate, and minimum-successful-fit
-  safeguards fail loudly.
+  safeguards fail loudly. The primary p-value is the two-sided,
+  null-centered player-cluster bootstrap p-value with the standard
+  finite-sample correction; sign-tail and bootstrap-t p-values are not
+  used.
 - Separate Benjamini-Hochberg `q = 0.10` correction applies within each
   of the three primary outcome families. Cross-outcome support is
   convergent evidence, not independent replication. Robustness is
   reported through descriptive tiers; the earlier automatic
   conjunction and any 80%-or-discard interpretation are superseded.
+- Each candidate categorical predictor contributes one joint primary
+  test to its outcome family's BH correction. Its governed
+  category-versus-reference contrasts are reported as effect details,
+  not as separate primary hypotheses. Acquisition-cost and position
+  controls remain controls and do not enter the candidate FDR family.
 - Temporal incremental validation uses expanding discovery windows,
   not the grouped random folds proposed in §8. The protected
   2021--2025 holdout remains untouched during fitting and tuning.
+  Continuous-LWI validation reports out-of-window MAE, RMSE, and
+  R-squared improvement for trait-plus-controls versus controls-only;
+  all three are descriptive rather than automatic advancement gates.
 - The discovery-era control is pre-2011 versus 2011+ within 2006--2020;
   no 2021+ era coefficient is fitted. Acquisition cost uses
   leakage-safe preseason categorical strata.
 
-The strict-bust practical-effect gate remains unresolved and requires
-Evan's explicit decision after corrected implementation and
-discovery-only prevalence verification. The discovery-only diagnostic
-count is 54 of 1,746 eligible (approximately 3.09%); it is not a claim
-about governed production code. Phase 1 remains unstarted and blocked
-until the approved methodology and source rules are implemented,
-references and inputs are versioned, one coherent regeneration and
-deterministic validation pass, the documents match the live system, and
-the strict-bust practical-effect gate is decided. Dataset 3's separate
-split remains unresolved but is not a Dataset 2 Phase 1 blocker.
+The strict-bust practical-effect gate is an adjusted Firth odds ratio of
+at least `1.20` for an increase or at most the exact reciprocal
+`1 / 1.20` for a decrease. Documentation may display that reciprocal as
+approximately `0.83`, but governed code derives and uses the exact
+reciprocal. Continuous predictors use a one-discovery-period-SD
+increase; categorical predictors use the explicitly governed contrast.
+The discovery-only diagnostic count is 54 of 1,746 eligible
+(approximately 3.09%); it is not a claim about a Phase 1 result. Phase 1
+remains unstarted. Dataset 3's separate split remains unresolved but is
+not a Dataset 2 Phase 1 blocker.
 
 ## 12. Explicit stop point
 

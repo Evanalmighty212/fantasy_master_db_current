@@ -826,6 +826,11 @@ DATASET2_FIRTH_BOOTSTRAP_REPLICATES = 2000
 DATASET2_FIRTH_BOOTSTRAP_MIN_SUCCESS_RATE = 0.99
 DATASET2_PHASE1_BH_Q = 0.10
 DATASET2_LWI_MIN_ABS_STANDARDIZED_BETA = 0.10
+# [SETTLED METHODOLOGY] Strict-bust practical-effect gate, approved by
+# Evan 2026-08. The protective boundary is derived from the harmful
+# boundary exactly; never replace it with the rounded display value 0.83.
+DATASET2_STRICT_BUST_OR_INCREASE_GATE = 1.20
+DATASET2_STRICT_BUST_OR_DECREASE_GATE = 1.0 / DATASET2_STRICT_BUST_OR_INCREASE_GATE
 
 # [SETTLED METHODOLOGY] Bust-reference calibration is discovery-only;
 # the fitted reference is frozen before application to protected rows.
@@ -848,6 +853,10 @@ def validate_dataset2_phase1_config():
         errors.append("Dataset 2 bootstrap minimum success rate must be in (0, 1]")
     if DATASET2_PHASE1_RANDOM_SEED != 20260808:
         errors.append("Dataset 2 Phase 1 seed must remain 20260808")
+    if DATASET2_STRICT_BUST_OR_INCREASE_GATE != 1.20:
+        errors.append("Dataset 2 strict-bust harmful OR gate must remain 1.20")
+    if DATASET2_STRICT_BUST_OR_DECREASE_GATE != 1.0 / DATASET2_STRICT_BUST_OR_INCREASE_GATE:
+        errors.append("Dataset 2 strict-bust protective OR gate must be the exact reciprocal of 1.20")
     if errors:
         raise ValueError("Invalid Dataset 2 Phase 1 configuration:\n  - " + "\n  - ".join(errors))
 
