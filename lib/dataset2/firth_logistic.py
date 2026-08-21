@@ -63,8 +63,10 @@ stationary penalized-likelihood solution whose sparse nuisance coefficient
 oscillates above the raw update tolerance: finite likelihood, objective
 change within the existing line-search tolerance, and a small Fisher-scaled
 penalized-score/Newton decrement must all hold on consecutive iterations.
-This changes no likelihood or estimate; it prevents a stationary numerical
-two-cycle from being mislabeled as nonconvergence.
+A third path detects a stable A-B-A-B-A numerical cycle and tests its
+midpoint, accepting it only under those same likelihood and stationarity
+safeguards. This changes no likelihood or convergence tolerance; it prevents
+a stationary numerical cycle from being mislabeled as nonconvergence.
 
 CONFIDENCE INTERVALS: profile-likelihood, not Wald. Firth's own
 literature (Heinze & Schemper 2002) recommends profile penalized
@@ -98,6 +100,7 @@ MAX_STEP_HALVINGS = 30
 OBJECTIVE_TOLERANCE = 1e-10
 STATIONARY_ITERATIONS_REQUIRED = 2
 NONCONVERGENCE_ITERATION_TAIL_LENGTH = 20
+TWO_CYCLE_STATES_REQUIRED = 5
 
 
 def _sigmoid(eta: np.ndarray) -> np.ndarray:
@@ -177,6 +180,51 @@ def _stationarity_diagnostics(X, y, beta, free):
     return score_norm, decrement
 
 
+def _stable_two_cycle_midpoint(state_history, tol):
+    """Return the midpoint of a verified stable two-state cycle, else None.
+
+    Five accepted states provide two consecutive recurrences for each parity:
+    A-B-A-B-A.  Requiring every same-parity recurrence to be within the
+    existing coefficient tolerance, while every adjacent A/B step remains
+    larger than that tolerance, distinguishes a stable two-cycle from both
+    ordinary slow convergence and a one-off reversal.  Alternating objective
+    changes and same-parity objective stability are required as independent
+    confirmation.  This helper only detects a candidate; the caller must
+    still apply the existing likelihood and stationarity safeguards.
+    """
+    if len(state_history) < TWO_CYCLE_STATES_REQUIRED:
+        return None
+    recent = state_history[-TWO_CYCLE_STATES_REQUIRED:]
+    betas = [np.asarray(state[0], dtype=float) for state in recent]
+    likelihoods = np.asarray([state[1] for state in recent], dtype=float)
+    if not all(np.isfinite(beta).all() for beta in betas) or not np.isfinite(likelihoods).all():
+        return None
+
+    same_parity_changes = [
+        np.max(np.abs(betas[index] - betas[index - 2]))
+        for index in range(2, TWO_CYCLE_STATES_REQUIRED)
+    ]
+    adjacent_changes = [
+        np.max(np.abs(betas[index] - betas[index - 1]))
+        for index in range(1, TWO_CYCLE_STATES_REQUIRED)
+    ]
+    if any(change > tol for change in same_parity_changes):
+        return None
+    if any(change <= tol for change in adjacent_changes):
+        return None
+
+    objective_changes = np.diff(likelihoods)
+    nonzero_signs = np.sign(objective_changes[np.abs(objective_changes) > np.finfo(float).eps])
+    if len(nonzero_signs) < 3 or np.any(nonzero_signs[1:] == nonzero_signs[:-1]):
+        return None
+    if any(
+        abs(likelihoods[index] - likelihoods[index - 2]) > OBJECTIVE_TOLERANCE
+        for index in range(2, TWO_CYCLE_STATES_REQUIRED)
+    ):
+        return None
+    return 0.5 * (betas[-1] + betas[-2])
+
+
 def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
     n, p = X.shape
     beta = np.zeros(p) if beta_init is None else np.array(beta_init, dtype=float)
@@ -196,6 +244,7 @@ def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
     final_newton_decrement = np.inf
     final_likelihood_change = np.nan
     iteration_tail = []
+    state_history = []
 
     def record_iteration(
         iteration, score_norm, decrement, likelihood_change, max_update,
@@ -224,6 +273,7 @@ def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
         )
 
     prev_ll = _penalized_loglik(X, y, beta)
+    state_history.append((beta.copy(), float(prev_ll)))
 
     # A singular design cannot define the Jeffreys/Firth information
     # penalty. Never let a small pseudo-inverse update masquerade as
@@ -295,6 +345,47 @@ def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
 
         max_change = np.max(np.abs(new_beta[free] - beta[free])) if free.any() else 0.0
         likelihood_change = float(new_ll - prev_ll)
+        state_history.append((new_beta.copy(), float(new_ll)))
+        del state_history[:-TWO_CYCLE_STATES_REQUIRED]
+
+        midpoint = _stable_two_cycle_midpoint(state_history, tol)
+        if midpoint is not None:
+            midpoint_ll = (
+                _penalized_loglik(X, y, midpoint)
+                if np.isfinite(midpoint).all() else -np.inf
+            )
+            midpoint_change = float(midpoint_ll - prev_ll)
+            if np.isfinite(midpoint).all() and np.isfinite(midpoint_ll):
+                midpoint_score_norm, midpoint_decrement = _stationarity_diagnostics(
+                    X, y, midpoint, free,
+                )
+            else:
+                midpoint_score_norm, midpoint_decrement = np.inf, np.inf
+            midpoint_update = (
+                np.max(np.abs(midpoint[free] - beta[free])) if free.any() else 0.0
+            )
+            midpoint_valid = (
+                np.isfinite(midpoint_ll)
+                and midpoint_ll >= prev_ll - OBJECTIVE_TOLERANCE
+                and np.isfinite(midpoint_score_norm)
+                and np.isfinite(midpoint_decrement)
+                and abs(midpoint_change) <= OBJECTIVE_TOLERANCE
+                and midpoint_decrement <= tol
+            )
+            if midpoint_valid:
+                beta = midpoint
+                prev_ll = midpoint_ll
+                final_likelihood_change = midpoint_change
+                final_score_norm = midpoint_score_norm
+                final_newton_decrement = midpoint_decrement
+                converged = True
+                termination_reason = "stable_two_cycle_midpoint"
+                record_iteration(
+                    n_iter, final_score_norm, final_newton_decrement,
+                    midpoint_change, midpoint_update, halvings, termination_reason,
+                )
+                break
+
         beta = new_beta
         prev_ll = new_ll
         final_likelihood_change = likelihood_change

@@ -51,7 +51,13 @@ import numpy as np
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from lib.dataset2.firth_logistic import _penalized_loglik, fit_firth_logistic, firth_lr_test, firth_profile_ci
+from lib.dataset2.firth_logistic import (
+    _penalized_loglik,
+    _stable_two_cycle_midpoint,
+    fit_firth_logistic,
+    firth_lr_test,
+    firth_profile_ci,
+)
 from lib.dataset2.firth_logistic_fixtures import FIXTURES, complete_separation_fixture, ordinary_fixture
 
 
@@ -324,6 +330,74 @@ class TestConvergenceRecognition:
         assert fit.termination_reason == "line_search_failure"
         assert fit.step_halving_count == 30
         assert np.isfinite(fit.penalized_loglik)
+
+    def test_stable_two_cycle_produces_deterministic_midpoint(self):
+        state_a = np.array([0.0, 0.8, -0.4])
+        state_b = np.array([0.0, 0.802, -0.398])
+        history = [
+            (state_a, -10.0),
+            (state_b, -10.0 + 2e-11),
+            (state_a + 1e-10, -10.0),
+            (state_b + 1e-10, -10.0 + 2e-11),
+            (state_a + 2e-10, -10.0),
+        ]
+        midpoint = _stable_two_cycle_midpoint(history, tol=1e-8)
+        assert np.array_equal(midpoint, 0.5 * (history[-1][0] + history[-2][0]))
+
+    def test_nonstationary_sequence_is_not_resolved_as_two_cycle(self):
+        history = [
+            (np.array([0.0, value]), -10.0 + index * 1e-5)
+            for index, value in enumerate([0.0, 0.8, 0.1, 0.7, 0.2])
+        ]
+        assert _stable_two_cycle_midpoint(history, tol=1e-8) is None
+
+    @pytest.mark.parametrize("invalid_likelihood", [np.nan, -np.inf])
+    def test_nonfinite_cycle_state_is_rejected(self, invalid_likelihood):
+        state_a = np.array([0.0, 0.8])
+        state_b = np.array([0.0, 0.802])
+        history = [
+            (state_a, -10.0),
+            (state_b, -10.0 + 2e-11),
+            (state_a, -10.0),
+            (state_b, -10.0 + 2e-11),
+            (state_a, invalid_likelihood),
+        ]
+        assert _stable_two_cycle_midpoint(history, tol=1e-8) is None
+
+    def test_stationary_cycle_midpoint_is_accepted_with_distinct_reason(self, monkeypatch):
+        import lib.dataset2.firth_logistic as module
+
+        X, y = self._one_row_nuisance_fixture()
+        optimum = fit_firth_logistic(X, y)
+        assert optimum.converged
+        start = optimum.beta.copy()
+        start[1] += 1e-7
+        monkeypatch.setattr(
+            module, "_stable_two_cycle_midpoint",
+            lambda state_history, tol: optimum.beta.copy(),
+        )
+        resolved = fit_firth_logistic(X, y, beta_init=start, max_iter=1, tol=1e-8)
+        assert resolved.converged
+        assert resolved.termination_reason == "stable_two_cycle_midpoint"
+        assert resolved.final_newton_decrement <= 1e-8
+        assert abs(resolved.final_likelihood_change) <= 1e-10
+
+    @pytest.mark.parametrize("candidate_kind", ["non_improving", "non_finite"])
+    def test_invalid_cycle_midpoint_does_not_converge(self, monkeypatch, candidate_kind):
+        import lib.dataset2.firth_logistic as module
+
+        X, y = self._one_row_nuisance_fixture()
+        if candidate_kind == "non_improving":
+            candidate = np.full(X.shape[1], 20.0)
+        else:
+            candidate = np.full(X.shape[1], np.nan)
+        monkeypatch.setattr(
+            module, "_stable_two_cycle_midpoint",
+            lambda state_history, tol: candidate.copy(),
+        )
+        fit = fit_firth_logistic(X, y, max_iter=1)
+        assert not fit.converged
+        assert fit.termination_reason == "max_iterations"
 
 
 class TestConfidenceIntervalsAndLRTest:
