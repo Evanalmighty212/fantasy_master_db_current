@@ -214,6 +214,72 @@ class TestDeterminism:
         assert np.array_equal(fit_a.beta, fit_b.beta)
 
 
+class TestConvergenceRecognition:
+    @staticmethod
+    def _one_row_nuisance_fixture():
+        """Sparse nuisance shape that produces a stationary IRLS two-cycle."""
+        rng = np.random.default_rng(0)
+        n = 1200
+        position = rng.integers(0, 4, n)
+        acquisition = rng.integers(0, 5, n)
+        era = rng.integers(0, 2, n)
+        predictor = rng.normal(size=n)
+        X = np.column_stack([
+            np.ones(n), predictor,
+            *((position == level).astype(float) for level in range(1, 4)),
+            *((acquisition == level).astype(float) for level in range(1, 5)),
+            era,
+        ])
+        one_row_nuisance = np.zeros(n)
+        one_row_nuisance[0] = 1.0
+        X = np.column_stack([X, one_row_nuisance])
+        eta = -3.2 + 0.15 * predictor + 0.15 * (position == 2)
+        y = (rng.random(n) < 1.0 / (1.0 + np.exp(-eta))).astype(float)
+        y[0] = 1.0
+        return X, y
+
+    def test_stationary_one_row_nuisance_cycle_is_recognized(self):
+        X, y = self._one_row_nuisance_fixture()
+        fit = fit_firth_logistic(X, y)
+        assert fit.converged
+        assert fit.termination_reason == "stationary_penalized_likelihood"
+        assert fit.n_iter < 100
+        assert np.isfinite(fit.penalized_loglik)
+        assert np.isfinite(fit.final_score_norm)
+        assert fit.final_newton_decrement <= 1e-8
+        assert abs(fit.final_likelihood_change) <= 1e-10
+        assert fit.step_halving_count >= 0
+
+    def test_stationary_path_requires_consecutive_iterations(self):
+        X, y = self._one_row_nuisance_fixture()
+        converged = fit_firth_logistic(X, y)
+        assert converged.termination_reason == "stationary_penalized_likelihood"
+        one_confirmation_short = fit_firth_logistic(X, y, max_iter=converged.n_iter - 1)
+        assert not one_confirmation_short.converged
+        assert one_confirmation_short.termination_reason == "max_iterations"
+
+    def test_genuinely_nonstationary_fit_still_fails(self):
+        X, y = self._one_row_nuisance_fixture()
+        fit = fit_firth_logistic(X, y, max_iter=1)
+        assert not fit.converged
+        assert fit.termination_reason == "max_iterations"
+        assert fit.n_iter == 1
+        assert fit.final_newton_decrement > 1e-8
+        assert abs(fit.final_likelihood_change) > 1e-10
+
+    def test_rank_deficient_and_nonfinite_designs_never_converge(self):
+        y = np.array([0.0, 1.0, 0.0, 1.0])
+        rank_deficient = np.column_stack([np.ones(4), np.ones(4)])
+        rank_fit = fit_firth_logistic(rank_deficient, y)
+        assert not rank_fit.converged
+        assert rank_fit.termination_reason == "rank_deficient"
+
+        nonfinite = np.column_stack([np.ones(4), np.array([0.0, 1.0, np.nan, 2.0])])
+        nonfinite_fit = fit_firth_logistic(nonfinite, y)
+        assert not nonfinite_fit.converged
+        assert nonfinite_fit.termination_reason == "non_finite_input"
+
+
 class TestConfidenceIntervalsAndLRTest:
     def test_profile_ci_contains_point_estimate_and_is_ordered(self):
         rng = np.random.default_rng(7)
@@ -336,6 +402,12 @@ class TestIndependentImplementationCrossCheck:
                 lr_stat, p_value, _, _ = firth_lr_test(X, y, coef_index=j)
 
                 assert fit.beta[j] == pytest.approx(float(r_row["r_coef"]), abs=self.COEF_TOLERANCE), key
+                assert fit.converged, key
+                assert fit.termination_reason in {
+                    "coefficient_update", "stationary_penalized_likelihood",
+                }, key
+                assert np.isfinite(fit.final_score_norm), key
+                assert np.isfinite(fit.final_newton_decrement), key
                 assert lower == pytest.approx(float(r_row["r_ci_lower_profile"]), abs=self.CI_TOLERANCE), key
                 assert upper == pytest.approx(float(r_row["r_ci_upper_profile"]), abs=self.CI_TOLERANCE), key
                 assert p_value == pytest.approx(float(r_row["r_lr_pvalue"]), abs=self.PVALUE_TOLERANCE), key

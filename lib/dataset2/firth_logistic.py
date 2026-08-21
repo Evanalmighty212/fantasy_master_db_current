@@ -57,6 +57,15 @@ penalized log-likelihood (Firth's own recommended safeguard -- this is
 what keeps the algorithm well-behaved under complete/quasi separation,
 where ordinary MLE diverges).
 
+CONVERGENCE: the original maximum coefficient-update rule remains the
+first criterion. A second numerical-recognition path handles a verified
+stationary penalized-likelihood solution whose sparse nuisance coefficient
+oscillates above the raw update tolerance: finite likelihood, objective
+change within the existing line-search tolerance, and a small Fisher-scaled
+penalized-score/Newton decrement must all hold on consecutive iterations.
+This changes no likelihood or estimate; it prevents a stationary numerical
+two-cycle from being mislabeled as nonconvergence.
+
 CONFIDENCE INTERVALS: profile-likelihood, not Wald. Firth's own
 literature (Heinze & Schemper 2002) recommends profile penalized
 likelihood over Wald intervals precisely because Wald SEs from the
@@ -86,6 +95,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 MAX_ITER_DEFAULT = 100
 TOL_DEFAULT = 1e-8
 MAX_STEP_HALVINGS = 20
+OBJECTIVE_TOLERANCE = 1e-10
+STATIONARY_ITERATIONS_REQUIRED = 2
 
 
 def _sigmoid(eta: np.ndarray) -> np.ndarray:
@@ -124,17 +135,44 @@ def _hat_diagonal(X: np.ndarray, XtWX_inv: np.ndarray, W: np.ndarray) -> np.ndar
 
 
 class FirthFitResult:
-    def __init__(self, beta, cov, converged, n_iter, penalized_loglik, fixed_mask=None):
+    def __init__(
+        self, beta, cov, converged, n_iter, penalized_loglik, fixed_mask=None,
+        *, termination_reason=None, final_score_norm=np.nan,
+        final_newton_decrement=np.nan, final_likelihood_change=np.nan,
+        step_halving_count=0,
+    ):
         self.beta = beta
         self.cov = cov
         self.converged = converged
         self.n_iter = n_iter
         self.penalized_loglik = penalized_loglik
         self.fixed_mask = fixed_mask if fixed_mask is not None else np.zeros(len(beta), dtype=bool)
+        self.termination_reason = termination_reason
+        self.final_score_norm = final_score_norm
+        self.final_newton_decrement = final_newton_decrement
+        self.final_likelihood_change = final_likelihood_change
+        self.step_halving_count = step_halving_count
 
     @property
     def se(self):
         return np.sqrt(np.diag(self.cov))
+
+
+def _stationarity_diagnostics(X, y, beta, free):
+    """Return penalized-score diagnostics on the estimable coordinates."""
+    XtWX, pi, W = _fisher_info(X, beta)
+    if not np.isfinite(XtWX).all():
+        return np.inf, np.inf
+    XtWX_inv = np.linalg.pinv(XtWX)
+    h = _hat_diagonal(X, XtWX_inv, W)
+    score = X.T @ (y - pi + h * (0.5 - pi))
+    free_score = score[free]
+    free_info = XtWX[np.ix_(free, free)]
+    if not np.isfinite(free_score).all() or not np.isfinite(free_info).all():
+        return np.inf, np.inf
+    score_norm = float(np.max(np.abs(free_score))) if free_score.size else 0.0
+    decrement = float(free_score @ np.linalg.pinv(free_info) @ free_score) if free_score.size else 0.0
+    return score_norm, decrement
 
 
 def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
@@ -147,9 +185,53 @@ def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
     if fixed_index is not None:
         free[fixed_index] = False
 
-    prev_ll = _penalized_loglik(X, y, beta)
     converged = False
     n_iter = 0
+    termination_reason = "max_iterations"
+    total_halvings = 0
+    stationary_iterations = 0
+    final_score_norm = np.inf
+    final_newton_decrement = np.inf
+    final_likelihood_change = np.nan
+
+    if not np.isfinite(X).all() or not np.isfinite(y).all() or not np.isfinite(beta).all():
+        fixed_mask = ~free
+        return FirthFitResult(
+            beta, np.full((p, p), np.nan), False, 0, -np.inf, fixed_mask,
+            termination_reason="non_finite_input",
+            final_score_norm=np.inf,
+            final_newton_decrement=np.inf,
+            final_likelihood_change=np.nan,
+            step_halving_count=0,
+        )
+
+    prev_ll = _penalized_loglik(X, y, beta)
+
+    # A singular design cannot define the Jeffreys/Firth information
+    # penalty. Never let a small pseudo-inverse update masquerade as
+    # convergence in that case.
+    if np.linalg.matrix_rank(X) != p:
+        cov = np.linalg.pinv((X * 0.25).T @ X)
+        fixed_mask = ~free
+        return FirthFitResult(
+            beta, cov, False, 0, prev_ll, fixed_mask,
+            termination_reason="rank_deficient",
+            final_score_norm=np.inf,
+            final_newton_decrement=np.inf,
+            final_likelihood_change=np.nan,
+            step_halving_count=0,
+        )
+    if not np.isfinite(prev_ll):
+        cov = np.linalg.pinv((X * 0.25).T @ X)
+        fixed_mask = ~free
+        return FirthFitResult(
+            beta, cov, False, 0, prev_ll, fixed_mask,
+            termination_reason="non_finite_initial_likelihood",
+            final_score_norm=np.inf,
+            final_newton_decrement=np.inf,
+            final_likelihood_change=np.nan,
+            step_halving_count=0,
+        )
 
     for n_iter in range(1, max_iter + 1):
         XtWX, pi, W = _fisher_info(X, beta)
@@ -166,18 +248,44 @@ def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
         new_beta = beta + step * delta
         new_ll = _penalized_loglik(X, y, new_beta)
         halvings = 0
-        while (not np.isfinite(new_ll) or new_ll < prev_ll - 1e-10) and halvings < MAX_STEP_HALVINGS:
+        while (
+            not np.isfinite(new_ll) or new_ll < prev_ll - OBJECTIVE_TOLERANCE
+        ) and halvings < MAX_STEP_HALVINGS:
             step *= 0.5
             new_beta = beta + step * delta
             new_ll = _penalized_loglik(X, y, new_beta)
             halvings += 1
+        total_halvings += halvings
+
+        if not np.isfinite(new_ll):
+            termination_reason = "non_finite_likelihood"
+            break
+        if new_ll < prev_ll - OBJECTIVE_TOLERANCE:
+            termination_reason = "line_search_failure"
+            break
 
         max_change = np.max(np.abs(new_beta[free] - beta[free])) if free.any() else 0.0
+        likelihood_change = float(new_ll - prev_ll)
         beta = new_beta
         prev_ll = new_ll
+        final_likelihood_change = likelihood_change
+        final_score_norm, final_newton_decrement = _stationarity_diagnostics(X, y, beta, free)
 
         if max_change < tol:
             converged = True
+            termination_reason = "coefficient_update"
+            break
+
+        stationary = (
+            np.isfinite(final_score_norm)
+            and np.isfinite(final_newton_decrement)
+            and abs(likelihood_change) <= OBJECTIVE_TOLERANCE
+            and final_newton_decrement <= tol
+        )
+        stationary_iterations = stationary_iterations + 1 if stationary else 0
+        if stationary_iterations >= STATIONARY_ITERATIONS_REQUIRED:
+            converged = True
+            termination_reason = "stationary_penalized_likelihood"
             break
 
     XtWX, pi, W = _fisher_info(X, beta)
@@ -185,7 +293,14 @@ def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
     fixed_mask = np.zeros(p, dtype=bool)
     if fixed_index is not None:
         fixed_mask[fixed_index] = True
-    return FirthFitResult(beta, cov, converged, n_iter, prev_ll, fixed_mask)
+    return FirthFitResult(
+        beta, cov, converged, n_iter, prev_ll, fixed_mask,
+        termination_reason=termination_reason,
+        final_score_norm=final_score_norm,
+        final_newton_decrement=final_newton_decrement,
+        final_likelihood_change=final_likelihood_change,
+        step_halving_count=total_halvings,
+    )
 
 
 def _fit_firth_constrained_scipy(X, y, fixed_index, fixed_value, beta_init, max_iter):
@@ -236,7 +351,15 @@ def _fit_firth_constrained_scipy(X, y, fixed_index, fixed_value, beta_init, max_
     cov = np.linalg.pinv(XtWX)
     fixed_mask = np.zeros(p, dtype=bool)
     fixed_mask[fixed_index] = True
-    return FirthFitResult(beta, cov, bool(res.success), int(res.nit), ll, fixed_mask)
+    score_norm, decrement = _stationarity_diagnostics(X, y, beta, ~fixed_mask)
+    return FirthFitResult(
+        beta, cov, bool(res.success), int(res.nit), ll, fixed_mask,
+        termination_reason="optimizer_success" if res.success else "optimizer_failure",
+        final_score_norm=score_norm,
+        final_newton_decrement=decrement,
+        final_likelihood_change=np.nan,
+        step_halving_count=0,
+    )
 
 
 def fit_firth_logistic(
