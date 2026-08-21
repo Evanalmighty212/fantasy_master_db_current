@@ -432,6 +432,54 @@ def _design(rows: pd.DataFrame, predictor: PredictorDefinition, schema: DesignSc
     return combined, schema
 
 
+def preflight_phase1_estimability(
+    rows: pd.DataFrame,
+    predictors: Sequence[PredictorDefinition],
+    predictor_whitelist: Sequence[str],
+) -> tuple[tuple[str, str, int], ...]:
+    """Validate every predictor-family design before any expensive fit.
+
+    This is deliberately fail-loud rather than an implicit hypothesis
+    exclusion: a genuinely non-estimable governed representative needs an
+    explicit recorded disposition, while an input-decoding defect must never
+    be hidden by silently reducing a family's BH universe.
+    """
+    _validated_seasons(rows)
+    resolved, _ = resolve_categorical_references(rows, predictors)
+    validate_predictor_definitions(resolved, predictor_whitelist)
+    records: list[tuple[str, str, int]] = []
+    failures: list[str] = []
+    for predictor in resolved:
+        for target in PRIMARY_TARGETS:
+            context = f"family={target.family} predictor={predictor.column}"
+            try:
+                fit_rows = discovery_fit_rows(rows, target, predictor.column)
+                values = fit_rows[predictor.column]
+                if predictor.kind == "continuous":
+                    numeric = pd.to_numeric(values, errors="raise")
+                    if not np.isfinite(numeric.to_numpy(dtype=float)).all():
+                        raise ValueError("continuous predictor contains non-finite values")
+                elif predictor.kind == "binary" and len(pd.unique(values)) != 2:
+                    raise ValueError("binary predictor has no discovery contrast")
+                elif predictor.kind == "categorical" and values.astype(str).nunique() < 2:
+                    raise ValueError("categorical predictor has no discovery contrast")
+                predictor_design, _, _ = _predictor_design(fit_rows, predictor)
+                matrix = predictor_design.to_numpy(dtype=float)
+                if not np.isfinite(matrix).all():
+                    raise ValueError("predictor design contains non-finite values")
+                if np.linalg.matrix_rank(matrix) != matrix.shape[1]:
+                    raise ValueError("predictor design is rank deficient or has zero variation")
+                records.append((target.family, predictor.column, len(fit_rows)))
+            except (TypeError, ValueError) as exc:
+                failures.append(f"{context}: {exc}")
+    if failures:
+        raise ValueError(
+            "Phase 1 representative estimability preflight failed before fitting: "
+            + " | ".join(failures)
+        )
+    return tuple(records)
+
+
 def evidence_status(rows: pd.DataFrame, target: TargetDefinition, predictor: PredictorDefinition) -> EvidenceStatus:
     n = len(rows)
     failed: list[str] = []

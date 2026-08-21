@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Governed, serial, resumable Dataset 2 Phase 1 discovery execution.
 
-This entry point reads only the accepted analysis-view artifact, projects the
-required columns, explicitly selects 2010-2020 in memory, and invokes the
-runner's unchanged discovery-only guard immediately before fitting. Results
-remain under a clearly named partial directory until the complete package and
-hash manifest have been written successfully.
+This entry point streams the accepted analysis-view CSV in bounded chunks,
+retains only 2010-2020 rows and required columns, and invokes the runner's
+unchanged discovery-only guard immediately before fitting. Results remain
+under a clearly named partial directory until the complete package and hash
+manifest have been written successfully.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ import shutil
 import subprocess
 import sys
 
-import fastparquet
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -36,15 +35,21 @@ from config import (  # noqa: E402
     DATASET2_PHASE1_RANDOM_SEED,
 )
 from lib.dataset2.phase1_analysis import require_discovery_only  # noqa: E402
-from lib.dataset2.phase1_runner import PredictorDefinition, run_phase1  # noqa: E402
+from lib.dataset2.phase1_runner import (  # noqa: E402
+    PredictorDefinition,
+    preflight_phase1_estimability,
+    run_phase1,
+)
 
 EXPORTS = REPO_ROOT / "data" / "exports"
 ANALYSIS_VIEW = EXPORTS / "dataset2_analysis_view.parquet"
+ANALYSIS_VIEW_CSV = EXPORTS / "dataset2_analysis_view.csv"
 WHITELIST = EXPORTS / "dataset2_analysis_view_predictor_whitelist.csv"
 INVENTORY = EXPORTS / "dataset2_trait_pipeline_predictor_inventory.csv"
 CLUSTERS = EXPORTS / "dataset2_trait_pipeline_predictor_clusters.csv"
 TARGET_REGISTRY = EXPORTS / "dataset2_analysis_view_target_registry.csv"
 BUST_REFERENCE = REPO_ROOT / "data" / "processed" / "dataset2_bust_reference.json"
+DISCOVERY_CSV_CHUNK_SIZE = 10_000
 
 
 def sha256(path: Path) -> str:
@@ -92,16 +97,21 @@ def discovery_rows(predictors: tuple[PredictorDefinition, ...]) -> pd.DataFrame:
         "bust_strict_below_replacement_label", "bust_strict_below_replacement_eligible",
         *(predictor.column for predictor in predictors),
     }
-    parquet = fastparquet.ParquetFile(ANALYSIS_VIEW)
-    rows = parquet.to_pandas(
-        columns=sorted(required),
-        filters=[[  # nested list is Fastparquet AND semantics
-            ("prediction_season", ">=", DATASET2_BUST_REFERENCE_START_SEASON),
-            ("prediction_season", "<=", DATASET2_DISCOVERY_END_SEASON),
-        ]],
-        row_filter=True,
-        index=False,
-    )
+    chunks = []
+    for chunk in pd.read_csv(
+        ANALYSIS_VIEW_CSV,
+        usecols=sorted(required),
+        chunksize=DISCOVERY_CSV_CHUNK_SIZE,
+        low_memory=False,
+        float_precision="round_trip",
+    ):
+        seasons = pd.to_numeric(chunk["prediction_season"], errors="raise")
+        chunks.append(chunk.loc[seasons.between(
+            DATASET2_BUST_REFERENCE_START_SEASON, DATASET2_DISCOVERY_END_SEASON,
+        )].copy())
+    if not chunks:
+        raise ValueError("accepted analysis-view CSV yielded no chunks")
+    rows = pd.concat(chunks, ignore_index=True)
     seasons = pd.to_numeric(rows["prediction_season"], errors="raise")
     rows = rows.loc[seasons.between(
         DATASET2_BUST_REFERENCE_START_SEASON, DATASET2_DISCOVERY_END_SEASON,
@@ -111,6 +121,13 @@ def discovery_rows(predictors: tuple[PredictorDefinition, ...]) -> pd.DataFrame:
     if observed != expected:
         raise ValueError(f"unexpected discovery season coverage: {observed}")
     return rows
+
+
+def run_preflighted_phase1(rows, predictors, whitelist, **kwargs):
+    """Complete estimability preflight, then final scope guard, then fitting."""
+    preflight_phase1_estimability(rows, predictors, whitelist)
+    require_discovery_only(rows)  # unchanged final backstop immediately before runner
+    return run_phase1(rows, predictors, whitelist, **kwargs)
 
 
 def write_package(package, output_directory: Path, configuration: dict[str, object]) -> None:
@@ -170,14 +187,16 @@ def main() -> None:
     partial = args.output_dir.with_name(args.output_dir.name + ".partial")
     if partial.exists():
         raise FileExistsError(f"stale Phase 1 partial output requires review: {partial}")
-    source_paths = (ANALYSIS_VIEW, WHITELIST, INVENTORY, CLUSTERS, TARGET_REGISTRY, BUST_REFERENCE)
+    source_paths = (
+        ANALYSIS_VIEW, ANALYSIS_VIEW_CSV, WHITELIST, INVENTORY,
+        CLUSTERS, TARGET_REGISTRY, BUST_REFERENCE,
+    )
     for path in source_paths:
         if not path.is_file():
             raise FileNotFoundError(path)
     input_hashes = {str(path.relative_to(REPO_ROOT)): sha256(path) for path in source_paths}
     predictors, whitelist = governed_predictors()
     rows = discovery_rows(predictors)
-    require_discovery_only(rows)  # final unchanged backstop immediately before runner
     post_read_hashes = {str(path.relative_to(REPO_ROOT)): sha256(path) for path in source_paths}
     if post_read_hashes != input_hashes:
         raise RuntimeError("Phase 1 governed inputs changed while they were being loaded")
@@ -197,7 +216,7 @@ def main() -> None:
             handle.flush()
         print(line, flush=True)
 
-    package = run_phase1(
+    package = run_preflighted_phase1(
         rows, predictors, whitelist,
         checkpoint_root=args.checkpoint_dir / "tasks",
         checkpoint_identity=checkpoint_identity,
