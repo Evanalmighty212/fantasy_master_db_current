@@ -443,6 +443,30 @@ def test_end_to_end_runner_assembles_three_primary_families_from_synthetic_rows(
     assert len(package.robustness_results) == 3
     assert set(package.primary_results["predictor_column"]) == {"trait"}
     assert package.categorical_references == ()
+    assert len(package.preflight_ledger) == 3
+    assert {record.disposition for record in package.preflight_ledger} == {"fit"}
+
+
+def test_runner_skips_only_non_estimable_family_and_excludes_it_from_bh():
+    rows = _synthetic_rows()
+    rows["trait_binary"] = rows.index % 11 == 0
+    rows.loc[rows["trait_binary"], "lwi_score"] = np.nan
+    predictor = PredictorDefinition("trait_binary", "binary", "cluster_086", True)
+
+    package = run_phase1(
+        rows, [predictor], [predictor.column], bootstrap_replicates=5,
+        minimum_success_rate=0.8, synthetic_test_mode=True,
+    )
+
+    assert set(package.primary_results["family"]) == {"star", "strict_bust"}
+    assert len(package.incremental_results) == 2
+    assert len(package.robustness_results) == 2
+    assert not (package.primary_results["family"] == "lwi").any()
+    by_family = {record.family: record for record in package.preflight_ledger}
+    assert by_family["lwi"].disposition == "excluded_non_estimable"
+    assert by_family["lwi"].governed_reason == "binary_no_discovery_contrast"
+    assert by_family["star"].disposition == "fit"
+    assert by_family["strict_bust"].disposition == "fit"
 
 
 def test_phase1_runner_module_has_no_artifact_loader_or_repository_path():

@@ -120,6 +120,20 @@ class CategoricalReferenceRecord:
 
 
 @dataclass(frozen=True)
+class PreflightRecord:
+    family: Family
+    predictor_column: str
+    cluster_id: str
+    predictor_kind: PredictorKind
+    target_eligible_n: int
+    predictor_nonnull_n: int
+    distinct_value_count: int
+    seasons_represented: int
+    disposition: Literal["fit", "excluded_non_estimable"]
+    governed_reason: str | None
+
+
+@dataclass(frozen=True)
 class EvidenceStatus:
     applicable_n: int
     positive_n: int | None
@@ -191,6 +205,7 @@ class Phase1Package:
     incremental_results: tuple[IncrementalResult, ...]
     robustness_results: tuple[RobustnessResult, ...]
     categorical_references: tuple[CategoricalReferenceRecord, ...]
+    preflight_ledger: tuple[PreflightRecord, ...]
 
 
 def strict_bust_practical_effect_passes(odds_ratios: Sequence[float]) -> bool:
@@ -246,10 +261,10 @@ def _validated_seasons(rows: pd.DataFrame) -> pd.Series:
     return numeric
 
 
-def discovery_fit_rows(rows: pd.DataFrame, target: TargetDefinition, predictor_column: str) -> pd.DataFrame:
-    """Select eligible 2010-2020 rows only, rejecting any supplied holdout."""
+def _discovery_target_rows(rows: pd.DataFrame, target: TargetDefinition) -> pd.DataFrame:
+    """Select target-eligible discovery rows before predictor-specific null filtering."""
     seasons = _validated_seasons(rows)
-    required = {target.target_column, predictor_column, "player_id", "position", "preseason_market_status", "adp_round"}
+    required = {target.target_column, "player_id", "position", "preseason_market_status", "adp_round"}
     if target.eligibility_column is not None:
         required.add(target.eligibility_column)
     missing = sorted(required - set(rows.columns))
@@ -261,7 +276,14 @@ def discovery_fit_rows(rows: pd.DataFrame, target: TargetDefinition, predictor_c
         if not eligibility_values <= {0, 1, True, False}:
             raise ValueError(f"eligibility column must be boolean/0/1: {target.eligibility_column}")
         selected = selected.loc[selected[target.eligibility_column].fillna(False).astype(bool)].copy()
-    selected = selected.dropna(subset=[target.target_column, predictor_column, "player_id", "position"])
+    return selected.dropna(subset=[target.target_column, "player_id", "position"])
+
+
+def discovery_fit_rows(rows: pd.DataFrame, target: TargetDefinition, predictor_column: str) -> pd.DataFrame:
+    """Select eligible 2010-2020 rows only, rejecting any supplied holdout."""
+    if predictor_column not in rows:
+        raise ValueError(f"Phase 1 input missing required columns: ['{predictor_column}']")
+    selected = _discovery_target_rows(rows, target).dropna(subset=[predictor_column])
     if selected.empty:
         raise ValueError(f"no eligible 2010-2020 rows for {predictor_column} and {target.family}")
     return selected
@@ -436,40 +458,82 @@ def preflight_phase1_estimability(
     rows: pd.DataFrame,
     predictors: Sequence[PredictorDefinition],
     predictor_whitelist: Sequence[str],
-) -> tuple[tuple[str, str, int], ...]:
+) -> tuple[PreflightRecord, ...]:
     """Validate every predictor-family design before any expensive fit.
 
-    This is deliberately fail-loud rather than an implicit hypothesis
-    exclusion: a genuinely non-estimable governed representative needs an
-    explicit recorded disposition, while an input-decoding defect must never
-    be hidden by silently reducing a family's BH universe.
+    Genuine target-specific absence of predictor variation receives an explicit
+    governed exclusion. Malformed data and unexplained design failures remain
+    fail-loud and can never silently reduce a family's BH universe.
     """
     _validated_seasons(rows)
     resolved, _ = resolve_categorical_references(rows, predictors)
     validate_predictor_definitions(resolved, predictor_whitelist)
-    records: list[tuple[str, str, int]] = []
+    records: list[PreflightRecord] = []
     failures: list[str] = []
     for predictor in resolved:
         for target in PRIMARY_TARGETS:
             context = f"family={target.family} predictor={predictor.column}"
             try:
-                fit_rows = discovery_fit_rows(rows, target, predictor.column)
+                target_rows = _discovery_target_rows(rows, target)
+                if predictor.column not in target_rows:
+                    raise ValueError(f"Phase 1 input missing required columns: ['{predictor.column}']")
+                fit_rows = target_rows.dropna(subset=[predictor.column]).copy()
+                if fit_rows.empty:
+                    records.append(PreflightRecord(
+                        target.family, predictor.column, predictor.cluster_id, predictor.kind,
+                        len(target_rows), 0, 0, 0, "excluded_non_estimable",
+                        "no_nonnull_discovery_support",
+                    ))
+                    continue
                 values = fit_rows[predictor.column]
                 if predictor.kind == "continuous":
                     numeric = pd.to_numeric(values, errors="raise")
                     if not np.isfinite(numeric.to_numpy(dtype=float)).all():
                         raise ValueError("continuous predictor contains non-finite values")
-                elif predictor.kind == "binary" and len(pd.unique(values)) != 2:
-                    raise ValueError("binary predictor has no discovery contrast")
-                elif predictor.kind == "categorical" and values.astype(str).nunique() < 2:
-                    raise ValueError("categorical predictor has no discovery contrast")
+                    distinct = int(numeric.nunique())
+                    if distinct < 2 or not np.isfinite(float(numeric.std(ddof=1))) or float(numeric.std(ddof=1)) <= 0:
+                        records.append(PreflightRecord(
+                            target.family, predictor.column, predictor.cluster_id, predictor.kind,
+                            len(target_rows), len(fit_rows), distinct,
+                            int(fit_rows["prediction_season"].nunique()),
+                            "excluded_non_estimable", "continuous_zero_variation",
+                        ))
+                        continue
+                elif predictor.kind == "binary":
+                    if not set(pd.unique(values)) <= {0, 1, True, False}:
+                        raise ValueError(f"binary predictor must be 0/1: {predictor.column}")
+                    distinct = int(values.nunique())
+                    if distinct != 2:
+                        records.append(PreflightRecord(
+                            target.family, predictor.column, predictor.cluster_id, predictor.kind,
+                            len(target_rows), len(fit_rows), distinct,
+                            int(fit_rows["prediction_season"].nunique()),
+                            "excluded_non_estimable", "binary_no_discovery_contrast",
+                        ))
+                        continue
+                elif predictor.kind == "categorical":
+                    distinct = int(values.astype(str).nunique())
+                    if distinct < 2:
+                        records.append(PreflightRecord(
+                            target.family, predictor.column, predictor.cluster_id, predictor.kind,
+                            len(target_rows), len(fit_rows), distinct,
+                            int(fit_rows["prediction_season"].nunique()),
+                            "excluded_non_estimable", "categorical_no_discovery_contrast",
+                        ))
+                        continue
+                else:
+                    raise ValueError(f"unknown predictor kind: {predictor.kind}")
                 predictor_design, _, _ = _predictor_design(fit_rows, predictor)
                 matrix = predictor_design.to_numpy(dtype=float)
                 if not np.isfinite(matrix).all():
                     raise ValueError("predictor design contains non-finite values")
                 if np.linalg.matrix_rank(matrix) != matrix.shape[1]:
                     raise ValueError("predictor design is rank deficient or has zero variation")
-                records.append((target.family, predictor.column, len(fit_rows)))
+                records.append(PreflightRecord(
+                    target.family, predictor.column, predictor.cluster_id, predictor.kind,
+                    len(target_rows), len(fit_rows), distinct,
+                    int(fit_rows["prediction_season"].nunique()), "fit", None,
+                ))
             except (TypeError, ValueError) as exc:
                 failures.append(f"{context}: {exc}")
     if failures:
@@ -859,6 +923,12 @@ def run_phase1(
     _validated_seasons(rows)  # reject holdout before any target-specific filtering
     predictors, categorical_references = resolve_categorical_references(rows, predictors)
     validate_predictor_definitions(predictors, predictor_whitelist)
+    preflight_ledger = preflight_phase1_estimability(rows, predictors, predictor_whitelist)
+    fit_pairs = {
+        (record.family, record.predictor_column)
+        for record in preflight_ledger
+        if record.disposition == "fit"
+    }
     if not synthetic_test_mode and (
         bootstrap_replicates != DATASET2_FIRTH_BOOTSTRAP_REPLICATES
         or seed != DATASET2_PHASE1_RANDOM_SEED
@@ -879,6 +949,8 @@ def run_phase1(
     robustness: list[RobustnessResult] = []
     for predictor in predictors:
         for target in PRIMARY_TARGETS:
+            if (target.family, predictor.column) not in fit_pairs:
+                continue
             fit_rows = discovery_fit_rows(rows, target, predictor.column)
             result = _fit_lwi(fit_rows, target, predictor, outcome_sd) if target.family == "lwi" else _fit_firth(
                 fit_rows, target, predictor, replicates=bootstrap_replicates,
@@ -911,4 +983,5 @@ def run_phase1(
         tuple(incrementals),
         tuple(robustness),
         categorical_references,
+        preflight_ledger,
     )

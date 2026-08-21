@@ -85,20 +85,52 @@ def test_all_143_representatives_receive_family_specific_preflight():
         rows, predictors, [predictor.column for predictor in predictors],
     )
     assert len(records) == 143 * 3
-    assert {(family, column) for family, column, _ in records} == {
+    assert {(record.family, record.predictor_column) for record in records} == {
         (family, predictor.column)
         for family in ("lwi", "star", "strict_bust")
         for predictor in predictors
     }
+    assert {record.disposition for record in records} == {"fit"}
 
 
 def test_preflight_aggregates_invalid_family_designs_before_fitting():
     rows = _analysis_rows([2010 + (i % 11) for i in range(220)])
     rows["trait"] = np.arange(len(rows), dtype=float)
-    rows.loc[:109, "lwi_score"] = np.nan
-    rows.loc[110:, "trait"] = 1.0
+    rows.loc[0, "trait"] = np.inf
     predictor = PredictorDefinition("trait", "continuous", "1", True)
-    with pytest.raises(ValueError, match="family=lwi predictor=trait.*invalid discovery SD"):
+    with pytest.raises(ValueError, match="family=lwi predictor=trait.*non-finite"):
+        preflight_phase1_estimability(rows, [predictor], ["trait"])
+
+
+def test_preflight_records_lwi_only_binary_exclusion_and_keeps_valid_families():
+    rows = _analysis_rows([2010 + (i % 11) for i in range(220)])
+    rows["trait"] = [False] * 210 + [True] * 10
+    rows.loc[rows["trait"], "lwi_score"] = np.nan
+    predictor = PredictorDefinition("trait", "binary", "86", True)
+
+    records = preflight_phase1_estimability(rows, [predictor], ["trait"])
+    assert len(records) == 3
+    by_family = {record.family: record for record in records}
+    assert by_family["lwi"].disposition == "excluded_non_estimable"
+    assert by_family["lwi"].governed_reason == "binary_no_discovery_contrast"
+    assert by_family["lwi"].distinct_value_count == 1
+    assert by_family["star"].disposition == "fit"
+    assert by_family["strict_bust"].disposition == "fit"
+
+
+@pytest.mark.parametrize(
+    ("replacement", "message"),
+    [
+        (2, "binary predictor must be 0/1"),
+        (np.inf, "binary predictor must be 0/1"),
+    ],
+)
+def test_preflight_malformed_binary_remains_fail_loud(replacement, message):
+    rows = _analysis_rows([2010 + (i % 11) for i in range(220)])
+    rows["trait"] = pd.Series([False, True] * 110, dtype=object)
+    rows.loc[0, "trait"] = replacement
+    predictor = PredictorDefinition("trait", "binary", "86", True)
+    with pytest.raises(ValueError, match=message):
         preflight_phase1_estimability(rows, [predictor], ["trait"])
 
 

@@ -162,6 +162,9 @@ def write_package(package, output_directory: Path, configuration: dict[str, obje
                   for value in package.categorical_references]).sort_values(
         "predictor_column", kind="mergesort",
     ).to_csv(output_directory / "categorical_references.csv", index=False, lineterminator="\n")
+    pd.DataFrame([asdict(value) for value in package.preflight_ledger]).sort_values(
+        ["family", "cluster_id", "predictor_column"], kind="mergesort",
+    ).to_csv(output_directory / "preflight_ledger.csv", index=False, lineterminator="\n")
     (output_directory / "configuration.json").write_text(stable_json(configuration) + "\n", encoding="utf-8")
     paths = sorted(path for path in output_directory.iterdir() if path.is_file())
     (output_directory / "outputs.sha256").write_text(
@@ -223,12 +226,26 @@ def main() -> None:
         progress=report_progress,
     )
     partial.mkdir(parents=True, exist_ok=False)
+    preflight_counts = {
+        family: {
+            "fit": sum(
+                record.family == family and record.disposition == "fit"
+                for record in package.preflight_ledger
+            ),
+            "excluded_non_estimable": sum(
+                record.family == family and record.disposition == "excluded_non_estimable"
+                for record in package.preflight_ledger
+            ),
+        }
+        for family in ("lwi", "star", "strict_bust")
+    }
     configuration = {
         "git_head": git_head,
         "input_hashes": input_hashes,
         "loaded_row_count": len(rows),
         "loaded_seasons": sorted(rows["prediction_season"].astype(int).unique().tolist()),
         "representatives_per_family": {family: len(predictors) for family in ("lwi", "star", "strict_bust")},
+        "preflight_counts_by_family": preflight_counts,
         "bootstrap_replicates": DATASET2_FIRTH_BOOTSTRAP_REPLICATES,
         "bootstrap_minimum_success_rate": DATASET2_FIRTH_BOOTSTRAP_MIN_SUCCESS_RATE,
         "bootstrap_batch_size": DATASET2_FIRTH_BOOTSTRAP_BATCH_SIZE,
