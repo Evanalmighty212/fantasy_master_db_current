@@ -63,10 +63,12 @@ stationary penalized-likelihood solution whose sparse nuisance coefficient
 oscillates above the raw update tolerance: finite likelihood, objective
 change within the existing line-search tolerance, and a small Fisher-scaled
 penalized-score/Newton decrement must all hold on consecutive iterations.
-A third path detects a stable A-B-A-B-A numerical cycle and tests its
-midpoint, accepting it only under those same likelihood and stationarity
-safeguards. This changes no likelihood or convergence tolerance; it prevents
-a stationary numerical cycle from being mislabeled as nonconvergence.
+A stable A-B-A-B-A numerical cycle also permits a safeguarded midpoint step
+when that midpoint is finite, non-decreasing, and meets the existing
+stationarity criterion. The midpoint is not itself convergence: normal
+iterations resume and an existing convergence rule must subsequently pass.
+This changes no likelihood or convergence tolerance; it prevents a stable
+numerical cycle from trapping an otherwise stationary fit indefinitely.
 
 CONFIDENCE INTERVALS: profile-likelihood, not Wald. Firth's own
 literature (Heinze & Schemper 2002) recommends profile penalized
@@ -364,27 +366,27 @@ def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
             midpoint_update = (
                 np.max(np.abs(midpoint[free] - beta[free])) if free.any() else 0.0
             )
-            midpoint_valid = (
+            midpoint_step_valid = (
                 np.isfinite(midpoint_ll)
                 and midpoint_ll >= prev_ll - OBJECTIVE_TOLERANCE
                 and np.isfinite(midpoint_score_norm)
                 and np.isfinite(midpoint_decrement)
-                and abs(midpoint_change) <= OBJECTIVE_TOLERANCE
                 and midpoint_decrement <= tol
             )
-            if midpoint_valid:
+            if midpoint_step_valid:
                 beta = midpoint
                 prev_ll = midpoint_ll
                 final_likelihood_change = midpoint_change
                 final_score_norm = midpoint_score_norm
                 final_newton_decrement = midpoint_decrement
-                converged = True
-                termination_reason = "stable_two_cycle_midpoint"
                 record_iteration(
                     n_iter, final_score_norm, final_newton_decrement,
-                    midpoint_change, midpoint_update, halvings, termination_reason,
+                    midpoint_change, midpoint_update, halvings,
+                    "stable_two_cycle_midpoint_step",
                 )
-                break
+                state_history = [(midpoint.copy(), float(midpoint_ll))]
+                stationary_iterations = 0
+                continue
 
         beta = new_beta
         prev_ll = new_ll

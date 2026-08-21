@@ -364,36 +364,64 @@ class TestConvergenceRecognition:
         ]
         assert _stable_two_cycle_midpoint(history, tol=1e-8) is None
 
-    def test_stationary_cycle_midpoint_is_accepted_with_distinct_reason(self, monkeypatch):
+    def test_stationary_cycle_midpoint_steps_then_uses_ordinary_convergence(self, monkeypatch):
         import lib.dataset2.firth_logistic as module
 
         X, y = self._one_row_nuisance_fixture()
         optimum = fit_firth_logistic(X, y)
         assert optimum.converged
         start = optimum.beta.copy()
-        start[1] += 1e-7
+        start[1] += 1e-4
+        assert optimum.penalized_loglik - _penalized_loglik(X, y, start) > 1e-10
+        history_lengths = []
+
+        def propose_once(state_history, tol):
+            history_lengths.append(len(state_history))
+            return optimum.beta.copy() if len(history_lengths) == 1 else None
+
+        monkeypatch.setattr(
+            module, "_stable_two_cycle_midpoint", propose_once,
+        )
+        resolved = fit_firth_logistic(X, y, beta_init=start, max_iter=5, tol=1e-8)
+        assert resolved.converged
+        assert resolved.n_iter >= 2
+        assert history_lengths[:2] == [2, 2]
+        assert resolved.termination_reason in {
+            "coefficient_update", "stationary_penalized_likelihood",
+        }
+        assert resolved.final_newton_decrement <= 1e-8
+        assert abs(resolved.final_likelihood_change) <= 1e-10
+
+    def test_midpoint_step_never_grants_immediate_convergence(self, monkeypatch):
+        import lib.dataset2.firth_logistic as module
+
+        X, y = self._one_row_nuisance_fixture()
+        optimum = fit_firth_logistic(X, y)
+        start = optimum.beta.copy()
+        start[1] += 1e-4
         monkeypatch.setattr(
             module, "_stable_two_cycle_midpoint",
             lambda state_history, tol: optimum.beta.copy(),
         )
-        resolved = fit_firth_logistic(X, y, beta_init=start, max_iter=1, tol=1e-8)
-        assert resolved.converged
-        assert resolved.termination_reason == "stable_two_cycle_midpoint"
-        assert resolved.final_newton_decrement <= 1e-8
-        assert abs(resolved.final_likelihood_change) <= 1e-10
+        one_iteration = fit_firth_logistic(X, y, beta_init=start, max_iter=1, tol=1e-8)
+        assert not one_iteration.converged
+        assert one_iteration.termination_reason == "max_iterations"
 
-    @pytest.mark.parametrize("candidate_kind", ["non_improving", "non_finite"])
+    @pytest.mark.parametrize("candidate_kind", ["non_improving", "non_finite", "nonstationary"])
     def test_invalid_cycle_midpoint_does_not_converge(self, monkeypatch, candidate_kind):
         import lib.dataset2.firth_logistic as module
 
         X, y = self._one_row_nuisance_fixture()
         if candidate_kind == "non_improving":
             candidate = np.full(X.shape[1], 20.0)
-        else:
+            proposal = lambda state_history, tol: candidate.copy()
+        elif candidate_kind == "non_finite":
             candidate = np.full(X.shape[1], np.nan)
+            proposal = lambda state_history, tol: candidate.copy()
+        else:
+            proposal = lambda state_history, tol: state_history[-1][0].copy()
         monkeypatch.setattr(
-            module, "_stable_two_cycle_midpoint",
-            lambda state_history, tol: candidate.copy(),
+            module, "_stable_two_cycle_midpoint", proposal,
         )
         fit = fit_firth_logistic(X, y, max_iter=1)
         assert not fit.converged
