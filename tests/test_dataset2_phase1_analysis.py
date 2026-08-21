@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -5,6 +6,7 @@ from lib.dataset2.phase1_analysis import (
     BootstrapReplicateError,
     benjamini_hochberg,
     eligibility_aware_expanding_windows,
+    indexed_player_cluster_bootstrap,
     player_cluster_bootstrap,
     preseason_acquisition_stratum,
     require_discovery_only,
@@ -82,3 +84,88 @@ def test_cluster_bootstrap_reports_classified_failure_summary_with_context():
             rows, player_column="player_id", fit=fit, replicates=4,
             context="family=star predictor=trait",
         )
+
+
+def test_indexed_bootstrap_matches_legacy_draw_order_values_and_failures():
+    rows = pd.DataFrame({
+        "player_id": ["A", "A", "B", "C", "C"],
+        "row_value": [10, 11, 20, 30, 31],
+    })
+    def evaluate(values):
+        values = tuple(int(value) for value in values)
+        if sum(values) % 5 == 0:
+            raise BootstrapReplicateError("rank_failure", "synthetic classified failure")
+        return values
+    legacy = player_cluster_bootstrap(
+        rows, player_column="player_id",
+        fit=lambda sample: evaluate(sample["row_value"]),
+        original=("original",), replicates=12, minimum_success_rate=0.0,
+    )
+    indexed = indexed_player_cluster_bootstrap(
+        rows["player_id"],
+        fit_positions=lambda positions: evaluate(rows.iloc[positions]["row_value"]),
+        original=("original",), replicates=12, minimum_success_rate=0.0,
+    )
+    assert indexed.replicates == legacy.replicates
+    assert indexed.failure_counts == legacy.failure_counts
+
+
+def test_indexed_bootstrap_resume_matches_uninterrupted_exactly(tmp_path):
+    players = pd.Series(["A", "A", "B", "C", "C"])
+    values = np.array([10, 11, 20, 30, 31])
+    fit = lambda positions: tuple(int(value) for value in values[positions])
+    uninterrupted = indexed_player_cluster_bootstrap(
+        players, fit_positions=fit, original=("original",),
+        replicates=8, batch_size=2, checkpoint_directory=tmp_path / "fresh",
+        task_signature={"fixture": "resume"},
+    )
+    interrupted_calls = {"count": 0}
+    def interrupt_after_first_batch(_record):
+        interrupted_calls["count"] += 1
+        if interrupted_calls["count"] == 1:
+            raise RuntimeError("synthetic interruption")
+    with pytest.raises(RuntimeError, match="synthetic interruption"):
+        indexed_player_cluster_bootstrap(
+            players, fit_positions=fit, original=("original",),
+            replicates=8, batch_size=2, checkpoint_directory=tmp_path / "resumed",
+            task_signature={"fixture": "resume"}, progress=interrupt_after_first_batch,
+        )
+    assert len(list((tmp_path / "resumed").glob("batch_*.json"))) == 1
+    resumed = indexed_player_cluster_bootstrap(
+        players, fit_positions=fit, original=("original",),
+        replicates=8, batch_size=2, checkpoint_directory=tmp_path / "resumed",
+        task_signature={"fixture": "resume"},
+    )
+    assert resumed == uninterrupted
+    assert (tmp_path / "resumed" / "task_complete.json").is_file()
+
+
+def test_indexed_bootstrap_rejects_checkpoint_signature_drift(tmp_path):
+    players = pd.Series(["A", "B"])
+    indexed_player_cluster_bootstrap(
+        players, fit_positions=lambda positions: tuple(positions), original=(),
+        replicates=2, batch_size=1, checkpoint_directory=tmp_path,
+        task_signature={"version": 1},
+    )
+    with pytest.raises(RuntimeError, match="signature mismatch"):
+        indexed_player_cluster_bootstrap(
+            players, fit_positions=lambda positions: tuple(positions), original=(),
+            replicates=2, batch_size=1, checkpoint_directory=tmp_path,
+            task_signature={"version": 2},
+        )
+
+
+def test_indexed_bootstrap_progress_reports_bounded_batches_and_failures():
+    players = pd.Series(["A", "B"])
+    progress = []
+    def fail(_positions):
+        raise BootstrapReplicateError("nonconvergence", "synthetic")
+    with pytest.raises(RuntimeError, match="0/4"):
+        indexed_player_cluster_bootstrap(
+            players, fit_positions=fail, original=(), replicates=4,
+            batch_size=2, minimum_success_rate=0.99, progress=progress.append,
+            context="family=star predictor=fixture",
+        )
+    assert [record["attempted"] for record in progress] == [2, 4]
+    assert progress[-1]["failure_counts"]["nonconvergence"] == 4
+    assert progress[-1]["completed_batches"] == progress[-1]["total_batches"] == 2

@@ -8,6 +8,11 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+import hashlib
+import json
+import os
+from pathlib import Path
+import tempfile
 from typing import Callable, Iterable
 
 import numpy as np
@@ -18,6 +23,7 @@ from config import (
     DATASET2_DISCOVERY_START_SEASON,
     DATASET2_FIRTH_BOOTSTRAP_MIN_SUCCESS_RATE,
     DATASET2_FIRTH_BOOTSTRAP_REPLICATES,
+    DATASET2_FIRTH_BOOTSTRAP_BATCH_SIZE,
     DATASET2_HOLDOUT_START_SEASON,
     DATASET2_MIN_ELIGIBLE_SEASONS_BEFORE_VALIDATION,
     DATASET2_PHASE1_BH_Q,
@@ -59,6 +65,188 @@ class BootstrapReplicateError(RuntimeError):
     def __init__(self, category: str, detail: str):
         super().__init__(detail)
         self.category = category
+
+
+def _canonical_json(value: object) -> str:
+    def convert(item):
+        if isinstance(item, np.generic):
+            return item.item()
+        if isinstance(item, np.ndarray):
+            return item.tolist()
+        raise TypeError(f"Object of type {type(item).__name__} is not JSON serializable")
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False, default=convert,
+    )
+
+
+def _atomic_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent,
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(_canonical_json(value) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    except Exception:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def _signature_hash(signature: dict[str, object]) -> str:
+    return hashlib.sha256(_canonical_json(signature).encode("utf-8")).hexdigest()
+
+
+def _classified_bootstrap_fit(
+    fit: Callable[[np.ndarray], object], row_positions: np.ndarray,
+) -> tuple[str, object | None]:
+    try:
+        return "success", fit(row_positions)
+    except BootstrapReplicateError as exc:
+        return exc.category, None
+    except np.linalg.LinAlgError:
+        return "other_numerical_error", None
+    except FloatingPointError:
+        return "other_numerical_error", None
+    except RuntimeError as exc:
+        return ("nonconvergence" if "converg" in str(exc).lower() else "other_numerical_error"), None
+    except ValueError:
+        return "other_numerical_error", None
+
+
+def indexed_player_cluster_bootstrap(
+    player_values: Iterable[object],
+    *,
+    fit_positions: Callable[[np.ndarray], object],
+    original: object,
+    replicates: int = DATASET2_FIRTH_BOOTSTRAP_REPLICATES,
+    seed: int = DATASET2_PHASE1_RANDOM_SEED,
+    minimum_success_rate: float = DATASET2_FIRTH_BOOTSTRAP_MIN_SUCCESS_RATE,
+    batch_size: int = DATASET2_FIRTH_BOOTSTRAP_BATCH_SIZE,
+    checkpoint_directory: Path | None = None,
+    task_signature: dict[str, object] | None = None,
+    context: str = "bootstrap fit",
+    progress: Callable[[dict[str, object]], None] | None = None,
+) -> BootstrapResult:
+    """Exact player-block bootstrap using cached row positions and resumable batches."""
+    values = np.asarray(list(player_values), dtype=object)
+    players = pd.Index(pd.Series(values, dtype="object").dropna().unique())
+    if players.empty:
+        raise ValueError("player-cluster bootstrap requires at least one player")
+    if batch_size <= 0:
+        raise ValueError("bootstrap batch size must be positive")
+    row_blocks = tuple(np.flatnonzero(values == player) for player in players)
+    signature = {
+        **(task_signature or {}),
+        "bootstrap_engine": "indexed_player_blocks_v1",
+        "replicates": replicates,
+        "seed": seed,
+        "minimum_success_rate": minimum_success_rate,
+        "batch_size": batch_size,
+        "player_count": len(players),
+        "row_count": len(values),
+    }
+    signature_digest = _signature_hash(signature)
+    if checkpoint_directory is not None:
+        checkpoint_directory = Path(checkpoint_directory)
+        manifest_path = checkpoint_directory / "task_manifest.json"
+        if manifest_path.exists():
+            existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if existing != {"signature": signature, "signature_sha256": signature_digest}:
+                raise RuntimeError(f"checkpoint signature mismatch for {context}")
+        else:
+            checkpoint_directory.mkdir(parents=True, exist_ok=True)
+            _atomic_json(manifest_path, {"signature": signature, "signature_sha256": signature_digest})
+
+    rng = np.random.default_rng(seed)
+    records: dict[int, tuple[str, object | None]] = {}
+    batch_count = (replicates + batch_size - 1) // batch_size
+    for batch_number in range(batch_count):
+        start = batch_number * batch_size
+        stop = min(replicates, start + batch_size)
+        batch_draws = [
+            rng.choice(len(players), size=len(players), replace=True)
+            for _ in range(start, stop)
+        ]
+        batch_path = None if checkpoint_directory is None else checkpoint_directory / f"batch_{start:04d}_{stop - 1:04d}.json"
+        if batch_path is not None and batch_path.exists():
+            payload = json.loads(batch_path.read_text(encoding="utf-8"))
+            if payload.get("signature_sha256") != signature_digest or payload.get("start") != start or payload.get("stop") != stop:
+                raise RuntimeError(f"invalid bootstrap checkpoint batch for {context}: {batch_path}")
+            batch_records = payload.get("records", [])
+            if len(batch_records) != stop - start:
+                raise RuntimeError(f"incomplete bootstrap checkpoint batch for {context}: {batch_path}")
+        else:
+            batch_records = []
+            for replicate_index, draws in zip(range(start, stop), batch_draws):
+                positions = np.concatenate([row_blocks[int(draw)] for draw in draws])
+                status, value = _classified_bootstrap_fit(fit_positions, positions)
+                batch_records.append({
+                    "replicate_index": replicate_index,
+                    "status": status,
+                    "value": value,
+                })
+            if batch_path is not None:
+                _atomic_json(batch_path, {
+                    "signature_sha256": signature_digest,
+                    "start": start,
+                    "stop": stop,
+                    "records": batch_records,
+                })
+        for record in batch_records:
+            index = int(record["replicate_index"])
+            if index in records or not start <= index < stop:
+                raise RuntimeError(f"duplicate/out-of-range bootstrap checkpoint record for {context}")
+            records[index] = (str(record["status"]), record.get("value"))
+        if progress is not None:
+            success_so_far = sum(status == "success" for status, _ in records.values())
+            failures_so_far = Counter(
+                status for status, _ in records.values() if status != "success"
+            )
+            progress({
+                "context": context,
+                "completed_batches": batch_number + 1,
+                "total_batches": batch_count,
+                "attempted": len(records),
+                "successful": success_so_far,
+                "failure_counts": {
+                    category: int(failures_so_far.get(category, 0))
+                    for category in BOOTSTRAP_FAILURE_CATEGORIES
+                },
+            })
+
+    if tuple(sorted(records)) != tuple(range(replicates)):
+        raise RuntimeError(f"bootstrap checkpoint coverage is incomplete for {context}")
+    failures: Counter[str] = Counter({category: 0 for category in BOOTSTRAP_FAILURE_CATEGORIES})
+    successful = []
+    for index in range(replicates):
+        status, value = records[index]
+        if status == "success":
+            successful.append(tuple(value) if isinstance(value, list) else value)
+        elif status in failures:
+            failures[status] += 1
+        else:
+            raise RuntimeError(f"unknown bootstrap failure category for {context}: {status}")
+    failure_counts = tuple(sorted(failures.items()))
+    if len(successful) / replicates < minimum_success_rate:
+        raise RuntimeError(
+            f"bootstrap success rate {len(successful)}/{replicates} is below "
+            f"{minimum_success_rate:.1%} for {context}; failures={dict(failure_counts)}"
+        )
+    result = BootstrapResult(original, tuple(successful), replicates, len(successful), seed, failure_counts)
+    if checkpoint_directory is not None:
+        _atomic_json(checkpoint_directory / "task_complete.json", {
+            "signature_sha256": signature_digest,
+            "attempted": replicates,
+            "successful": len(successful),
+            "failure_counts": dict(failure_counts),
+        })
+    return result
 
 
 def require_discovery_only(rows: pd.DataFrame, season_column: str = "prediction_season") -> None:

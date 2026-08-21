@@ -18,6 +18,7 @@ from lib.dataset2.phase1_runner import (
     _fit_firth,
     _fit_lwi,
     _prepare_firth_bootstrap_design,
+    _prepare_firth_bootstrap_matrix,
     apply_primary_family_fdr,
     assemble_results,
     discovery_fit_rows,
@@ -304,6 +305,50 @@ def test_categorical_firth_has_one_joint_p_and_descriptive_contrasts():
     assert result.bootstrap_successful >= 20 * 0.99
 
 
+def test_cached_numeric_firth_matches_legacy_coefficients_and_final_result():
+    rows = _synthetic_rows()
+    optimized = _fit_firth(
+        rows, PRIMARY_TARGETS[1], _predictor(),
+        replicates=20, seed=20260808, minimum_success_rate=0.99,
+    )
+    legacy = _fit_firth(
+        rows, PRIMARY_TARGETS[1], _predictor(),
+        replicates=20, seed=20260808, minimum_success_rate=0.99,
+        _legacy_bootstrap_for_test=True,
+    )
+    assert optimized == legacy
+
+
+def test_phase1_checkpoint_resume_matches_uninterrupted_final_outputs(tmp_path):
+    rows = _synthetic_rows()
+    predictor = _predictor()
+    interrupted = {"raised": False}
+    def stop_once(_record):
+        if not interrupted["raised"]:
+            interrupted["raised"] = True
+            raise RuntimeError("synthetic interruption")
+    with pytest.raises(RuntimeError, match="synthetic interruption"):
+        run_phase1(
+            rows, [predictor], [predictor.column], bootstrap_replicates=4,
+            minimum_success_rate=0.5, synthetic_test_mode=True,
+            checkpoint_root=tmp_path / "resume", progress=stop_once,
+        )
+    resumed = run_phase1(
+        rows, [predictor], [predictor.column], bootstrap_replicates=4,
+        minimum_success_rate=0.5, synthetic_test_mode=True,
+        checkpoint_root=tmp_path / "resume",
+    )
+    uninterrupted = run_phase1(
+        rows, [predictor], [predictor.column], bootstrap_replicates=4,
+        minimum_success_rate=0.5, synthetic_test_mode=True,
+        checkpoint_root=tmp_path / "fresh",
+    )
+    pd.testing.assert_frame_equal(resumed.primary_results, uninterrupted.primary_results)
+    assert resumed.incremental_results == uninterrupted.incremental_results
+    assert resumed.robustness_results == uninterrupted.robustness_results
+    assert resumed.categorical_references == uninterrupted.categorical_references
+
+
 def test_bootstrap_design_drops_only_all_zero_nuisance_and_uses_local_map():
     schema = type("Schema", (), {
         "predictor_columns": ("trait",),
@@ -318,6 +363,11 @@ def test_bootstrap_design_drops_only_all_zero_nuisance_and_uses_local_map():
     reduced, local = _prepare_firth_bootstrap_design(design, np.array([0, 1, 0, 1]), schema)
     assert tuple(reduced.columns) == ("const", "trait", "control_live")
     assert local["trait"] == 1
+    numeric, numeric_local = _prepare_firth_bootstrap_matrix(
+        design.to_numpy(float), np.array([0, 1, 0, 1]), tuple(design.columns), schema,
+    )
+    np.testing.assert_array_equal(numeric, reduced.to_numpy(float))
+    assert numeric_local == local
 
 
 def test_bootstrap_design_never_drops_absent_tested_contrast():

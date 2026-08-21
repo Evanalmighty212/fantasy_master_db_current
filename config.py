@@ -824,6 +824,9 @@ DATASET2_MIN_ELIGIBLE_SEASONS_BEFORE_VALIDATION = 5
 DATASET2_PHASE1_RANDOM_SEED = 20260808
 DATASET2_FIRTH_BOOTSTRAP_REPLICATES = 2000
 DATASET2_FIRTH_BOOTSTRAP_MIN_SUCCESS_RATE = 0.99
+# [IMPLEMENTATION METADATA] Fixed checkpoint batch size. This changes only
+# execution/checkpoint granularity, never the bootstrap sample or inference.
+DATASET2_FIRTH_BOOTSTRAP_BATCH_SIZE = 100
 DATASET2_PHASE1_BH_Q = 0.10
 DATASET2_LWI_MIN_ABS_STANDARDIZED_BETA = 0.10
 # [SETTLED METHODOLOGY] Strict-bust practical-effect gate, approved by
@@ -851,6 +854,8 @@ def validate_dataset2_phase1_config():
         errors.append("Dataset 2 Firth bootstrap replicate count must remain 2000")
     if not 0 < DATASET2_FIRTH_BOOTSTRAP_MIN_SUCCESS_RATE <= 1:
         errors.append("Dataset 2 bootstrap minimum success rate must be in (0, 1]")
+    if DATASET2_FIRTH_BOOTSTRAP_BATCH_SIZE != 100:
+        errors.append("Dataset 2 Firth bootstrap checkpoint batch size must remain 100")
     if DATASET2_PHASE1_RANDOM_SEED != 20260808:
         errors.append("Dataset 2 Phase 1 seed must remain 20260808")
     if DATASET2_STRICT_BUST_OR_INCREASE_GATE != 1.20:

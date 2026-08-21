@@ -9,7 +9,9 @@ accepted artifacts is a separate authorization.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Literal, Sequence
+import hashlib
+from pathlib import Path
+from typing import Callable, Literal, Sequence
 
 import numpy as np
 import pandas as pd
@@ -44,6 +46,7 @@ from lib.dataset2.phase1_analysis import (
     BootstrapReplicateError,
     benjamini_hochberg,
     eligibility_aware_expanding_windows,
+    indexed_player_cluster_bootstrap,
     player_cluster_bootstrap,
     preseason_acquisition_stratum,
 )
@@ -515,9 +518,54 @@ def _prepare_firth_bootstrap_design(
     return reduced_X, {column: index for index, column in enumerate(reduced_X.columns)}
 
 
+def _prepare_firth_bootstrap_matrix(
+    matrix: np.ndarray, sample_y: np.ndarray, names: tuple[str, ...], schema: DesignSchema,
+) -> tuple[np.ndarray, dict[str, int]]:
+    if np.unique(sample_y).size < 2:
+        raise BootstrapReplicateError("missing_target_signal", "resample contains only one target class")
+    name_to_index = {column: index for index, column in enumerate(names)}
+    for column in schema.predictor_columns:
+        if column not in name_to_index or np.unique(matrix[:, name_to_index[column]]).size <= 1:
+            raise BootstrapReplicateError(
+                "missing_predictor_contrast", f"tested contrast is absent: {column}",
+            )
+    drop_indices = {
+        name_to_index[column] for column in schema.control_columns
+        if column in name_to_index and bool(np.all(matrix[:, name_to_index[column]] == 0.0))
+    }
+    keep_indices = [index for index in range(matrix.shape[1]) if index not in drop_indices]
+    reduced = matrix[:, keep_indices]
+    reduced_names = tuple(names[index] for index in keep_indices)
+    if not np.isfinite(reduced).all():
+        raise BootstrapReplicateError(
+            "non_finite_likelihood", "bootstrap design contains non-finite values",
+        )
+    if np.linalg.matrix_rank(reduced) != reduced.shape[1]:
+        raise BootstrapReplicateError("rank_failure", "reduced bootstrap design is not full rank")
+    initial_loglik = _penalized_loglik(reduced, sample_y, np.zeros(reduced.shape[1], dtype=float))
+    if not np.isfinite(initial_loglik):
+        raise BootstrapReplicateError(
+            "non_finite_likelihood", "initial penalized likelihood is non-finite",
+        )
+    return reduced, {column: index for index, column in enumerate(reduced_names)}
+
+
+def _array_sha256(values: np.ndarray) -> str:
+    contiguous = np.ascontiguousarray(values)
+    digest = hashlib.sha256()
+    digest.update(str(contiguous.dtype).encode("ascii"))
+    digest.update(str(contiguous.shape).encode("ascii"))
+    digest.update(contiguous.tobytes())
+    return digest.hexdigest()
+
+
 def _fit_firth(
     rows: pd.DataFrame, target: TargetDefinition, predictor: PredictorDefinition,
     *, replicates: int, seed: int, minimum_success_rate: float,
+    checkpoint_directory: Path | None = None,
+    checkpoint_identity: dict[str, object] | None = None,
+    progress: Callable[[dict[str, object]], None] | None = None,
+    _legacy_bootstrap_for_test: bool = False,
 ) -> ModelResult:
     design, schema = _design(rows, predictor)
     X_frame = add_constant(design, has_constant="add")
@@ -549,12 +597,51 @@ def _fit_firth(
             )
         return tuple(float(fitted.beta[local_columns[column]]) for column in schema.predictor_columns)
 
-    bootstrap = player_cluster_bootstrap(
-        rows, player_column="player_id", fit=fit_coefficients, replicates=replicates,
-        seed=seed, minimum_success_rate=minimum_success_rate,
-        original=original_coefficients,
-        context=f"family={target.family} predictor={predictor.column}",
-    )
+    context = f"family={target.family} predictor={predictor.column}"
+    if _legacy_bootstrap_for_test:
+        bootstrap = player_cluster_bootstrap(
+            rows, player_column="player_id", fit=fit_coefficients, replicates=replicates,
+            seed=seed, minimum_success_rate=minimum_success_rate,
+            original=original_coefficients, context=context,
+        )
+    else:
+        cached_matrix = X_frame.to_numpy(dtype=float)
+        def fit_positions(row_positions: np.ndarray) -> tuple[float, ...]:
+            sample_y = y[row_positions]
+            reduced_matrix, local_columns = _prepare_firth_bootstrap_matrix(
+                cached_matrix[row_positions], sample_y, names, schema,
+            )
+            fitted = fit_firth_logistic(reduced_matrix, sample_y)
+            if not fitted.converged:
+                raise BootstrapReplicateError("nonconvergence", "Firth fit failed to converge")
+            if not np.isfinite(fitted.beta).all():
+                raise BootstrapReplicateError(
+                    "other_numerical_error", "Firth fit returned non-finite coefficients",
+                )
+            return tuple(float(fitted.beta[local_columns[column]]) for column in schema.predictor_columns)
+
+        player_hashes = pd.util.hash_pandas_object(
+            rows["player_id"].astype("string"), index=False,
+        ).to_numpy(dtype=np.uint64)
+        signature = {
+            **(checkpoint_identity or {}),
+            "family": target.family,
+            "target_column": target.target_column,
+            "predictor_column": predictor.column,
+            "predictor_kind": predictor.kind,
+            "predictor_columns": list(schema.predictor_columns),
+            "control_columns": list(schema.control_columns),
+            "design_columns": list(names),
+            "design_sha256": _array_sha256(cached_matrix),
+            "target_sha256": _array_sha256(y),
+            "player_order_sha256": _array_sha256(player_hashes),
+        }
+        bootstrap = indexed_player_cluster_bootstrap(
+            rows["player_id"], fit_positions=fit_positions, original=original_coefficients,
+            replicates=replicates, seed=seed, minimum_success_rate=minimum_success_rate,
+            checkpoint_directory=checkpoint_directory, task_signature=signature,
+            context=context, progress=progress,
+        )
     point = np.asarray(bootstrap.original, dtype=float)
     draws = np.asarray(bootstrap.replicates, dtype=float)
     if len(point) == 1:
@@ -716,6 +803,9 @@ def run_phase1(
     seed: int = DATASET2_PHASE1_RANDOM_SEED,
     minimum_success_rate: float = DATASET2_FIRTH_BOOTSTRAP_MIN_SUCCESS_RATE,
     synthetic_test_mode: bool = False,
+    checkpoint_root: Path | None = None,
+    checkpoint_identity: dict[str, object] | None = None,
+    progress: Callable[[dict[str, object]], None] | None = None,
 ) -> Phase1Package:
     """Run all three frozen primary families on caller-supplied rows only."""
     _validated_seasons(rows)  # reject holdout before any target-specific filtering
@@ -745,6 +835,12 @@ def run_phase1(
             result = _fit_lwi(fit_rows, target, predictor, outcome_sd) if target.family == "lwi" else _fit_firth(
                 fit_rows, target, predictor, replicates=bootstrap_replicates,
                 seed=seed, minimum_success_rate=minimum_success_rate,
+                checkpoint_directory=(
+                    None if checkpoint_root is None else
+                    Path(checkpoint_root) / f"{target.family}__{predictor.column}"
+                ),
+                checkpoint_identity=checkpoint_identity,
+                progress=progress,
             )
             model_results.append(result)
             incrementals.append(incremental_validation(fit_rows, target, predictor))
