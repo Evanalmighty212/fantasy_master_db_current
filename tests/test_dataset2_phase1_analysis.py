@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -168,4 +170,76 @@ def test_indexed_bootstrap_progress_reports_bounded_batches_and_failures():
         )
     assert [record["attempted"] for record in progress] == [2, 4]
     assert progress[-1]["failure_counts"]["nonconvergence"] == 4
+    assert progress[-1]["termination_reason_counts"] == {"not_recorded": 4}
     assert progress[-1]["completed_batches"] == progress[-1]["total_batches"] == 2
+
+
+@pytest.mark.parametrize("category", [
+    "rank_failure", "missing_predictor_contrast", "missing_target_signal",
+    "non_finite_likelihood", "nonconvergence", "other_numerical_error",
+])
+def test_indexed_bootstrap_checkpoints_diagnostics_for_every_failure_category(tmp_path, category):
+    diagnostics = {
+        "termination_reason": f"synthetic_{category}",
+        "iteration_count": 17,
+        "final_score_norm": 0.25,
+        "final_newton_decrement": 0.125,
+        "final_likelihood_change": 1e-9,
+        "total_step_halvings": 23,
+        "reduced_design_row_count": 4,
+        "reduced_design_column_count": 3,
+        "reduced_design_rank": 3,
+        "condition_number": 12.5,
+        "target_class_support": {"0.0": 2, "1.0": 2},
+        "nuisance_control_nonzero_support": {"control": 2},
+    }
+    def fail(_positions):
+        raise BootstrapReplicateError(category, "synthetic", diagnostics)
+
+    result = indexed_player_cluster_bootstrap(
+        pd.Series(["A", "B"]), fit_positions=fail, original=(),
+        replicates=1, batch_size=1, minimum_success_rate=0.0,
+        checkpoint_directory=tmp_path / category,
+    )
+    assert result.successful == 0
+    payload = json.loads((tmp_path / category / "batch_0000_0000.json").read_text())
+    record = payload["records"][0]
+    assert record == {
+        "replicate_index": 0, "status": category, "value": None,
+        "diagnostics": diagnostics,
+    }
+    assert not ({"coefficient", "coefficients", "beta"} & set(record))
+
+
+def test_success_checkpoint_record_format_is_unchanged_when_failures_have_diagnostics(tmp_path):
+    calls = {"count": 0}
+    def mixed(_positions):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise BootstrapReplicateError(
+                "nonconvergence", "synthetic", {"termination_reason": "max_iterations"},
+            )
+        return (1.25,)
+    indexed_player_cluster_bootstrap(
+        pd.Series(["A", "B"]), fit_positions=mixed, original=(),
+        replicates=2, batch_size=2, minimum_success_rate=0.5,
+        checkpoint_directory=tmp_path,
+    )
+    records = json.loads((tmp_path / "batch_0000_0001.json").read_text())["records"]
+    assert records[0] == {"replicate_index": 0, "status": "success", "value": [1.25]}
+    assert records[1]["value"] is None
+    assert records[1]["diagnostics"] == {"termination_reason": "max_iterations"}
+
+
+def test_success_gate_error_aggregates_termination_reasons(tmp_path):
+    reasons = iter(["max_iterations", "line_search_failure"])
+    def fail(_positions):
+        raise BootstrapReplicateError(
+            "nonconvergence", "synthetic", {"termination_reason": next(reasons)},
+        )
+    with pytest.raises(RuntimeError, match=r"termination_reasons=.*line_search_failure.*max_iterations"):
+        indexed_player_cluster_bootstrap(
+            pd.Series(["A", "B"]), fit_positions=fail, original=(),
+            replicates=2, batch_size=2, minimum_success_rate=0.99,
+            checkpoint_directory=tmp_path,
+        )

@@ -17,6 +17,7 @@ from lib.dataset2.phase1_runner import (
     PredictorDefinition,
     _fit_firth,
     _fit_lwi,
+    _firth_termination_diagnostics,
     _prepare_firth_bootstrap_design,
     _prepare_firth_bootstrap_matrix,
     apply_primary_family_fdr,
@@ -360,14 +361,20 @@ def test_bootstrap_design_drops_only_all_zero_nuisance_and_uses_local_map():
         "control_zero": [0.0, 0.0, 0.0, 0.0],
         "control_live": [0.0, 1.0, 0.0, 1.0],
     })
-    reduced, local = _prepare_firth_bootstrap_design(design, np.array([0, 1, 0, 1]), schema)
+    reduced, local, diagnostics = _prepare_firth_bootstrap_design(
+        design, np.array([0, 1, 0, 1]), schema,
+    )
     assert tuple(reduced.columns) == ("const", "trait", "control_live")
     assert local["trait"] == 1
-    numeric, numeric_local = _prepare_firth_bootstrap_matrix(
+    assert diagnostics["nuisance_control_nonzero_support"] == {
+        "control_zero": 0, "control_live": 2,
+    }
+    numeric, numeric_local, numeric_diagnostics = _prepare_firth_bootstrap_matrix(
         design.to_numpy(float), np.array([0, 1, 0, 1]), tuple(design.columns), schema,
     )
     np.testing.assert_array_equal(numeric, reduced.to_numpy(float))
     assert numeric_local == local
+    assert numeric_diagnostics == diagnostics
 
 
 def test_bootstrap_design_never_drops_absent_tested_contrast():
@@ -378,6 +385,8 @@ def test_bootstrap_design_never_drops_absent_tested_contrast():
     with pytest.raises(BootstrapReplicateError) as error:
         _prepare_firth_bootstrap_design(design, np.array([0, 1]), schema)
     assert error.value.category == "missing_predictor_contrast"
+    assert error.value.diagnostics["reduced_design_row_count"] == 2
+    assert error.value.diagnostics["target_class_support"] == {"0.0": 1, "1.0": 1}
 
 
 @pytest.mark.parametrize(
@@ -394,6 +403,37 @@ def test_bootstrap_design_classifies_rank_and_nonfinite_failures(design, categor
     with pytest.raises(BootstrapReplicateError) as error:
         _prepare_firth_bootstrap_design(design, np.array([0, 1]), schema)
     assert error.value.category == category
+    assert "reduced_design_rank" in error.value.diagnostics
+    assert "condition_number" in error.value.diagnostics
+
+
+def test_nonconverged_firth_diagnostics_include_solver_and_reduced_design_fields():
+    fitted = type("Fitted", (), {
+        "termination_reason": "line_search_failure",
+        "n_iter": 41,
+        "final_score_norm": 0.7,
+        "final_newton_decrement": 0.2,
+        "final_likelihood_change": -1e-11,
+        "step_halving_count": 73,
+    })()
+    design = {
+        "reduced_design_row_count": 120,
+        "reduced_design_column_count": 7,
+        "reduced_design_rank": 7,
+        "condition_number": 44.0,
+        "target_class_support": {"0.0": 100, "1.0": 20},
+        "nuisance_control_nonzero_support": {"era_2011_plus": 110},
+    }
+    diagnostics = _firth_termination_diagnostics(fitted, design)
+    assert diagnostics == {
+        **design,
+        "termination_reason": "line_search_failure",
+        "iteration_count": 41,
+        "final_score_norm": 0.7,
+        "final_newton_decrement": 0.2,
+        "final_likelihood_change": -1e-11,
+        "total_step_halvings": 73,
+    }
 
 
 def test_categorical_predictor_enters_bh_once_not_once_per_contrast():

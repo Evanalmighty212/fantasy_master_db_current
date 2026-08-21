@@ -62,9 +62,12 @@ class BootstrapResult:
 class BootstrapReplicateError(RuntimeError):
     """A classified, auditable failure of one bootstrap replicate."""
 
-    def __init__(self, category: str, detail: str):
+    def __init__(
+        self, category: str, detail: str, diagnostics: dict[str, object] | None = None,
+    ):
         super().__init__(detail)
         self.category = category
+        self.diagnostics = diagnostics or {}
 
 
 def _canonical_json(value: object) -> str:
@@ -104,19 +107,30 @@ def _signature_hash(signature: dict[str, object]) -> str:
 
 def _classified_bootstrap_fit(
     fit: Callable[[np.ndarray], object], row_positions: np.ndarray,
-) -> tuple[str, object | None]:
+) -> tuple[str, object | None, dict[str, object] | None]:
     try:
-        return "success", fit(row_positions)
+        return "success", fit(row_positions), None
     except BootstrapReplicateError as exc:
-        return exc.category, None
+        return exc.category, None, exc.diagnostics
     except np.linalg.LinAlgError:
-        return "other_numerical_error", None
+        return "other_numerical_error", None, {"termination_reason": "linear_algebra_error"}
     except FloatingPointError:
-        return "other_numerical_error", None
+        return "other_numerical_error", None, {"termination_reason": "floating_point_error"}
     except RuntimeError as exc:
-        return ("nonconvergence" if "converg" in str(exc).lower() else "other_numerical_error"), None
+        category = "nonconvergence" if "converg" in str(exc).lower() else "other_numerical_error"
+        return category, None, {"termination_reason": "unclassified_runtime_error"}
     except ValueError:
-        return "other_numerical_error", None
+        return "other_numerical_error", None, {"termination_reason": "unclassified_value_error"}
+
+
+def _termination_reason_counts(records: dict[int, tuple[str, object | None, dict[str, object] | None]]):
+    counts: Counter[str] = Counter()
+    for status, _, diagnostics in records.values():
+        if status == "success":
+            continue
+        reason = (diagnostics or {}).get("termination_reason") or "not_recorded"
+        counts[str(reason)] += 1
+    return dict(sorted(counts.items()))
 
 
 def indexed_player_cluster_bootstrap(
@@ -144,6 +158,7 @@ def indexed_player_cluster_bootstrap(
     signature = {
         **(task_signature or {}),
         "bootstrap_engine": "indexed_player_blocks_v1",
+        "failure_diagnostic_schema": "failed_fit_diagnostics_v1",
         "replicates": replicates,
         "seed": seed,
         "minimum_success_rate": minimum_success_rate,
@@ -164,7 +179,7 @@ def indexed_player_cluster_bootstrap(
             _atomic_json(manifest_path, {"signature": signature, "signature_sha256": signature_digest})
 
     rng = np.random.default_rng(seed)
-    records: dict[int, tuple[str, object | None]] = {}
+    records: dict[int, tuple[str, object | None, dict[str, object] | None]] = {}
     batch_count = (replicates + batch_size - 1) // batch_size
     for batch_number in range(batch_count):
         start = batch_number * batch_size
@@ -185,12 +200,15 @@ def indexed_player_cluster_bootstrap(
             batch_records = []
             for replicate_index, draws in zip(range(start, stop), batch_draws):
                 positions = np.concatenate([row_blocks[int(draw)] for draw in draws])
-                status, value = _classified_bootstrap_fit(fit_positions, positions)
-                batch_records.append({
+                status, value, diagnostics = _classified_bootstrap_fit(fit_positions, positions)
+                record = {
                     "replicate_index": replicate_index,
                     "status": status,
                     "value": value,
-                })
+                }
+                if status != "success":
+                    record["diagnostics"] = diagnostics or {"termination_reason": "not_recorded"}
+                batch_records.append(record)
             if batch_path is not None:
                 _atomic_json(batch_path, {
                     "signature_sha256": signature_digest,
@@ -202,11 +220,13 @@ def indexed_player_cluster_bootstrap(
             index = int(record["replicate_index"])
             if index in records or not start <= index < stop:
                 raise RuntimeError(f"duplicate/out-of-range bootstrap checkpoint record for {context}")
-            records[index] = (str(record["status"]), record.get("value"))
+            records[index] = (
+                str(record["status"]), record.get("value"), record.get("diagnostics"),
+            )
         if progress is not None:
-            success_so_far = sum(status == "success" for status, _ in records.values())
+            success_so_far = sum(status == "success" for status, _, _ in records.values())
             failures_so_far = Counter(
-                status for status, _ in records.values() if status != "success"
+                status for status, _, _ in records.values() if status != "success"
             )
             progress({
                 "context": context,
@@ -218,6 +238,7 @@ def indexed_player_cluster_bootstrap(
                     category: int(failures_so_far.get(category, 0))
                     for category in BOOTSTRAP_FAILURE_CATEGORIES
                 },
+                "termination_reason_counts": _termination_reason_counts(records),
             })
 
     if tuple(sorted(records)) != tuple(range(replicates)):
@@ -225,7 +246,7 @@ def indexed_player_cluster_bootstrap(
     failures: Counter[str] = Counter({category: 0 for category in BOOTSTRAP_FAILURE_CATEGORIES})
     successful = []
     for index in range(replicates):
-        status, value = records[index]
+        status, value, _ = records[index]
         if status == "success":
             successful.append(tuple(value) if isinstance(value, list) else value)
         elif status in failures:
@@ -234,9 +255,11 @@ def indexed_player_cluster_bootstrap(
             raise RuntimeError(f"unknown bootstrap failure category for {context}: {status}")
     failure_counts = tuple(sorted(failures.items()))
     if len(successful) / replicates < minimum_success_rate:
+        termination_reasons = _termination_reason_counts(records)
         raise RuntimeError(
             f"bootstrap success rate {len(successful)}/{replicates} is below "
-            f"{minimum_success_rate:.1%} for {context}; failures={dict(failure_counts)}"
+            f"{minimum_success_rate:.1%} for {context}; failures={dict(failure_counts)}; "
+            f"termination_reasons={termination_reasons}"
         )
     result = BootstrapResult(original, tuple(successful), replicates, len(successful), seed, failure_counts)
     if checkpoint_directory is not None:
@@ -245,6 +268,7 @@ def indexed_player_cluster_bootstrap(
             "attempted": replicates,
             "successful": len(successful),
             "failure_counts": dict(failure_counts),
+            "termination_reason_counts": _termination_reason_counts(records),
         })
     return result
 

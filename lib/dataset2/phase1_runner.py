@@ -599,48 +599,95 @@ def _fit_lwi(rows: pd.DataFrame, target: TargetDefinition, predictor: PredictorD
     )
 
 
+def _finite_diagnostic(value: float) -> float | None:
+    numeric = float(value)
+    return numeric if np.isfinite(numeric) else None
+
+
+def _bootstrap_design_diagnostics(
+    matrix: np.ndarray, sample_y: np.ndarray, names: tuple[str, ...], schema: DesignSchema,
+) -> dict[str, object]:
+    finite = bool(np.isfinite(matrix).all())
+    rank = int(np.linalg.matrix_rank(matrix)) if finite else None
+    condition = _finite_diagnostic(np.linalg.cond(matrix)) if finite and matrix.size else None
+    target_values, target_counts = np.unique(sample_y, return_counts=True)
+    name_to_index = {column: index for index, column in enumerate(names)}
+    return {
+        "reduced_design_row_count": int(matrix.shape[0]),
+        "reduced_design_column_count": int(matrix.shape[1]),
+        "reduced_design_rank": rank,
+        "condition_number": condition,
+        "target_class_support": {
+            str(_finite_diagnostic(value)): int(count)
+            for value, count in zip(target_values, target_counts)
+        },
+        "nuisance_control_nonzero_support": {
+            column: int(np.count_nonzero(matrix[:, name_to_index[column]]))
+            for column in schema.control_columns
+            if column in name_to_index
+        },
+    }
+
+
+def _firth_termination_diagnostics(fitted, design: dict[str, object]) -> dict[str, object]:
+    return {
+        **design,
+        "termination_reason": fitted.termination_reason,
+        "iteration_count": int(fitted.n_iter),
+        "final_score_norm": _finite_diagnostic(fitted.final_score_norm),
+        "final_newton_decrement": _finite_diagnostic(fitted.final_newton_decrement),
+        "final_likelihood_change": _finite_diagnostic(fitted.final_likelihood_change),
+        "total_step_halvings": int(fitted.step_halving_count),
+    }
+
+
 def _prepare_firth_bootstrap_design(
     sample_X: pd.DataFrame, sample_y: np.ndarray, schema: DesignSchema,
-) -> tuple[pd.DataFrame, dict[str, int]]:
+) -> tuple[pd.DataFrame, dict[str, int], dict[str, object]]:
     """Validate and reduce one resampled design without changing its tested signal."""
-    if np.unique(sample_y).size < 2:
-        raise BootstrapReplicateError("missing_target_signal", "resample contains only one target class")
-    for column in schema.predictor_columns:
-        if column not in sample_X or sample_X[column].nunique(dropna=False) <= 1:
-            raise BootstrapReplicateError(
-                "missing_predictor_contrast", f"tested contrast is absent: {column}",
-            )
     zero_nuisance = [
         column for column in schema.control_columns
         if column in sample_X and bool((sample_X[column] == 0.0).all())
     ]
     reduced_X = sample_X.drop(columns=zero_nuisance)
     matrix = reduced_X.to_numpy(dtype=float)
+    diagnostics = _bootstrap_design_diagnostics(
+        matrix, sample_y, tuple(reduced_X.columns), schema,
+    )
+    diagnostics["nuisance_control_nonzero_support"] = {
+        column: int(np.count_nonzero(sample_X[column].to_numpy(dtype=float)))
+        for column in schema.control_columns
+        if column in sample_X
+    }
+    if np.unique(sample_y).size < 2:
+        raise BootstrapReplicateError(
+            "missing_target_signal", "resample contains only one target class", diagnostics,
+        )
+    for column in schema.predictor_columns:
+        if column not in sample_X or sample_X[column].nunique(dropna=False) <= 1:
+            raise BootstrapReplicateError(
+                "missing_predictor_contrast", f"tested contrast is absent: {column}", diagnostics,
+            )
     if not np.isfinite(matrix).all():
         raise BootstrapReplicateError(
-            "non_finite_likelihood", "bootstrap design contains non-finite values",
+            "non_finite_likelihood", "bootstrap design contains non-finite values", diagnostics,
         )
     if np.linalg.matrix_rank(matrix) != matrix.shape[1]:
-        raise BootstrapReplicateError("rank_failure", "reduced bootstrap design is not full rank")
+        raise BootstrapReplicateError(
+            "rank_failure", "reduced bootstrap design is not full rank", diagnostics,
+        )
     initial_loglik = _penalized_loglik(matrix, sample_y, np.zeros(matrix.shape[1], dtype=float))
     if not np.isfinite(initial_loglik):
         raise BootstrapReplicateError(
-            "non_finite_likelihood", "initial penalized likelihood is non-finite",
+            "non_finite_likelihood", "initial penalized likelihood is non-finite", diagnostics,
         )
-    return reduced_X, {column: index for index, column in enumerate(reduced_X.columns)}
+    return reduced_X, {column: index for index, column in enumerate(reduced_X.columns)}, diagnostics
 
 
 def _prepare_firth_bootstrap_matrix(
     matrix: np.ndarray, sample_y: np.ndarray, names: tuple[str, ...], schema: DesignSchema,
-) -> tuple[np.ndarray, dict[str, int]]:
-    if np.unique(sample_y).size < 2:
-        raise BootstrapReplicateError("missing_target_signal", "resample contains only one target class")
+) -> tuple[np.ndarray, dict[str, int], dict[str, object]]:
     name_to_index = {column: index for index, column in enumerate(names)}
-    for column in schema.predictor_columns:
-        if column not in name_to_index or np.unique(matrix[:, name_to_index[column]]).size <= 1:
-            raise BootstrapReplicateError(
-                "missing_predictor_contrast", f"tested contrast is absent: {column}",
-            )
     drop_indices = {
         name_to_index[column] for column in schema.control_columns
         if column in name_to_index and bool(np.all(matrix[:, name_to_index[column]] == 0.0))
@@ -648,18 +695,35 @@ def _prepare_firth_bootstrap_matrix(
     keep_indices = [index for index in range(matrix.shape[1]) if index not in drop_indices]
     reduced = matrix[:, keep_indices]
     reduced_names = tuple(names[index] for index in keep_indices)
+    diagnostics = _bootstrap_design_diagnostics(reduced, sample_y, reduced_names, schema)
+    diagnostics["nuisance_control_nonzero_support"] = {
+        column: int(np.count_nonzero(matrix[:, name_to_index[column]]))
+        for column in schema.control_columns
+        if column in name_to_index
+    }
+    if np.unique(sample_y).size < 2:
+        raise BootstrapReplicateError(
+            "missing_target_signal", "resample contains only one target class", diagnostics,
+        )
+    for column in schema.predictor_columns:
+        if column not in name_to_index or np.unique(matrix[:, name_to_index[column]]).size <= 1:
+            raise BootstrapReplicateError(
+                "missing_predictor_contrast", f"tested contrast is absent: {column}", diagnostics,
+            )
     if not np.isfinite(reduced).all():
         raise BootstrapReplicateError(
-            "non_finite_likelihood", "bootstrap design contains non-finite values",
+            "non_finite_likelihood", "bootstrap design contains non-finite values", diagnostics,
         )
     if np.linalg.matrix_rank(reduced) != reduced.shape[1]:
-        raise BootstrapReplicateError("rank_failure", "reduced bootstrap design is not full rank")
+        raise BootstrapReplicateError(
+            "rank_failure", "reduced bootstrap design is not full rank", diagnostics,
+        )
     initial_loglik = _penalized_loglik(reduced, sample_y, np.zeros(reduced.shape[1], dtype=float))
     if not np.isfinite(initial_loglik):
         raise BootstrapReplicateError(
-            "non_finite_likelihood", "initial penalized likelihood is non-finite",
+            "non_finite_likelihood", "initial penalized likelihood is non-finite", diagnostics,
         )
-    return reduced, {column: index for index, column in enumerate(reduced_names)}
+    return reduced, {column: index for index, column in enumerate(reduced_names)}, diagnostics
 
 
 def _array_sha256(values: np.ndarray) -> str:
@@ -698,14 +762,20 @@ def _fit_firth(
         sample_design, _ = _design(sample, predictor, schema)
         sample_X = add_constant(sample_design, has_constant="add").reindex(columns=names, fill_value=0.0)
         sample_y = sample[target.target_column].astype(float).to_numpy()
-        reduced_X, local_columns = _prepare_firth_bootstrap_design(sample_X, sample_y, schema)
+        reduced_X, local_columns, diagnostics = _prepare_firth_bootstrap_design(
+            sample_X, sample_y, schema,
+        )
         matrix = reduced_X.to_numpy(dtype=float)
         fitted = fit_firth_logistic(matrix, sample_y)
         if not fitted.converged:
-            raise BootstrapReplicateError("nonconvergence", "Firth fit failed to converge")
+            raise BootstrapReplicateError(
+                "nonconvergence", "Firth fit failed to converge",
+                _firth_termination_diagnostics(fitted, diagnostics),
+            )
         if not np.isfinite(fitted.beta).all():
             raise BootstrapReplicateError(
                 "other_numerical_error", "Firth fit returned non-finite coefficients",
+                _firth_termination_diagnostics(fitted, diagnostics),
             )
         return tuple(float(fitted.beta[local_columns[column]]) for column in schema.predictor_columns)
 
@@ -720,15 +790,19 @@ def _fit_firth(
         cached_matrix = X_frame.to_numpy(dtype=float)
         def fit_positions(row_positions: np.ndarray) -> tuple[float, ...]:
             sample_y = y[row_positions]
-            reduced_matrix, local_columns = _prepare_firth_bootstrap_matrix(
+            reduced_matrix, local_columns, diagnostics = _prepare_firth_bootstrap_matrix(
                 cached_matrix[row_positions], sample_y, names, schema,
             )
             fitted = fit_firth_logistic(reduced_matrix, sample_y)
             if not fitted.converged:
-                raise BootstrapReplicateError("nonconvergence", "Firth fit failed to converge")
+                raise BootstrapReplicateError(
+                    "nonconvergence", "Firth fit failed to converge",
+                    _firth_termination_diagnostics(fitted, diagnostics),
+                )
             if not np.isfinite(fitted.beta).all():
                 raise BootstrapReplicateError(
                     "other_numerical_error", "Firth fit returned non-finite coefficients",
+                    _firth_termination_diagnostics(fitted, diagnostics),
                 )
             return tuple(float(fitted.beta[local_columns[column]]) for column in schema.predictor_columns)
 
