@@ -216,7 +216,7 @@ class TestDeterminism:
 
 class TestConvergenceRecognition:
     @staticmethod
-    def _one_row_nuisance_fixture():
+    def _one_row_nuisance_fixture(nuisance_scale=1.0):
         """Sparse nuisance shape that produces a stationary IRLS two-cycle."""
         rng = np.random.default_rng(0)
         n = 1200
@@ -231,7 +231,7 @@ class TestConvergenceRecognition:
             era,
         ])
         one_row_nuisance = np.zeros(n)
-        one_row_nuisance[0] = 1.0
+        one_row_nuisance[0] = nuisance_scale
         X = np.column_stack([X, one_row_nuisance])
         eta = -3.2 + 0.15 * predictor + 0.15 * (position == 2)
         y = (rng.random(n) < 1.0 / (1.0 + np.exp(-eta))).astype(float)
@@ -278,6 +278,32 @@ class TestConvergenceRecognition:
         nonfinite_fit = fit_firth_logistic(nonfinite, y)
         assert not nonfinite_fit.converged
         assert nonfinite_fit.termination_reason == "non_finite_input"
+
+    def test_expanded_line_search_recovers_sparse_nuisance_fit(self, monkeypatch):
+        X, y = self._one_row_nuisance_fixture(nuisance_scale=1e-6)
+        import lib.dataset2.firth_logistic as module
+
+        monkeypatch.setattr(module, "MAX_STEP_HALVINGS", 20)
+        insufficient = fit_firth_logistic(X, y)
+        assert not insufficient.converged
+        assert insufficient.termination_reason == "line_search_failure"
+        assert insufficient.step_halving_count == 20
+
+        monkeypatch.setattr(module, "MAX_STEP_HALVINGS", 30)
+        expanded = fit_firth_logistic(X, y)
+        assert expanded.converged
+        assert 20 < expanded.step_halving_count < 30
+        assert np.isfinite(expanded.penalized_loglik)
+
+    def test_expanded_line_search_still_fails_when_budget_is_exhausted(self):
+        X, y = self._one_row_nuisance_fixture()
+        extreme_start = np.zeros(X.shape[1])
+        extreme_start[-1] = 25.0
+        fit = fit_firth_logistic(X, y, beta_init=extreme_start)
+        assert not fit.converged
+        assert fit.termination_reason == "line_search_failure"
+        assert fit.step_halving_count == 30
+        assert np.isfinite(fit.penalized_loglik)
 
 
 class TestConfidenceIntervalsAndLRTest:

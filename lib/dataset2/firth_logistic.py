@@ -94,7 +94,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 MAX_ITER_DEFAULT = 100
 TOL_DEFAULT = 1e-8
-MAX_STEP_HALVINGS = 20
+MAX_STEP_HALVINGS = 30
 OBJECTIVE_TOLERANCE = 1e-10
 STATIONARY_ITERATIONS_REQUIRED = 2
 
