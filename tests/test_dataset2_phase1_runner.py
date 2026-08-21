@@ -17,6 +17,7 @@ from lib.dataset2.phase1_runner import (
     PredictorDefinition,
     _fit_firth,
     _fit_lwi,
+    _prepare_firth_bootstrap_design,
     apply_primary_family_fdr,
     assemble_results,
     discovery_fit_rows,
@@ -28,6 +29,7 @@ from lib.dataset2.phase1_runner import (
     strict_bust_practical_effect_passes,
     validate_predictor_definitions,
 )
+from lib.dataset2.phase1_analysis import BootstrapReplicateError
 
 
 def _synthetic_rows() -> pd.DataFrame:
@@ -84,6 +86,7 @@ def _model_result(family: str, predictor: PredictorDefinition, p: float) -> Mode
         practical_effect_passes=practical,
         bootstrap_attempted=2000,
         bootstrap_successful=2000,
+        bootstrap_failure_counts=(),
     )
 
 
@@ -299,6 +302,48 @@ def test_categorical_firth_has_one_joint_p_and_descriptive_contrasts():
     assert len(result.estimates) == 2
     assert 0 <= result.primary_p_value <= 1
     assert result.bootstrap_successful >= 20 * 0.99
+
+
+def test_bootstrap_design_drops_only_all_zero_nuisance_and_uses_local_map():
+    schema = type("Schema", (), {
+        "predictor_columns": ("trait",),
+        "control_columns": ("control_zero", "control_live"),
+    })()
+    design = pd.DataFrame({
+        "const": [1.0, 1.0, 1.0, 1.0],
+        "trait": [-1.0, 0.0, 1.0, 2.0],
+        "control_zero": [0.0, 0.0, 0.0, 0.0],
+        "control_live": [0.0, 1.0, 0.0, 1.0],
+    })
+    reduced, local = _prepare_firth_bootstrap_design(design, np.array([0, 1, 0, 1]), schema)
+    assert tuple(reduced.columns) == ("const", "trait", "control_live")
+    assert local["trait"] == 1
+
+
+def test_bootstrap_design_never_drops_absent_tested_contrast():
+    schema = type("Schema", (), {
+        "predictor_columns": ("trait",), "control_columns": ("control",),
+    })()
+    design = pd.DataFrame({"const": [1.0, 1.0], "trait": [0.0, 0.0], "control": [0.0, 1.0]})
+    with pytest.raises(BootstrapReplicateError) as error:
+        _prepare_firth_bootstrap_design(design, np.array([0, 1]), schema)
+    assert error.value.category == "missing_predictor_contrast"
+
+
+@pytest.mark.parametrize(
+    ("design", "category"),
+    [
+        (pd.DataFrame({"const": [1.0, 1.0], "trait": [0.0, 1.0], "duplicate": [0.0, 1.0]}), "rank_failure"),
+        (pd.DataFrame({"const": [1.0, 1.0], "trait": [0.0, np.inf]}), "non_finite_likelihood"),
+    ],
+)
+def test_bootstrap_design_classifies_rank_and_nonfinite_failures(design, category):
+    schema = type("Schema", (), {
+        "predictor_columns": ("trait",), "control_columns": tuple(c for c in design if c != "trait"),
+    })()
+    with pytest.raises(BootstrapReplicateError) as error:
+        _prepare_firth_bootstrap_design(design, np.array([0, 1]), schema)
+    assert error.value.category == category
 
 
 def test_categorical_predictor_enters_bh_once_not_once_per_contrast():

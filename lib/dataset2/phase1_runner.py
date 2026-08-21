@@ -39,8 +39,9 @@ from config import (
     DATASET2_STRICT_BUST_OR_INCREASE_GATE,
     validate_dataset2_phase1_config,
 )
-from lib.dataset2.firth_logistic import fit_firth_logistic
+from lib.dataset2.firth_logistic import _penalized_loglik, fit_firth_logistic
 from lib.dataset2.phase1_analysis import (
+    BootstrapReplicateError,
     benjamini_hochberg,
     eligibility_aware_expanding_windows,
     player_cluster_bootstrap,
@@ -161,6 +162,7 @@ class ModelResult:
     practical_effect_passes: bool | None
     bootstrap_attempted: int | None
     bootstrap_successful: int | None
+    bootstrap_failure_counts: tuple[tuple[str, int], ...] | None
 
 
 @dataclass(frozen=True)
@@ -478,8 +480,39 @@ def _fit_lwi(rows: pd.DataFrame, target: TargetDefinition, predictor: PredictorD
     practical = bool(any(abs(value) >= DATASET2_LWI_MIN_ABS_STANDARDIZED_BETA for value in standardized))
     return ModelResult(
         target.family, predictor, contrasts, standardized, native, tuple(float(v) for v in beta), ci,
-        tuple(float("nan") for _ in contrasts), p_value, evidence_status(rows, target, predictor), practical, None, None,
+        tuple(float("nan") for _ in contrasts), p_value, evidence_status(rows, target, predictor), practical, None, None, None,
     )
+
+
+def _prepare_firth_bootstrap_design(
+    sample_X: pd.DataFrame, sample_y: np.ndarray, schema: DesignSchema,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Validate and reduce one resampled design without changing its tested signal."""
+    if np.unique(sample_y).size < 2:
+        raise BootstrapReplicateError("missing_target_signal", "resample contains only one target class")
+    for column in schema.predictor_columns:
+        if column not in sample_X or sample_X[column].nunique(dropna=False) <= 1:
+            raise BootstrapReplicateError(
+                "missing_predictor_contrast", f"tested contrast is absent: {column}",
+            )
+    zero_nuisance = [
+        column for column in schema.control_columns
+        if column in sample_X and bool((sample_X[column] == 0.0).all())
+    ]
+    reduced_X = sample_X.drop(columns=zero_nuisance)
+    matrix = reduced_X.to_numpy(dtype=float)
+    if not np.isfinite(matrix).all():
+        raise BootstrapReplicateError(
+            "non_finite_likelihood", "bootstrap design contains non-finite values",
+        )
+    if np.linalg.matrix_rank(matrix) != matrix.shape[1]:
+        raise BootstrapReplicateError("rank_failure", "reduced bootstrap design is not full rank")
+    initial_loglik = _penalized_loglik(matrix, sample_y, np.zeros(matrix.shape[1], dtype=float))
+    if not np.isfinite(initial_loglik):
+        raise BootstrapReplicateError(
+            "non_finite_likelihood", "initial penalized likelihood is non-finite",
+        )
+    return reduced_X, {column: index for index, column in enumerate(reduced_X.columns)}
 
 
 def _fit_firth(
@@ -491,17 +524,36 @@ def _fit_firth(
     names = tuple(X_frame.columns)
     y = rows[target.target_column].astype(float).to_numpy()
 
+    original_fit = fit_firth_logistic(X_frame.to_numpy(dtype=float), y)
+    if not original_fit.converged:
+        raise RuntimeError(
+            f"original Firth fit failed to converge for family={target.family} "
+            f"predictor={predictor.column}"
+        )
+    original_coefficients = tuple(
+        float(original_fit.beta[names.index(column)]) for column in schema.predictor_columns
+    )
+
     def fit_coefficients(sample: pd.DataFrame) -> tuple[float, ...]:
         sample_design, _ = _design(sample, predictor, schema)
         sample_X = add_constant(sample_design, has_constant="add").reindex(columns=names, fill_value=0.0)
-        fitted = fit_firth_logistic(sample_X.to_numpy(dtype=float), sample[target.target_column].astype(float).to_numpy())
+        sample_y = sample[target.target_column].astype(float).to_numpy()
+        reduced_X, local_columns = _prepare_firth_bootstrap_design(sample_X, sample_y, schema)
+        matrix = reduced_X.to_numpy(dtype=float)
+        fitted = fit_firth_logistic(matrix, sample_y)
         if not fitted.converged:
-            raise RuntimeError("Firth fit failed to converge")
-        return tuple(float(fitted.beta[names.index(column)]) for column in schema.predictor_columns)
+            raise BootstrapReplicateError("nonconvergence", "Firth fit failed to converge")
+        if not np.isfinite(fitted.beta).all():
+            raise BootstrapReplicateError(
+                "other_numerical_error", "Firth fit returned non-finite coefficients",
+            )
+        return tuple(float(fitted.beta[local_columns[column]]) for column in schema.predictor_columns)
 
     bootstrap = player_cluster_bootstrap(
         rows, player_column="player_id", fit=fit_coefficients, replicates=replicates,
         seed=seed, minimum_success_rate=minimum_success_rate,
+        original=original_coefficients,
+        context=f"family={target.family} predictor={predictor.column}",
     )
     point = np.asarray(bootstrap.original, dtype=float)
     draws = np.asarray(bootstrap.replicates, dtype=float)
@@ -513,9 +565,7 @@ def _fit_firth(
     odds_ratios = np.exp(point)
 
     full_design = add_constant(design, has_constant="add").reindex(columns=names, fill_value=0.0).to_numpy(dtype=float)
-    full_fit = fit_firth_logistic(full_design, y)
-    if not full_fit.converged:
-        raise RuntimeError("original Firth fit failed to converge")
+    full_fit = original_fit
     probability_differences = []
     for column in schema.predictor_columns:
         index = names.index(column)
@@ -537,6 +587,7 @@ def _fit_firth(
         tuple(float(v) for v in odds_ratios), tuple(float(v) for v in point), intervals,
         tuple(probability_differences), p_value,
         evidence_status(rows, target, predictor), practical, bootstrap.attempted, bootstrap.successful,
+        bootstrap.failure_counts,
     )
 
 
@@ -651,6 +702,7 @@ def assemble_results(results: Sequence[ModelResult]) -> pd.DataFrame:
             "passes_practical_effect": practical,
             "evidence_gate_status": "passes_all_gates" if result.evidence.formal else result.evidence.failed_gates,
             "supported": supported,
+            "bootstrap_failure_counts": result.bootstrap_failure_counts,
         })
     return pd.DataFrame(rows)
 

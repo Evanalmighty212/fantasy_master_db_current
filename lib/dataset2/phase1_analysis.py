@@ -6,6 +6,7 @@ and no predictor/outcome association is executed at import or by tests.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
@@ -26,6 +27,15 @@ from config import (
 
 validate_dataset2_phase1_config()
 
+BOOTSTRAP_FAILURE_CATEGORIES = (
+    "rank_failure",
+    "missing_predictor_contrast",
+    "missing_target_signal",
+    "non_finite_likelihood",
+    "nonconvergence",
+    "other_numerical_error",
+)
+
 
 @dataclass(frozen=True)
 class TemporalFold:
@@ -40,6 +50,15 @@ class BootstrapResult:
     attempted: int
     successful: int
     seed: int
+    failure_counts: tuple[tuple[str, int], ...]
+
+
+class BootstrapReplicateError(RuntimeError):
+    """A classified, auditable failure of one bootstrap replicate."""
+
+    def __init__(self, category: str, detail: str):
+        super().__init__(detail)
+        self.category = category
 
 
 def require_discovery_only(rows: pd.DataFrame, season_column: str = "prediction_season") -> None:
@@ -110,18 +129,22 @@ def player_cluster_bootstrap(
     replicates: int = DATASET2_FIRTH_BOOTSTRAP_REPLICATES,
     seed: int = DATASET2_PHASE1_RANDOM_SEED,
     minimum_success_rate: float = DATASET2_FIRTH_BOOTSTRAP_MIN_SUCCESS_RATE,
+    original: object | None = None,
+    context: str = "bootstrap fit",
 ) -> BootstrapResult:
     """Run a player-cluster bootstrap around any convergence-aware fit.
 
     ``fit`` must raise on non-convergence. Resampled copies of a player are
     assigned unique bootstrap cluster IDs so duplicate draws remain distinct.
     """
-    original = fit(rows.copy())
+    if original is None:
+        original = fit(rows.copy())
     players = pd.Index(rows[player_column].dropna().unique())
     if players.empty:
         raise ValueError("player-cluster bootstrap requires at least one player")
     rng = np.random.default_rng(seed)
     successful = []
+    failures: Counter[str] = Counter({category: 0 for category in BOOTSTRAP_FAILURE_CATEGORIES})
     for _ in range(replicates):
         draws = rng.choice(players.to_numpy(), size=len(players), replace=True)
         pieces = []
@@ -132,13 +155,31 @@ def player_cluster_bootstrap(
         sample = pd.concat(pieces, ignore_index=True)
         try:
             successful.append(fit(sample))
-        except (RuntimeError, ValueError, np.linalg.LinAlgError):
+        except BootstrapReplicateError as exc:
+            failures[exc.category] += 1
             continue
+        except np.linalg.LinAlgError:
+            failures["other_numerical_error"] += 1
+            continue
+        except FloatingPointError:
+            failures["other_numerical_error"] += 1
+            continue
+        except RuntimeError as exc:
+            category = "nonconvergence" if "converg" in str(exc).lower() else "other_numerical_error"
+            failures[category] += 1
+            continue
+        except ValueError:
+            failures["other_numerical_error"] += 1
+            continue
+    failure_counts = tuple(sorted(failures.items()))
     if len(successful) / replicates < minimum_success_rate:
         raise RuntimeError(
-            f"bootstrap success rate {len(successful)}/{replicates} is below {minimum_success_rate:.1%}"
+            f"bootstrap success rate {len(successful)}/{replicates} is below "
+            f"{minimum_success_rate:.1%} for {context}; failures={dict(failure_counts)}"
         )
-    return BootstrapResult(original, tuple(successful), replicates, len(successful), seed)
+    return BootstrapResult(
+        original, tuple(successful), replicates, len(successful), seed, failure_counts,
+    )
 
 
 def star_evidence_survives_bh(raw_p_value: float, family_p_values: Iterable[float]) -> bool:

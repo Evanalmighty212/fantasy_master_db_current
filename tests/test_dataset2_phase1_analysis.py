@@ -2,6 +2,7 @@ import pandas as pd
 import pytest
 
 from lib.dataset2.phase1_analysis import (
+    BootstrapReplicateError,
     benjamini_hochberg,
     eligibility_aware_expanding_windows,
     player_cluster_bootstrap,
@@ -62,5 +63,22 @@ def test_cluster_bootstrap_fails_loudly_below_success_floor():
         if calls["n"] > 1:
             raise RuntimeError("synthetic non-convergence")
         return "original converged"
-    with pytest.raises(RuntimeError, match="success rate"):
-        player_cluster_bootstrap(rows, player_column="player_id", fit=fit, replicates=10)
+    with pytest.raises(RuntimeError, match="nonconvergence.*10"):
+        player_cluster_bootstrap(
+            rows, player_column="player_id", fit=fit, replicates=10,
+            context="family=star predictor=synthetic",
+        )
+
+
+def test_cluster_bootstrap_reports_classified_failure_summary_with_context():
+    rows = pd.DataFrame({"player_id": ["A", "B"]})
+    def fit(frame):
+        if "_bootstrap_cluster_id" not in frame:
+            return "original"
+        raise BootstrapReplicateError("rank_failure", "synthetic rank failure")
+
+    with pytest.raises(RuntimeError, match=r"family=star predictor=trait.*rank_failure.*4"):
+        player_cluster_bootstrap(
+            rows, player_column="player_id", fit=fit, replicates=4,
+            context="family=star predictor=trait",
+        )
