@@ -527,6 +527,26 @@ def test_runner_skips_only_non_estimable_family_and_excludes_it_from_bh():
     assert by_family["strict_bust"].disposition == "fit"
 
 
+def test_runner_excludes_binary_target_no_contrast_from_all_result_outputs():
+    rows = _synthetic_rows()
+    rows["bust_strict_below_replacement_label"] = 0
+    predictor = _predictor()
+
+    package = run_phase1(
+        rows, [predictor], [predictor.column], bootstrap_replicates=5,
+        minimum_success_rate=0.8, synthetic_test_mode=True,
+    )
+
+    assert set(package.primary_results["family"]) == {"lwi", "star"}
+    assert {value.family for value in package.incremental_results} == {"lwi", "star"}
+    assert {value.family for value in package.robustness_results} == {"lwi", "star"}
+    strict_record = next(
+        record for record in package.preflight_ledger if record.family == "strict_bust"
+    )
+    assert strict_record.disposition == "excluded_non_estimable"
+    assert strict_record.governed_reason == "binary_target_no_discovery_contrast"
+
+
 def test_phase1_runner_module_has_no_artifact_loader_or_repository_path():
     from lib.dataset2 import phase1_runner
 

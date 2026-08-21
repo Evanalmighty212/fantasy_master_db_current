@@ -276,7 +276,25 @@ def _discovery_target_rows(rows: pd.DataFrame, target: TargetDefinition) -> pd.D
         if not eligibility_values <= {0, 1, True, False}:
             raise ValueError(f"eligibility column must be boolean/0/1: {target.eligibility_column}")
         selected = selected.loc[selected[target.eligibility_column].fillna(False).astype(bool)].copy()
+    if target.binary:
+        _validated_target_values(selected, target)
     return selected.dropna(subset=[target.target_column, "player_id", "position"])
+
+
+def _validated_target_values(rows: pd.DataFrame, target: TargetDefinition) -> pd.Series:
+    """Validate target values without changing the governed eligibility population."""
+    values = rows[target.target_column]
+    if values.isna().any():
+        raise ValueError(f"eligible target contains missing values: {target.target_column}")
+    try:
+        numeric = pd.to_numeric(values, errors="raise")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"target must be numeric: {target.target_column}") from exc
+    if not np.isfinite(numeric.to_numpy(dtype=float)).all():
+        raise ValueError(f"target contains non-finite values: {target.target_column}")
+    if target.binary and not set(pd.unique(numeric)) <= {0, 1}:
+        raise ValueError(f"binary target must be 0/1: {target.target_column}")
+    return numeric
 
 
 def discovery_fit_rows(rows: pd.DataFrame, target: TargetDefinition, predictor_column: str) -> pd.DataFrame:
@@ -286,6 +304,7 @@ def discovery_fit_rows(rows: pd.DataFrame, target: TargetDefinition, predictor_c
     selected = _discovery_target_rows(rows, target).dropna(subset=[predictor_column])
     if selected.empty:
         raise ValueError(f"no eligible 2010-2020 rows for {predictor_column} and {target.family}")
+    _validated_target_values(selected, target)
     return selected
 
 
@@ -485,6 +504,10 @@ def preflight_phase1_estimability(
                         "no_nonnull_discovery_support",
                     ))
                     continue
+                target_numeric = _validated_target_values(fit_rows, target)
+                binary_target_has_contrast = (
+                    not target.binary or int(target_numeric.nunique()) == 2
+                )
                 values = fit_rows[predictor.column]
                 if predictor.kind == "continuous":
                     numeric = pd.to_numeric(values, errors="raise")
@@ -529,6 +552,14 @@ def preflight_phase1_estimability(
                     raise ValueError("predictor design contains non-finite values")
                 if np.linalg.matrix_rank(matrix) != matrix.shape[1]:
                     raise ValueError("predictor design is rank deficient or has zero variation")
+                if not binary_target_has_contrast:
+                    records.append(PreflightRecord(
+                        target.family, predictor.column, predictor.cluster_id, predictor.kind,
+                        len(target_rows), len(fit_rows), distinct,
+                        int(fit_rows["prediction_season"].nunique()),
+                        "excluded_non_estimable", "binary_target_no_discovery_contrast",
+                    ))
+                    continue
                 records.append(PreflightRecord(
                     target.family, predictor.column, predictor.cluster_id, predictor.kind,
                     len(target_rows), len(fit_rows), distinct,

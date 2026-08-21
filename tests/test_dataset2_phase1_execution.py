@@ -118,6 +118,31 @@ def test_preflight_records_lwi_only_binary_exclusion_and_keeps_valid_families():
     assert by_family["strict_bust"].disposition == "fit"
 
 
+def test_preflight_records_binary_target_no_contrast_for_only_affected_family():
+    rows = _analysis_rows([2010 + (i % 11) for i in range(220)])
+    rows["trait"] = np.arange(len(rows), dtype=float)
+    rows["bust_strict_below_replacement_label"] = 0
+    predictor = PredictorDefinition("trait", "continuous", "9", True)
+
+    records = preflight_phase1_estimability(rows, [predictor], ["trait"])
+    by_family = {record.family: record for record in records}
+    assert by_family["lwi"].disposition == "fit"
+    assert by_family["star"].disposition == "fit"
+    assert by_family["strict_bust"].disposition == "excluded_non_estimable"
+    assert by_family["strict_bust"].governed_reason == "binary_target_no_discovery_contrast"
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf, 2])
+def test_preflight_invalid_eligible_binary_target_fails_loudly(invalid):
+    rows = _analysis_rows([2010 + (i % 11) for i in range(220)])
+    rows["trait"] = np.arange(len(rows), dtype=float)
+    rows["star_by_value_label"] = rows["star_by_value_label"].astype(float)
+    rows.loc[0, "star_by_value_label"] = invalid
+    predictor = PredictorDefinition("trait", "continuous", "9", True)
+    with pytest.raises(ValueError, match="target"):
+        preflight_phase1_estimability(rows, [predictor], ["trait"])
+
+
 @pytest.mark.parametrize(
     ("replacement", "message"),
     [
@@ -149,3 +174,62 @@ def test_entrypoint_preflight_failure_prevents_runner_and_checkpoints(monkeypatc
         entrypoint.run_preflighted_phase1(pd.DataFrame(), (), [], checkpoint_root=tmp_path)
     assert calls == ["preflight"]
     assert not (tmp_path / "unexpected_checkpoint").exists()
+
+
+def test_entrypoint_persists_preflight_before_runner_and_verifies_identity(monkeypatch, tmp_path):
+    rows = _analysis_rows([2010 + (i % 11) for i in range(220)])
+    rows["trait"] = np.arange(len(rows), dtype=float)
+    predictor = PredictorDefinition("trait", "continuous", "9", True)
+    ledger = preflight_phase1_estimability(rows, [predictor], ["trait"])
+    ledger_path = tmp_path / "checkpoints" / "preflight_ledger.csv"
+    observed = {}
+
+    def fake_runner(*_args, **_kwargs):
+        observed["ledger_existed_before_runner"] = ledger_path.is_file()
+        return type("Package", (), {"preflight_ledger": ledger})()
+
+    monkeypatch.setattr(entrypoint, "run_phase1", fake_runner)
+    package = entrypoint.run_preflighted_phase1(
+        rows, [predictor], ["trait"], preflight_ledger_path=ledger_path,
+    )
+    assert observed["ledger_existed_before_runner"]
+    assert package.preflight_ledger == ledger
+    persisted = pd.read_csv(ledger_path)
+    assert len(persisted) == 3
+
+
+def test_entrypoint_rejects_final_ledger_identity_mismatch(monkeypatch, tmp_path):
+    rows = _analysis_rows([2010 + (i % 11) for i in range(220)])
+    rows["trait"] = np.arange(len(rows), dtype=float)
+    predictor = PredictorDefinition("trait", "continuous", "9", True)
+    ledger_path = tmp_path / "preflight.csv"
+    monkeypatch.setattr(
+        entrypoint, "run_phase1",
+        lambda *_args, **_kwargs: type("Package", (), {"preflight_ledger": ()})(),
+    )
+    with pytest.raises(RuntimeError, match="differs from persisted pre-fit ledger"):
+        entrypoint.run_preflighted_phase1(
+            rows, [predictor], ["trait"], preflight_ledger_path=ledger_path,
+        )
+    assert ledger_path.is_file()
+
+
+def test_entrypoint_persists_ledger_before_governed_count_failure(monkeypatch, tmp_path):
+    rows = _analysis_rows([2010 + (i % 11) for i in range(220)])
+    rows["trait"] = np.arange(len(rows), dtype=float)
+    predictor = PredictorDefinition("trait", "continuous", "9", True)
+    ledger_path = tmp_path / "preflight.csv"
+    monkeypatch.setattr(
+        entrypoint, "run_phase1",
+        lambda *_args, **_kwargs: pytest.fail("fitting must not start after count mismatch"),
+    )
+    with pytest.raises(RuntimeError, match="disposition counts disagree"):
+        entrypoint.run_preflighted_phase1(
+            rows, [predictor], ["trait"], preflight_ledger_path=ledger_path,
+            expected_preflight_counts={
+                "lwi": {"fit": 142, "excluded_non_estimable": 1},
+                "star": {"fit": 143, "excluded_non_estimable": 0},
+                "strict_bust": {"fit": 124, "excluded_non_estimable": 19},
+            },
+        )
+    assert ledger_path.is_file()

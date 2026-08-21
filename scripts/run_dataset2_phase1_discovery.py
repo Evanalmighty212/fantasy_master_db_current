@@ -19,6 +19,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 
 import pandas as pd
 
@@ -50,6 +51,11 @@ CLUSTERS = EXPORTS / "dataset2_trait_pipeline_predictor_clusters.csv"
 TARGET_REGISTRY = EXPORTS / "dataset2_analysis_view_target_registry.csv"
 BUST_REFERENCE = REPO_ROOT / "data" / "processed" / "dataset2_bust_reference.json"
 DISCOVERY_CSV_CHUNK_SIZE = 10_000
+GOVERNED_PREFLIGHT_COUNTS = {
+    "lwi": {"fit": 142, "excluded_non_estimable": 1},
+    "star": {"fit": 143, "excluded_non_estimable": 0},
+    "strict_bust": {"fit": 124, "excluded_non_estimable": 19},
+}
 
 
 def sha256(path: Path) -> str:
@@ -125,9 +131,66 @@ def discovery_rows(predictors: tuple[PredictorDefinition, ...]) -> pd.DataFrame:
 
 def run_preflighted_phase1(rows, predictors, whitelist, **kwargs):
     """Complete estimability preflight, then final scope guard, then fitting."""
-    preflight_phase1_estimability(rows, predictors, whitelist)
+    preflight_ledger_path = kwargs.pop("preflight_ledger_path", None)
+    expected_preflight_counts = kwargs.pop("expected_preflight_counts", None)
+    preflight_ledger = preflight_phase1_estimability(rows, predictors, whitelist)
+    if preflight_ledger_path is not None:
+        write_preflight_ledger_atomic(preflight_ledger, Path(preflight_ledger_path))
+    if expected_preflight_counts is not None:
+        observed = preflight_counts_by_family(preflight_ledger)
+        if observed != expected_preflight_counts:
+            raise RuntimeError(
+                "governed Phase 1 preflight disposition counts disagree: "
+                f"expected={expected_preflight_counts} observed={observed}"
+            )
     require_discovery_only(rows)  # unchanged final backstop immediately before runner
-    return run_phase1(rows, predictors, whitelist, **kwargs)
+    package = run_phase1(rows, predictors, whitelist, **kwargs)
+    if package.preflight_ledger != preflight_ledger:
+        raise RuntimeError("final Phase 1 preflight ledger differs from persisted pre-fit ledger")
+    return package
+
+
+def preflight_ledger_frame(preflight_ledger) -> pd.DataFrame:
+    return pd.DataFrame([asdict(value) for value in preflight_ledger]).sort_values(
+        ["family", "cluster_id", "predictor_column"], kind="mergesort",
+    )
+
+
+def preflight_counts_by_family(preflight_ledger) -> dict[str, dict[str, int]]:
+    return {
+        family: {
+            disposition: sum(
+                record.family == family and record.disposition == disposition
+                for record in preflight_ledger
+            )
+            for disposition in ("fit", "excluded_non_estimable")
+        }
+        for family in ("lwi", "star", "strict_bust")
+    }
+
+
+def write_preflight_ledger_atomic(preflight_ledger, path: Path) -> None:
+    """Persist the deterministic ledger before fitting without partial writes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame = preflight_ledger_frame(preflight_ledger)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", newline="", dir=path.parent,
+        prefix=f".{path.name}.", suffix=".tmp", delete=False,
+    ) as handle:
+        temporary = Path(handle.name)
+        frame.to_csv(handle, index=False, lineterminator="\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    try:
+        if path.exists():
+            if path.read_bytes() != temporary.read_bytes():
+                raise RuntimeError(f"existing preflight ledger disagrees with current preflight: {path}")
+            temporary.unlink()
+        else:
+            os.replace(temporary, path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def write_package(package, output_directory: Path, configuration: dict[str, object]) -> None:
@@ -162,9 +225,9 @@ def write_package(package, output_directory: Path, configuration: dict[str, obje
                   for value in package.categorical_references]).sort_values(
         "predictor_column", kind="mergesort",
     ).to_csv(output_directory / "categorical_references.csv", index=False, lineterminator="\n")
-    pd.DataFrame([asdict(value) for value in package.preflight_ledger]).sort_values(
-        ["family", "cluster_id", "predictor_column"], kind="mergesort",
-    ).to_csv(output_directory / "preflight_ledger.csv", index=False, lineterminator="\n")
+    preflight_ledger_frame(package.preflight_ledger).to_csv(
+        output_directory / "preflight_ledger.csv", index=False, lineterminator="\n",
+    )
     (output_directory / "configuration.json").write_text(stable_json(configuration) + "\n", encoding="utf-8")
     paths = sorted(path for path in output_directory.iterdir() if path.is_file())
     (output_directory / "outputs.sha256").write_text(
@@ -224,21 +287,11 @@ def main() -> None:
         checkpoint_root=args.checkpoint_dir / "tasks",
         checkpoint_identity=checkpoint_identity,
         progress=report_progress,
+        preflight_ledger_path=args.checkpoint_dir / "preflight_ledger.csv",
+        expected_preflight_counts=GOVERNED_PREFLIGHT_COUNTS,
     )
     partial.mkdir(parents=True, exist_ok=False)
-    preflight_counts = {
-        family: {
-            "fit": sum(
-                record.family == family and record.disposition == "fit"
-                for record in package.preflight_ledger
-            ),
-            "excluded_non_estimable": sum(
-                record.family == family and record.disposition == "excluded_non_estimable"
-                for record in package.preflight_ledger
-            ),
-        }
-        for family in ("lwi", "star", "strict_bust")
-    }
+    preflight_counts = preflight_counts_by_family(package.preflight_ledger)
     configuration = {
         "git_head": git_head,
         "input_hashes": input_hashes,
@@ -254,6 +307,10 @@ def main() -> None:
     }
     try:
         write_package(package, partial, configuration)
+        if (partial / "preflight_ledger.csv").read_bytes() != (
+            args.checkpoint_dir / "preflight_ledger.csv"
+        ).read_bytes():
+            raise RuntimeError("final package preflight ledger differs from pre-fit ledger")
         os.replace(partial, args.output_dir)
     except Exception:
         if partial.exists() and not any(partial.iterdir()):
