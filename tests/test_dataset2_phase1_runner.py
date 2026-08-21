@@ -415,6 +415,15 @@ def test_nonconverged_firth_diagnostics_include_solver_and_reduced_design_fields
         "final_newton_decrement": 0.2,
         "final_likelihood_change": -1e-11,
         "step_halving_count": 73,
+        "iteration_tail": ({
+            "iteration_number": 41,
+            "score_norm": 0.7,
+            "newton_decrement": 0.2,
+            "likelihood_change": -1e-11,
+            "maximum_coefficient_update": 0.01,
+            "step_halving_count": 2,
+            "termination_reason": "line_search_failure",
+        },),
     })()
     design = {
         "reduced_design_row_count": 120,
@@ -433,6 +442,15 @@ def test_nonconverged_firth_diagnostics_include_solver_and_reduced_design_fields
         "final_newton_decrement": 0.2,
         "final_likelihood_change": -1e-11,
         "total_step_halvings": 73,
+        "iteration_tail": ({
+            "iteration_number": 41,
+            "score_norm": 0.7,
+            "newton_decrement": 0.2,
+            "likelihood_change": -1e-11,
+            "maximum_coefficient_update": 0.01,
+            "step_halving_count": 2,
+            "termination_reason": "line_search_failure",
+        },),
     }
 
 

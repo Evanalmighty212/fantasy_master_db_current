@@ -192,6 +192,15 @@ def test_indexed_bootstrap_checkpoints_diagnostics_for_every_failure_category(tm
         "condition_number": 12.5,
         "target_class_support": {"0.0": 2, "1.0": 2},
         "nuisance_control_nonzero_support": {"control": 2},
+        "iteration_tail": [{
+            "iteration_number": 17,
+            "score_norm": 0.25,
+            "newton_decrement": 0.125,
+            "likelihood_change": 1e-9,
+            "maximum_coefficient_update": 0.02,
+            "step_halving_count": 1,
+            "termination_reason": f"synthetic_{category}",
+        }],
     }
     def fail(_positions):
         raise BootstrapReplicateError(category, "synthetic", diagnostics)
@@ -209,6 +218,8 @@ def test_indexed_bootstrap_checkpoints_diagnostics_for_every_failure_category(tm
         "diagnostics": diagnostics,
     }
     assert not ({"coefficient", "coefficients", "beta"} & set(record))
+    manifest = json.loads((tmp_path / category / "task_manifest.json").read_text())
+    assert manifest["signature"]["failure_diagnostic_schema"] == "failed_fit_diagnostics_v2_iteration_tail_20"
 
 
 def test_success_checkpoint_record_format_is_unchanged_when_failures_have_diagnostics(tmp_path):

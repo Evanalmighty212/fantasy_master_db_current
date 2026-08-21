@@ -158,7 +158,7 @@ def indexed_player_cluster_bootstrap(
     signature = {
         **(task_signature or {}),
         "bootstrap_engine": "indexed_player_blocks_v1",
-        "failure_diagnostic_schema": "failed_fit_diagnostics_v1",
+        "failure_diagnostic_schema": "failed_fit_diagnostics_v2_iteration_tail_20",
         "replicates": replicates,
         "seed": seed,
         "minimum_success_rate": minimum_success_rate,

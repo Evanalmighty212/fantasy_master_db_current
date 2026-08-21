@@ -630,6 +630,15 @@ def _bootstrap_design_diagnostics(
 
 
 def _firth_termination_diagnostics(fitted, design: dict[str, object]) -> dict[str, object]:
+    iteration_tail = tuple({
+        "iteration_number": int(record["iteration_number"]),
+        "score_norm": _finite_diagnostic(record["score_norm"]),
+        "newton_decrement": _finite_diagnostic(record["newton_decrement"]),
+        "likelihood_change": _finite_diagnostic(record["likelihood_change"]),
+        "maximum_coefficient_update": _finite_diagnostic(record["maximum_coefficient_update"]),
+        "step_halving_count": int(record["step_halving_count"]),
+        "termination_reason": str(record["termination_reason"]),
+    } for record in fitted.iteration_tail)
     return {
         **design,
         "termination_reason": fitted.termination_reason,
@@ -638,6 +647,7 @@ def _firth_termination_diagnostics(fitted, design: dict[str, object]) -> dict[st
         "final_newton_decrement": _finite_diagnostic(fitted.final_newton_decrement),
         "final_likelihood_change": _finite_diagnostic(fitted.final_likelihood_change),
         "total_step_halvings": int(fitted.step_halving_count),
+        "iteration_tail": iteration_tail,
     }
 
 

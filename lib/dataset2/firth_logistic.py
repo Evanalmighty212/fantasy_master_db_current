@@ -97,6 +97,7 @@ TOL_DEFAULT = 1e-8
 MAX_STEP_HALVINGS = 30
 OBJECTIVE_TOLERANCE = 1e-10
 STATIONARY_ITERATIONS_REQUIRED = 2
+NONCONVERGENCE_ITERATION_TAIL_LENGTH = 20
 
 
 def _sigmoid(eta: np.ndarray) -> np.ndarray:
@@ -139,7 +140,7 @@ class FirthFitResult:
         self, beta, cov, converged, n_iter, penalized_loglik, fixed_mask=None,
         *, termination_reason=None, final_score_norm=np.nan,
         final_newton_decrement=np.nan, final_likelihood_change=np.nan,
-        step_halving_count=0,
+        step_halving_count=0, iteration_tail=(),
     ):
         self.beta = beta
         self.cov = cov
@@ -152,6 +153,7 @@ class FirthFitResult:
         self.final_newton_decrement = final_newton_decrement
         self.final_likelihood_change = final_likelihood_change
         self.step_halving_count = step_halving_count
+        self.iteration_tail = tuple(iteration_tail)
 
     @property
     def se(self):
@@ -193,6 +195,22 @@ def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
     final_score_norm = np.inf
     final_newton_decrement = np.inf
     final_likelihood_change = np.nan
+    iteration_tail = []
+
+    def record_iteration(
+        iteration, score_norm, decrement, likelihood_change, max_update,
+        step_halvings, reason,
+    ):
+        iteration_tail.append({
+            "iteration_number": int(iteration),
+            "score_norm": float(score_norm),
+            "newton_decrement": float(decrement),
+            "likelihood_change": float(likelihood_change),
+            "maximum_coefficient_update": float(max_update),
+            "step_halving_count": int(step_halvings),
+            "termination_reason": str(reason),
+        })
+        del iteration_tail[:-NONCONVERGENCE_ITERATION_TAIL_LENGTH]
 
     if not np.isfinite(X).all() or not np.isfinite(y).all() or not np.isfinite(beta).all():
         fixed_mask = ~free
@@ -259,9 +277,20 @@ def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
 
         if not np.isfinite(new_ll):
             termination_reason = "non_finite_likelihood"
+            score_norm, decrement = _stationarity_diagnostics(X, y, beta, free)
+            record_iteration(
+                n_iter, score_norm, decrement, np.nan, np.nan, halvings,
+                termination_reason,
+            )
             break
         if new_ll < prev_ll - OBJECTIVE_TOLERANCE:
             termination_reason = "line_search_failure"
+            score_norm, decrement = _stationarity_diagnostics(X, y, beta, free)
+            record_iteration(
+                n_iter, score_norm, decrement, float(new_ll - prev_ll),
+                np.max(np.abs(new_beta[free] - beta[free])) if free.any() else 0.0,
+                halvings, termination_reason,
+            )
             break
 
         max_change = np.max(np.abs(new_beta[free] - beta[free])) if free.any() else 0.0
@@ -274,6 +303,10 @@ def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
         if max_change < tol:
             converged = True
             termination_reason = "coefficient_update"
+            record_iteration(
+                n_iter, final_score_norm, final_newton_decrement,
+                likelihood_change, max_change, halvings, termination_reason,
+            )
             break
 
         stationary = (
@@ -286,7 +319,16 @@ def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
         if stationary_iterations >= STATIONARY_ITERATIONS_REQUIRED:
             converged = True
             termination_reason = "stationary_penalized_likelihood"
+            record_iteration(
+                n_iter, final_score_norm, final_newton_decrement,
+                likelihood_change, max_change, halvings, termination_reason,
+            )
             break
+        iteration_reason = "max_iterations" if n_iter == max_iter else "continuing"
+        record_iteration(
+            n_iter, final_score_norm, final_newton_decrement,
+            likelihood_change, max_change, halvings, iteration_reason,
+        )
 
     XtWX, pi, W = _fisher_info(X, beta)
     cov = np.linalg.pinv(XtWX)
@@ -300,6 +342,7 @@ def _fit_firth_irls(X, y, beta_init, fixed_index, fixed_value, max_iter, tol):
         final_newton_decrement=final_newton_decrement,
         final_likelihood_change=final_likelihood_change,
         step_halving_count=total_halvings,
+        iteration_tail=() if converged else tuple(iteration_tail),
     )
 
 

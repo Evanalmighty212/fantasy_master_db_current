@@ -249,6 +249,7 @@ class TestConvergenceRecognition:
         assert fit.final_newton_decrement <= 1e-8
         assert abs(fit.final_likelihood_change) <= 1e-10
         assert fit.step_halving_count >= 0
+        assert fit.iteration_tail == ()
 
     def test_stationary_path_requires_consecutive_iterations(self):
         X, y = self._one_row_nuisance_fixture()
@@ -266,6 +267,25 @@ class TestConvergenceRecognition:
         assert fit.n_iter == 1
         assert fit.final_newton_decrement > 1e-8
         assert abs(fit.final_likelihood_change) > 1e-10
+        assert len(fit.iteration_tail) == 1
+        assert fit.iteration_tail[0]["termination_reason"] == "max_iterations"
+        assert not ({"coefficient", "coefficients", "beta"} & set(fit.iteration_tail[0]))
+
+    def test_nonconvergence_iteration_tail_is_bounded_to_final_twenty(self):
+        X, y = self._one_row_nuisance_fixture()
+        fit = fit_firth_logistic(X, y, max_iter=25, tol=1e-30)
+        assert not fit.converged
+        assert fit.termination_reason == "max_iterations"
+        assert len(fit.iteration_tail) == 20
+        assert [record["iteration_number"] for record in fit.iteration_tail] == list(range(6, 26))
+        assert fit.iteration_tail[-1]["termination_reason"] == "max_iterations"
+        assert all(record["termination_reason"] == "continuing" for record in fit.iteration_tail[:-1])
+        expected = {
+            "iteration_number", "score_norm", "newton_decrement", "likelihood_change",
+            "maximum_coefficient_update", "step_halving_count", "termination_reason",
+        }
+        assert all(set(record) == expected for record in fit.iteration_tail)
+        assert all(not ({"coefficient", "coefficients", "beta"} & set(record)) for record in fit.iteration_tail)
 
     def test_rank_deficient_and_nonfinite_designs_never_converge(self):
         y = np.array([0.0, 1.0, 0.0, 1.0])
