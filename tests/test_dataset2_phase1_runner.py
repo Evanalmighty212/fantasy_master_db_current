@@ -350,7 +350,7 @@ def test_phase1_checkpoint_resume_matches_uninterrupted_final_outputs(tmp_path):
     assert resumed.categorical_references == uninterrupted.categorical_references
 
 
-def test_bootstrap_design_drops_only_all_zero_nuisance_and_uses_local_map():
+def test_bootstrap_design_drops_all_zero_nuisance_and_uses_local_map():
     schema = type("Schema", (), {
         "predictor_columns": ("trait",),
         "control_columns": ("control_zero", "control_live"),
@@ -369,12 +369,79 @@ def test_bootstrap_design_drops_only_all_zero_nuisance_and_uses_local_map():
     assert diagnostics["nuisance_control_nonzero_support"] == {
         "control_zero": 0, "control_live": 2,
     }
+    assert diagnostics["dropped_nuisance_columns"] == ("control_zero",)
     numeric, numeric_local, numeric_diagnostics = _prepare_firth_bootstrap_matrix(
         design.to_numpy(float), np.array([0, 1, 0, 1]), tuple(design.columns), schema,
     )
     np.testing.assert_array_equal(numeric, reduced.to_numpy(float))
     assert numeric_local == local
     assert numeric_diagnostics == diagnostics
+
+
+def test_bootstrap_design_deterministically_reduces_exhaustive_nuisance_dummies():
+    schema = type("Schema", (), {
+        "predictor_columns": ("trait",),
+        "control_columns": ("acquisition_a", "acquisition_b"),
+    })()
+    design = pd.DataFrame({
+        "const": [1.0] * 6,
+        "trait": [-2.0, -1.0, 0.0, 1.0, 2.0, 3.0],
+        "acquisition_a": [1.0, 1.0, 0.0, 0.0, 1.0, 0.0],
+        "acquisition_b": [0.0, 0.0, 1.0, 1.0, 0.0, 1.0],
+    })
+    target = np.array([0, 1, 0, 1, 0, 1])
+
+    reduced, local, diagnostics = _prepare_firth_bootstrap_design(design, target, schema)
+    assert tuple(reduced.columns) == ("const", "trait", "acquisition_b")
+    assert local == {"const": 0, "trait": 1, "acquisition_b": 2}
+    assert diagnostics["dropped_nuisance_columns"] == ("acquisition_a",)
+    original_nuisance = design[["const", "acquisition_a", "acquisition_b"]].to_numpy()
+    reduced_nuisance = reduced[["const", "acquisition_b"]].to_numpy()
+    assert np.linalg.matrix_rank(original_nuisance) == np.linalg.matrix_rank(reduced_nuisance)
+    assert np.linalg.matrix_rank(
+        np.column_stack([original_nuisance, reduced_nuisance])
+    ) == np.linalg.matrix_rank(original_nuisance)
+
+    numeric, numeric_local, numeric_diagnostics = _prepare_firth_bootstrap_matrix(
+        design.to_numpy(float), target, tuple(design.columns), schema,
+    )
+    np.testing.assert_array_equal(numeric, reduced.to_numpy(float))
+    assert numeric_local == local
+    assert numeric_diagnostics == diagnostics
+
+
+def test_bootstrap_design_does_not_remove_intercept_or_predictor_involved_dependency():
+    schema = type("Schema", (), {
+        "predictor_columns": ("trait",),
+        "control_columns": ("const", "control_duplicate_of_trait"),
+    })()
+    design = pd.DataFrame({
+        "const": [1.0, 1.0, 1.0, 1.0],
+        "trait": [0.0, 1.0, 0.0, 1.0],
+        "control_duplicate_of_trait": [0.0, 1.0, 0.0, 1.0],
+    })
+    with pytest.raises(BootstrapReplicateError) as error:
+        _prepare_firth_bootstrap_design(design, np.array([0, 1, 0, 1]), schema)
+    assert error.value.category == "rank_failure"
+    assert error.value.diagnostics["dropped_nuisance_columns"] == ()
+    assert error.value.diagnostics["reduced_design_column_count"] == 3
+
+
+def test_bootstrap_design_is_unchanged_when_no_nuisance_reduction_is_needed():
+    schema = type("Schema", (), {
+        "predictor_columns": ("trait",), "control_columns": ("control",),
+    })()
+    design = pd.DataFrame({
+        "const": [1.0, 1.0, 1.0, 1.0],
+        "trait": [-1.0, 0.0, 1.0, 2.0],
+        "control": [0.0, 1.0, 0.0, 1.0],
+    })
+    reduced, local, diagnostics = _prepare_firth_bootstrap_design(
+        design, np.array([0, 1, 0, 1]), schema,
+    )
+    pd.testing.assert_frame_equal(reduced, design)
+    assert local == {"const": 0, "trait": 1, "control": 2}
+    assert diagnostics["dropped_nuisance_columns"] == ()
 
 
 def test_bootstrap_design_never_drops_absent_tested_contrast():

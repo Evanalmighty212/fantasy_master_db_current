@@ -682,15 +682,59 @@ def _firth_termination_diagnostics(fitted, design: dict[str, object]) -> dict[st
     }
 
 
+def _bootstrap_nuisance_basis(
+    matrix: np.ndarray, names: tuple[str, ...], schema: DesignSchema,
+) -> tuple[list[int], tuple[str, ...]]:
+    """Return a stable full-rank basis for nuisance columns when possible.
+
+    Tested contrasts and the intercept are protected.  Identically-zero controls
+    are removed first.  Remaining declared controls are considered in their
+    stable schema order and removed only when doing so preserves the rank (and
+    therefore the column space) of the nuisance block.
+    """
+    name_to_index = {column: index for index, column in enumerate(names)}
+    protected = {"const", *schema.predictor_columns}
+    declared_controls = tuple(
+        column for column in schema.control_columns
+        if column in name_to_index and column not in protected
+    )
+    dropped: list[str] = []
+    keep = list(range(matrix.shape[1]))
+    for column in declared_controls:
+        index = name_to_index[column]
+        if bool(np.all(matrix[:, index] == 0.0)):
+            keep.remove(index)
+            dropped.append(column)
+
+    if not np.isfinite(matrix[:, keep]).all():
+        return keep, tuple(dropped)
+
+    predictor_indices = {
+        name_to_index[column] for column in schema.predictor_columns
+        if column in name_to_index
+    }
+    nuisance_keep = [index for index in keep if index not in predictor_indices]
+    nuisance_rank = int(np.linalg.matrix_rank(matrix[:, nuisance_keep]))
+    for column in declared_controls:
+        index = name_to_index[column]
+        if index not in nuisance_keep:
+            continue
+        candidate = [value for value in nuisance_keep if value != index]
+        if int(np.linalg.matrix_rank(matrix[:, candidate])) == nuisance_rank:
+            nuisance_keep = candidate
+            keep.remove(index)
+            dropped.append(column)
+    return keep, tuple(dropped)
+
+
 def _prepare_firth_bootstrap_design(
     sample_X: pd.DataFrame, sample_y: np.ndarray, schema: DesignSchema,
 ) -> tuple[pd.DataFrame, dict[str, int], dict[str, object]]:
     """Validate and reduce one resampled design without changing its tested signal."""
-    zero_nuisance = [
-        column for column in schema.control_columns
-        if column in sample_X and bool((sample_X[column] == 0.0).all())
-    ]
-    reduced_X = sample_X.drop(columns=zero_nuisance)
+    keep_indices, dropped_nuisance = _bootstrap_nuisance_basis(
+        sample_X.to_numpy(dtype=float), tuple(sample_X.columns), schema,
+    )
+    reduced_X = sample_X.iloc[:, keep_indices]
     matrix = reduced_X.to_numpy(dtype=float)
     diagnostics = _bootstrap_design_diagnostics(
         matrix, sample_y, tuple(reduced_X.columns), schema,
@@ -700,6 +744,7 @@ def _prepare_firth_bootstrap_design(
         for column in schema.control_columns
         if column in sample_X
     }
+    diagnostics["dropped_nuisance_columns"] = dropped_nuisance
     if np.unique(sample_y).size < 2:
         raise BootstrapReplicateError(
             "missing_target_signal", "resample contains only one target class", diagnostics,
@@ -729,11 +774,7 @@ def _prepare_firth_bootstrap_matrix(
     matrix: np.ndarray, sample_y: np.ndarray, names: tuple[str, ...], schema: DesignSchema,
 ) -> tuple[np.ndarray, dict[str, int], dict[str, object]]:
     name_to_index = {column: index for index, column in enumerate(names)}
-    drop_indices = {
-        name_to_index[column] for column in schema.control_columns
-        if column in name_to_index and bool(np.all(matrix[:, name_to_index[column]] == 0.0))
-    }
-    keep_indices = [index for index in range(matrix.shape[1]) if index not in drop_indices]
+    keep_indices, dropped_nuisance = _bootstrap_nuisance_basis(matrix, names, schema)
     reduced = matrix[:, keep_indices]
     reduced_names = tuple(names[index] for index in keep_indices)
     diagnostics = _bootstrap_design_diagnostics(reduced, sample_y, reduced_names, schema)
@@ -742,6 +783,7 @@ def _prepare_firth_bootstrap_matrix(
         for column in schema.control_columns
         if column in name_to_index
     }
+    diagnostics["dropped_nuisance_columns"] = dropped_nuisance
     if np.unique(sample_y).size < 2:
         raise BootstrapReplicateError(
             "missing_target_signal", "resample contains only one target class", diagnostics,
