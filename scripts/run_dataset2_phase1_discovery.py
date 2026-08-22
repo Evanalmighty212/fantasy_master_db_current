@@ -54,7 +54,7 @@ DISCOVERY_CSV_CHUNK_SIZE = 10_000
 GOVERNED_PREFLIGHT_COUNTS = {
     "lwi": {"fit": 142, "excluded_non_estimable": 1},
     "star": {"fit": 143, "excluded_non_estimable": 0},
-    "strict_bust": {"fit": 124, "excluded_non_estimable": 19},
+    "strict_bust": {"fit": 106, "excluded_non_estimable": 37},
 }
 
 

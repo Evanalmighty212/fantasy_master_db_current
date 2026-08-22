@@ -131,6 +131,10 @@ class PreflightRecord:
     seasons_represented: int
     disposition: Literal["fit", "excluded_non_estimable"]
     governed_reason: str | None
+    binary_class_0_player_cluster_support: int | None = None
+    binary_class_1_player_cluster_support: int | None = None
+    bootstrap_target_signal_capable_draws: int | None = None
+    bootstrap_target_signal_attempted_draws: int | None = None
 
 
 @dataclass(frozen=True)
@@ -462,6 +466,39 @@ def _predictor_design(
     return design, None, None
 
 
+def _binary_target_bootstrap_feasibility(
+    rows: pd.DataFrame,
+    target: TargetDefinition,
+    *,
+    replicates: int = DATASET2_FIRTH_BOOTSTRAP_REPLICATES,
+    seed: int = DATASET2_PHASE1_RANDOM_SEED,
+) -> tuple[int, int, int, int]:
+    """Count exact frozen player-cluster draws retaining both target classes."""
+    if not target.binary:
+        raise ValueError("bootstrap target-signal feasibility requires a binary target")
+    target_values = _validated_target_values(rows, target).to_numpy(dtype=int)
+    player_values = rows["player_id"].astype("object").to_numpy()
+    players = pd.Index(pd.Series(player_values, dtype="object").dropna().unique())
+    if players.empty:
+        raise ValueError("bootstrap target-signal feasibility requires player clusters")
+    class_masks = []
+    class_support = {0: 0, 1: 0}
+    for player in players:
+        observed = set(target_values[player_values == player])
+        mask = 0
+        for value in observed:
+            class_support[int(value)] += 1
+            mask |= 1 << int(value)
+        class_masks.append(mask)
+    masks = np.asarray(class_masks, dtype=np.uint8)
+    rng = np.random.default_rng(seed)
+    capable = 0
+    for _ in range(replicates):
+        draws = rng.choice(len(players), size=len(players), replace=True)
+        capable += int(np.bitwise_or.reduce(masks[draws]) == 0b11)
+    return class_support[0], class_support[1], capable, replicates
+
+
 def _design(rows: pd.DataFrame, predictor: PredictorDefinition, schema: DesignSchema | None = None):
     predictor_frame, mean, sd = _predictor_design(rows, predictor, schema)
     controls, control_levels = _control_design(rows, None if schema is None else schema.control_levels)
@@ -508,6 +545,9 @@ def preflight_phase1_estimability(
                 binary_target_has_contrast = (
                     not target.binary or int(target_numeric.nunique()) == 2
                 )
+                feasibility = (None, None, None, None)
+                if target.family == "strict_bust":
+                    feasibility = _binary_target_bootstrap_feasibility(fit_rows, target)
                 values = fit_rows[predictor.column]
                 if predictor.kind == "continuous":
                     numeric = pd.to_numeric(values, errors="raise")
@@ -520,6 +560,7 @@ def preflight_phase1_estimability(
                             len(target_rows), len(fit_rows), distinct,
                             int(fit_rows["prediction_season"].nunique()),
                             "excluded_non_estimable", "continuous_zero_variation",
+                            *feasibility,
                         ))
                         continue
                 elif predictor.kind == "binary":
@@ -532,6 +573,7 @@ def preflight_phase1_estimability(
                             len(target_rows), len(fit_rows), distinct,
                             int(fit_rows["prediction_season"].nunique()),
                             "excluded_non_estimable", "binary_no_discovery_contrast",
+                            *feasibility,
                         ))
                         continue
                 elif predictor.kind == "categorical":
@@ -542,6 +584,7 @@ def preflight_phase1_estimability(
                             len(target_rows), len(fit_rows), distinct,
                             int(fit_rows["prediction_season"].nunique()),
                             "excluded_non_estimable", "categorical_no_discovery_contrast",
+                            *feasibility,
                         ))
                         continue
                 else:
@@ -558,12 +601,32 @@ def preflight_phase1_estimability(
                         len(target_rows), len(fit_rows), distinct,
                         int(fit_rows["prediction_season"].nunique()),
                         "excluded_non_estimable", "binary_target_no_discovery_contrast",
+                        *feasibility,
+                    ))
+                    continue
+                required_capable = int(np.ceil(
+                    DATASET2_FIRTH_BOOTSTRAP_MIN_SUCCESS_RATE
+                    * DATASET2_FIRTH_BOOTSTRAP_REPLICATES
+                ))
+                if (
+                    target.family == "strict_bust"
+                    and feasibility[2] is not None
+                    and feasibility[2] < required_capable
+                ):
+                    records.append(PreflightRecord(
+                        target.family, predictor.column, predictor.cluster_id, predictor.kind,
+                        len(target_rows), len(fit_rows), distinct,
+                        int(fit_rows["prediction_season"].nunique()),
+                        "excluded_non_estimable",
+                        "binary_target_cluster_bootstrap_infeasible",
+                        *feasibility,
                     ))
                     continue
                 records.append(PreflightRecord(
                     target.family, predictor.column, predictor.cluster_id, predictor.kind,
                     len(target_rows), len(fit_rows), distinct,
                     int(fit_rows["prediction_season"].nunique()), "fit", None,
+                    *feasibility,
                 ))
             except (TypeError, ValueError) as exc:
                 failures.append(f"{context}: {exc}")

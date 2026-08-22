@@ -196,6 +196,11 @@ def test_entrypoint_persists_preflight_before_runner_and_verifies_identity(monke
     assert package.preflight_ledger == ledger
     persisted = pd.read_csv(ledger_path)
     assert len(persisted) == 3
+    strict = persisted.loc[persisted["family"].eq("strict_bust")].iloc[0]
+    assert strict["binary_class_0_player_cluster_support"] == 110
+    assert strict["binary_class_1_player_cluster_support"] == 110
+    assert strict["bootstrap_target_signal_capable_draws"] == 2000
+    assert strict["bootstrap_target_signal_attempted_draws"] == 2000
 
 
 def test_entrypoint_rejects_final_ledger_identity_mismatch(monkeypatch, tmp_path):
@@ -229,7 +234,7 @@ def test_entrypoint_persists_ledger_before_governed_count_failure(monkeypatch, t
             expected_preflight_counts={
                 "lwi": {"fit": 142, "excluded_non_estimable": 1},
                 "star": {"fit": 143, "excluded_non_estimable": 0},
-                "strict_bust": {"fit": 124, "excluded_non_estimable": 19},
+                "strict_bust": {"fit": 106, "excluded_non_estimable": 37},
             },
         )
     assert ledger_path.is_file()

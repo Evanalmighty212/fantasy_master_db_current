@@ -17,6 +17,7 @@ from lib.dataset2.phase1_runner import (
     PredictorDefinition,
     _fit_firth,
     _fit_lwi,
+    _binary_target_bootstrap_feasibility,
     _firth_termination_diagnostics,
     _prepare_firth_bootstrap_design,
     _prepare_firth_bootstrap_matrix,
@@ -26,6 +27,7 @@ from lib.dataset2.phase1_runner import (
     incremental_validation,
     null_centered_bootstrap_p_value,
     null_centered_joint_bootstrap_p_value,
+    preflight_phase1_estimability,
     resolve_categorical_references,
     run_phase1,
     strict_bust_practical_effect_passes,
@@ -612,6 +614,88 @@ def test_runner_excludes_binary_target_no_contrast_from_all_result_outputs():
     )
     assert strict_record.disposition == "excluded_non_estimable"
     assert strict_record.governed_reason == "binary_target_no_discovery_contrast"
+
+
+def test_strict_bust_preflight_excludes_exact_frozen_draw_infeasibility():
+    rows = _synthetic_rows()
+    minority_players = {"player_00", "player_01"}
+    rows["bust_strict_below_replacement_label"] = rows["player_id"].isin(
+        minority_players
+    ).astype(int)
+    predictor = _predictor()
+
+    class_0, class_1, capable, attempted = _binary_target_bootstrap_feasibility(
+        discovery_fit_rows(rows, PRIMARY_TARGETS[2], predictor.column),
+        PRIMARY_TARGETS[2],
+    )
+    records = preflight_phase1_estimability(rows, [predictor], [predictor.column])
+    strict_record = next(record for record in records if record.family == "strict_bust")
+
+    assert (class_0, class_1) == (34, 2)
+    assert attempted == 2000
+    assert capable < 1980
+    assert strict_record.disposition == "excluded_non_estimable"
+    assert strict_record.governed_reason == "binary_target_cluster_bootstrap_infeasible"
+    assert strict_record.binary_class_0_player_cluster_support == class_0
+    assert strict_record.binary_class_1_player_cluster_support == class_1
+    assert strict_record.bootstrap_target_signal_capable_draws == capable
+    assert strict_record.bootstrap_target_signal_attempted_draws == attempted
+
+    package = run_phase1(
+        rows, [predictor], [predictor.column], bootstrap_replicates=5,
+        minimum_success_rate=0.8, synthetic_test_mode=True,
+    )
+    assert set(package.primary_results["family"]) == {"lwi", "star"}
+    assert {value.family for value in package.incremental_results} == {"lwi", "star"}
+    assert {value.family for value in package.robustness_results} == {"lwi", "star"}
+
+
+def test_frozen_draw_feasibility_matches_direct_player_cluster_draw_sequence():
+    rows = _synthetic_rows().loc[lambda frame: frame["prediction_season"].eq(2010)].copy()
+    rows["bust_strict_below_replacement_label"] = rows["player_id"].isin(
+        {"player_00", "player_01"}
+    ).astype(int)
+    target = PRIMARY_TARGETS[2]
+    observed = _binary_target_bootstrap_feasibility(rows, target, replicates=25, seed=17)
+
+    players = pd.Index(rows["player_id"].unique())
+    masks = np.asarray([
+        sum(1 << int(value) for value in rows.loc[
+            rows["player_id"].eq(player), target.target_column
+        ].unique())
+        for player in players
+    ])
+    rng = np.random.default_rng(17)
+    direct = sum(
+        np.bitwise_or.reduce(masks[rng.choice(len(players), len(players), replace=True)]) == 3
+        for _ in range(25)
+    )
+    assert observed == (34, 2, int(direct), 25)
+
+
+@pytest.mark.parametrize(
+    ("capable", "disposition"),
+    [(1980, "fit"), (1979, "excluded_non_estimable")],
+)
+def test_strict_bust_frozen_draw_gate_uses_exact_99_percent_boundary(
+    monkeypatch, capable, disposition,
+):
+    rows = _synthetic_rows()
+    predictor = _predictor()
+    monkeypatch.setattr(
+        "lib.dataset2.phase1_runner._binary_target_bootstrap_feasibility",
+        lambda *_args, **_kwargs: (30, 6, capable, 2000),
+    )
+    strict = next(
+        record for record in preflight_phase1_estimability(
+            rows, [predictor], [predictor.column],
+        )
+        if record.family == "strict_bust"
+    )
+    assert strict.disposition == disposition
+    assert strict.governed_reason == (
+        None if disposition == "fit" else "binary_target_cluster_bootstrap_infeasible"
+    )
 
 
 def test_phase1_runner_module_has_no_artifact_loader_or_repository_path():
