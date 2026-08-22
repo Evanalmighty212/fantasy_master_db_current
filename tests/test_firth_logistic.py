@@ -52,6 +52,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from lib.dataset2.firth_logistic import (
+    MAX_ITER_DEFAULT,
     _penalized_loglik,
     _stable_two_cycle_midpoint,
     fit_firth_logistic,
@@ -426,6 +427,63 @@ class TestConvergenceRecognition:
         fit = fit_firth_logistic(X, y, max_iter=1)
         assert not fit.converged
         assert fit.termination_reason == "max_iterations"
+
+
+class TestIterationCeiling:
+    """The frozen outer Firth solver iteration ceiling: 100 -> 300.
+
+    Same one-row sparse-nuisance shape used throughout this file, tuned
+    via ``tol`` (not the model, seed, or bootstrap settings) to sit on
+    either side of the raised ceiling. A genuinely slow but cleanly
+    converging fit needed more than 100 iterations under the old cap; a
+    genuinely unstable fit still correctly fails loud at the new one.
+    """
+
+    @staticmethod
+    def _one_row_nuisance_fixture(nuisance_scale=5e-5):
+        rng = np.random.default_rng(0)
+        n = 1200
+        position = rng.integers(0, 4, n)
+        acquisition = rng.integers(0, 5, n)
+        era = rng.integers(0, 2, n)
+        predictor = rng.normal(size=n)
+        X = np.column_stack([
+            np.ones(n), predictor,
+            *((position == level).astype(float) for level in range(1, 4)),
+            *((acquisition == level).astype(float) for level in range(1, 5)),
+            era,
+        ])
+        one_row_nuisance = np.zeros(n)
+        one_row_nuisance[0] = nuisance_scale
+        X = np.column_stack([X, one_row_nuisance])
+        eta = -3.2 + 0.15 * predictor + 0.15 * (position == 2)
+        y = (rng.random(n) < 1.0 / (1.0 + np.exp(-eta))).astype(float)
+        y[0] = 1.0
+        return X, y
+
+    def test_default_ceiling_is_300(self):
+        assert MAX_ITER_DEFAULT == 300
+
+    def test_slow_cleanly_converging_fit_succeeds_beyond_100_iterations(self):
+        X, y = self._one_row_nuisance_fixture()
+        insufficient = fit_firth_logistic(X, y, tol=5e-11, max_iter=100)
+        assert not insufficient.converged
+        assert insufficient.termination_reason == "max_iterations"
+
+        resolved = fit_firth_logistic(X, y, tol=5e-11)  # relies on the default ceiling
+        assert resolved.converged
+        assert resolved.n_iter > 100
+        assert resolved.n_iter <= MAX_ITER_DEFAULT
+        assert resolved.termination_reason == "stationary_penalized_likelihood"
+
+    def test_genuinely_unresolved_fit_still_fails_at_300(self):
+        X, y = self._one_row_nuisance_fixture()
+        fit = fit_firth_logistic(X, y, tol=4e-11)  # relies on the default ceiling
+        assert not fit.converged
+        assert fit.n_iter == MAX_ITER_DEFAULT
+        assert fit.termination_reason == "max_iterations"
+        assert len(fit.iteration_tail) == 20
+        assert fit.iteration_tail[-1]["termination_reason"] == "max_iterations"
 
 
 class TestConfidenceIntervalsAndLRTest:

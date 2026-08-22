@@ -96,7 +96,7 @@ from scipy.optimize import brentq
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-MAX_ITER_DEFAULT = 100
+MAX_ITER_DEFAULT = 300
 TOL_DEFAULT = 1e-8
 MAX_STEP_HALVINGS = 30
 OBJECTIVE_TOLERANCE = 1e-10
