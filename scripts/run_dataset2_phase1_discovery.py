@@ -53,7 +53,7 @@ BUST_REFERENCE = REPO_ROOT / "data" / "processed" / "dataset2_bust_reference.jso
 DISCOVERY_CSV_CHUNK_SIZE = 10_000
 GOVERNED_PREFLIGHT_COUNTS = {
     "lwi": {"fit": 142, "excluded_non_estimable": 1},
-    "star": {"fit": 143, "excluded_non_estimable": 0},
+    "star": {"fit": 142, "excluded_non_estimable": 1},
     "strict_bust": {"fit": 105, "excluded_non_estimable": 38},
 }
 

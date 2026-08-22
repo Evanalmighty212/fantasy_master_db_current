@@ -778,7 +778,7 @@ def test_categorical_predictor_contrast_gate_uses_exact_99_percent_boundary(
     )
     assert star.disposition == disposition
     assert star.governed_reason == (
-        None if disposition == "fit" else "categorical_predictor_cluster_bootstrap_infeasible"
+        None if disposition == "fit" else "predictor_contrast_cluster_bootstrap_infeasible"
     )
     if disposition == "excluded_non_estimable":
         assert star.categorical_contrasts_below_bootstrap_threshold == ("trait_category_high",)
@@ -831,7 +831,7 @@ def test_preflight_excludes_categorical_predictor_with_sparse_contrast_support()
     for family in ("star", "strict_bust"):
         record = next(r for r in records if r.family == family)
         assert record.disposition == "excluded_non_estimable"
-        assert record.governed_reason == "categorical_predictor_cluster_bootstrap_infeasible"
+        assert record.governed_reason == "predictor_contrast_cluster_bootstrap_infeasible"
         assert record.categorical_contrasts_below_bootstrap_threshold == (
             "trait_category_rare",
         )
@@ -862,6 +862,73 @@ def test_preflight_keeps_categorical_predictor_with_ample_contrast_support():
         assert all(value == 2000 for value in capable.values())
 
 
+def _rows_with_binary_contrast_support(total_players, rare_players):
+    """A binary predictor's value=1 supported by only ``rare_players`` of
+    ``total_players`` clusters -- mirrors the real fam86_qb_starter_uncertainty
+    structure (4 of 193 supporting players) at a scale a unit test can afford.
+    """
+    rows = []
+    rng = np.random.default_rng(20260808)
+    for season in range(2010, 2021):
+        for player_number in range(total_players):
+            trait = rng.normal() + 0.03 * (season - 2010)
+            binary_value = 1 if player_number < rare_players else 0
+            rows.append({
+                "prediction_season": season,
+                "player_id": f"player_{player_number:03d}",
+                "position": ("QB", "RB", "WR", "TE")[player_number % 4],
+                "preseason_market_status": "ordinary_market",
+                "adp_round": 1 + player_number % 15,
+                "trait": float(binary_value),
+                "lwi_score": 8.0 * trait + rng.normal(scale=2.0),
+                "star_by_value_label": int(rng.random() < 0.16 + 0.02 * (trait > 0)),
+                "star_outcome_eligible": True,
+                "bust_strict_below_replacement_label": int(rng.random() < 0.20 - 0.02 * (trait > 0)),
+                "bust_strict_below_replacement_eligible": True,
+            })
+    return pd.DataFrame(rows)
+
+
+def test_preflight_excludes_binary_predictor_with_sparse_contrast_support():
+    rows = _rows_with_binary_contrast_support(total_players=50, rare_players=2)
+    predictor = PredictorDefinition("trait", "binary", "cluster_001", True)
+
+    records = preflight_phase1_estimability(rows, [predictor], [predictor.column])
+    for family in ("star", "strict_bust"):
+        record = next(r for r in records if r.family == family)
+        assert record.disposition == "excluded_non_estimable"
+        assert record.governed_reason == "predictor_contrast_cluster_bootstrap_infeasible"
+        assert record.categorical_contrasts_below_bootstrap_threshold == ("trait",)
+        support = dict(record.categorical_contrast_player_cluster_support)
+        capable = dict(record.categorical_contrast_bootstrap_capable_draws)
+        assert support["trait"] == 2
+        assert capable["trait"] < 1980
+        assert record.categorical_contrast_bootstrap_attempted_draws == 2000
+
+    # LWI never bootstraps, so this predictor-contrast check never applies to it.
+    lwi_record = next(r for r in records if r.family == "lwi")
+    assert lwi_record.disposition == "fit"
+    assert lwi_record.categorical_contrasts_below_bootstrap_threshold is None
+
+
+def test_preflight_keeps_binary_predictor_at_isolated_one_failure_boundary():
+    # 7 of 70 supporting players: comfortably above the 1,980 floor, but not
+    # a perfect 2,000/2,000 -- proves a small, within-budget shortfall does
+    # not trip the exclusion, matching the real fam86_team_qb_uncertainty
+    # case that stayed eligible with a single missing draw out of 2,000.
+    rows = _rows_with_binary_contrast_support(total_players=70, rare_players=7)
+    predictor = PredictorDefinition("trait", "binary", "cluster_001", True)
+
+    records = preflight_phase1_estimability(rows, [predictor], [predictor.column])
+    for family in ("star", "strict_bust"):
+        record = next(r for r in records if r.family == family)
+        assert record.disposition == "fit"
+        assert record.governed_reason is None
+        assert record.categorical_contrasts_below_bootstrap_threshold == ()
+        capable = dict(record.categorical_contrast_bootstrap_capable_draws)
+        assert 1980 <= capable["trait"] < 2000
+
+
 def test_categorical_bootstrap_infeasibility_excludes_pair_from_all_result_outputs():
     rows = _rows_with_sparse_categorical_contrast()
     predictor = PredictorDefinition(
@@ -881,8 +948,8 @@ def test_categorical_bootstrap_infeasibility_excludes_pair_from_all_result_outpu
         for record in package.preflight_ledger if record.disposition == "excluded_non_estimable"
     }
     assert excluded == {
-        "star": "categorical_predictor_cluster_bootstrap_infeasible",
-        "strict_bust": "categorical_predictor_cluster_bootstrap_infeasible",
+        "star": "predictor_contrast_cluster_bootstrap_infeasible",
+        "strict_bust": "predictor_contrast_cluster_bootstrap_infeasible",
     }
 
 

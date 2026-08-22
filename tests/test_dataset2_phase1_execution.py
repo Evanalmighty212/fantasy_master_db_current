@@ -226,7 +226,7 @@ def test_entrypoint_persists_categorical_bootstrap_feasibility_fields(monkeypatc
     persisted = pd.read_csv(ledger_path)
     star = persisted.loc[persisted["family"].eq("star")].iloc[0]
     assert star["disposition"] == "excluded_non_estimable"
-    assert star["governed_reason"] == "categorical_predictor_cluster_bootstrap_infeasible"
+    assert star["governed_reason"] == "predictor_contrast_cluster_bootstrap_infeasible"
     assert json.loads(star["categorical_contrasts_below_bootstrap_threshold"]) == ["trait_rare"]
     support = dict(json.loads(star["categorical_contrast_player_cluster_support"]))
     capable = dict(json.loads(star["categorical_contrast_bootstrap_capable_draws"]))
@@ -269,7 +269,7 @@ def test_entrypoint_persists_ledger_before_governed_count_failure(monkeypatch, t
             rows, [predictor], ["trait"], preflight_ledger_path=ledger_path,
             expected_preflight_counts={
                 "lwi": {"fit": 142, "excluded_non_estimable": 1},
-                "star": {"fit": 143, "excluded_non_estimable": 0},
+                "star": {"fit": 142, "excluded_non_estimable": 1},
                 "strict_bust": {"fit": 105, "excluded_non_estimable": 38},
             },
         )

@@ -529,25 +529,35 @@ def _categorical_predictor_bootstrap_feasibility(
 ) -> tuple[dict[str, int], dict[str, int], int]:
     """Count exact frozen player-cluster draws retaining every tested contrast.
 
-    Mirrors the target-signal feasibility check but for a categorical
-    predictor's own contrasts: a governed level with too few supporting
-    player clusters can vanish from some resamples even though the full
-    discovery population has ample rows for it, making the bootstrap for
-    the whole (family, predictor) pair structurally unable to meet the
-    frozen 99% success requirement.
+    Mirrors the target-signal feasibility check but for a predictor's own
+    tested contrast(s): a governed level (categorical) or the non-reference
+    value (binary) with too few supporting player clusters can vanish from
+    some resamples even though the full discovery population has ample
+    rows for it, making the bootstrap for the whole (family, predictor)
+    pair structurally unable to meet the frozen 99% success requirement.
+    Categorical predictors are tested per non-reference dummy column;
+    binary predictors have exactly one declared contrast column (their own
+    name) whose tested value is the non-reference value, 1.
     """
-    levels = rows[predictor.column].astype(str).to_numpy()
     player_values = rows["player_id"].astype("object").to_numpy()
     players = pd.Index(pd.Series(player_values, dtype="object").dropna().unique())
     if players.empty:
         raise ValueError("bootstrap predictor-contrast feasibility requires player clusters")
-    prefix = f"{predictor.column}_"
-    level_by_column = {column: column[len(prefix):] for column in contrast_columns}
+    if predictor.kind == "binary":
+        raw_values = pd.to_numeric(rows[predictor.column], errors="raise").to_numpy()
+        contrast_membership = {contrast_columns[0]: raw_values == 1.0}
+    else:
+        levels = rows[predictor.column].astype(str).to_numpy()
+        prefix = f"{predictor.column}_"
+        level_by_column = {column: column[len(prefix):] for column in contrast_columns}
+        contrast_membership = {
+            column: levels == level for column, level in level_by_column.items()
+        }
     presence = np.zeros((len(players), len(contrast_columns)), dtype=bool)
     for row_index, player in enumerate(players):
-        observed = set(levels[player_values == player])
+        player_mask = player_values == player
         for column_index, column in enumerate(contrast_columns):
-            presence[row_index, column_index] = level_by_column[column] in observed
+            presence[row_index, column_index] = contrast_membership[column][player_mask].any()
     player_cluster_support = {
         column: int(presence[:, index].sum()) for index, column in enumerate(contrast_columns)
     }
@@ -699,7 +709,7 @@ def preflight_phase1_estimability(
                     ))
                     continue
                 categorical_feasibility = (None, None, None, None)
-                if predictor.kind == "categorical" and target.binary:
+                if predictor.kind in ("categorical", "binary") and target.binary:
                     contrast_columns = tuple(predictor_design.columns)
                     support, capable, attempted = _categorical_predictor_bootstrap_feasibility(
                         fit_rows, predictor, contrast_columns,
@@ -719,7 +729,7 @@ def preflight_phase1_estimability(
                             len(target_rows), len(fit_rows), distinct,
                             int(fit_rows["prediction_season"].nunique()),
                             "excluded_non_estimable",
-                            "categorical_predictor_cluster_bootstrap_infeasible",
+                            "predictor_contrast_cluster_bootstrap_infeasible",
                             *feasibility, *categorical_feasibility,
                         ))
                         continue
