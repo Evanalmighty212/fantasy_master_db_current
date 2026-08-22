@@ -209,6 +209,7 @@ def write_package(package, output_directory: Path, configuration: dict[str, obje
         "predictor_column": value.predictor_column,
         "folds": value.folds,
         "metrics": stable_json(value.metrics),
+        "validation_events": stable_json(value.validation_events),
     } for value in package.incremental_results]).sort_values(
         ["family", "predictor_column"], kind="mergesort",
     ).to_csv(output_directory / "incremental_validation.csv", index=False, lineterminator="\n")

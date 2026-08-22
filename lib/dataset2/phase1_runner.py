@@ -157,6 +157,7 @@ class DesignSchema:
     control_levels: tuple[tuple[str, tuple[str, ...], str], ...]
     predictor_mean: float | None
     predictor_sd: float | None
+    governed_predictor_levels: tuple[str, ...] | None = None
 
     @property
     def control_columns(self) -> tuple[str, ...]:
@@ -192,6 +193,7 @@ class IncrementalResult:
     predictor_column: str
     folds: int
     metrics: dict[str, float]
+    validation_events: tuple[tuple[int, str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -433,7 +435,10 @@ def _control_design(
 
 
 def _predictor_design(
-    rows: pd.DataFrame, predictor: PredictorDefinition, schema: DesignSchema | None = None,
+    rows: pd.DataFrame,
+    predictor: PredictorDefinition,
+    schema: DesignSchema | None = None,
+    governed_categorical_levels: tuple[str, ...] | None = None,
 ) -> tuple[pd.DataFrame, float | None, float | None]:
     values = rows[predictor.column]
     if predictor.kind == "continuous":
@@ -449,6 +454,17 @@ def _predictor_design(
             raise ValueError(f"binary predictor must be 0/1: {predictor.column}")
         return pd.DataFrame({predictor.column: values.astype(float)}, index=rows.index), None, None
     levels = values.astype(str)
+    governed_levels = (
+        governed_categorical_levels if schema is None else schema.governed_predictor_levels
+    )
+    if governed_levels is None:
+        governed_levels = tuple(sorted(set(levels)))
+    outside_governance = sorted(set(levels) - set(governed_levels))
+    if outside_governance:
+        raise ValueError(
+            f"categorical levels outside governed discovery set for {predictor.column}: "
+            f"{outside_governance}"
+        )
     if schema is None and predictor.reference_level not in set(levels):
         raise ValueError(f"categorical reference is absent: {predictor.reference_level}")
     design = pd.get_dummies(levels, prefix=predictor.column, dtype=float)
@@ -457,9 +473,9 @@ def _predictor_design(
         raise ValueError(f"categorical reference column is absent: {reference}")
     design = design.drop(columns=reference, errors="ignore")
     if schema is not None:
-        unexpected = sorted(set(design.columns) - set(schema.predictor_columns))
-        if unexpected:
-            raise ValueError(f"unexpected categorical levels in validation/resample: {unexpected}")
+        # A governed discovery category may first appear in a later temporal
+        # validation fold. Its unestimated fold-specific contrast contributes
+        # zero; values outside the governed discovery set still fail above.
         design = design.reindex(columns=list(schema.predictor_columns), fill_value=0.0)
     if design.shape[1] == 0:
         raise ValueError(f"categorical predictor has no contrast: {predictor.column}")
@@ -499,14 +515,28 @@ def _binary_target_bootstrap_feasibility(
     return class_support[0], class_support[1], capable, replicates
 
 
-def _design(rows: pd.DataFrame, predictor: PredictorDefinition, schema: DesignSchema | None = None):
-    predictor_frame, mean, sd = _predictor_design(rows, predictor, schema)
+def _design(
+    rows: pd.DataFrame,
+    predictor: PredictorDefinition,
+    schema: DesignSchema | None = None,
+    governed_categorical_levels: tuple[str, ...] | None = None,
+):
+    predictor_frame, mean, sd = _predictor_design(
+        rows, predictor, schema, governed_categorical_levels,
+    )
     controls, control_levels = _control_design(rows, None if schema is None else schema.control_levels)
     combined = pd.concat([predictor_frame, controls], axis=1)
     if combined.columns.duplicated().any():
         raise ValueError("predictor/control design columns collide")
     if schema is None:
-        schema = DesignSchema(tuple(predictor_frame.columns), control_levels, mean, sd)
+        schema = DesignSchema(
+            tuple(predictor_frame.columns), control_levels, mean, sd,
+            governed_predictor_levels=(
+                tuple(sorted(set(rows[predictor.column].astype(str))))
+                if predictor.kind == "categorical" and governed_categorical_levels is None
+                else governed_categorical_levels
+            ),
+        )
     return combined, schema
 
 
@@ -1022,8 +1052,12 @@ def _firth_point_estimates(
     return tuple(float(np.exp(fitted.beta[list(X.columns).index(column)])) for column in schema.predictor_columns)
 
 
-def _predictions_for_fold(train, validation, target, predictor):
-    augmented, schema = _design(train, predictor)
+def _predictions_for_fold(
+    train, validation, target, predictor, governed_categorical_levels=None,
+):
+    augmented, schema = _design(
+        train, predictor, governed_categorical_levels=governed_categorical_levels,
+    )
     controls, control_schema = _control_design(train)
     validation_augmented, _ = _design(validation, predictor, schema)
     validation_controls, _ = _control_design(validation, control_schema)
@@ -1046,10 +1080,25 @@ def _predictions_for_fold(train, validation, target, predictor):
         augmented_fit = OLS(y_train, augmented_X).fit()
         baseline = baseline_fit.predict(add_constant(validation_controls, has_constant="add").reindex(columns=baseline_X.columns, fill_value=0.0))
         enhanced = augmented_fit.predict(add_constant(validation_augmented, has_constant="add").reindex(columns=augmented_X.columns, fill_value=0.0))
-    return validation[target.target_column].astype(float).to_numpy(), np.asarray(baseline), np.asarray(enhanced)
+    unseen_levels: tuple[str, ...] = ()
+    if predictor.kind == "categorical":
+        unseen_levels = tuple(sorted(
+            set(validation[predictor.column].astype(str))
+            - set(train[predictor.column].astype(str))
+        ))
+    return (
+        validation[target.target_column].astype(float).to_numpy(),
+        np.asarray(baseline), np.asarray(enhanced), unseen_levels,
+    )
 
 
-def incremental_validation(rows, target: TargetDefinition, predictor: PredictorDefinition) -> IncrementalResult:
+def incremental_validation(
+    rows,
+    target: TargetDefinition,
+    predictor: PredictorDefinition,
+    *,
+    governed_categorical_levels: tuple[str, ...] | None = None,
+) -> IncrementalResult:
     eligibility = target.eligibility_column or "_phase1_lwi_eligible"
     fold_rows = rows.copy()
     if target.eligibility_column is None:
@@ -1057,13 +1106,26 @@ def incremental_validation(rows, target: TargetDefinition, predictor: PredictorD
     folds = eligibility_aware_expanding_windows(
         fold_rows, season_column="prediction_season", eligibility_column=eligibility,
     )
+    if predictor.kind == "categorical" and governed_categorical_levels is None:
+        governed_categorical_levels = tuple(sorted(
+            rows[predictor.column].dropna().astype(str).unique(),
+        ))
     observed, baseline, augmented = [], [], []
+    validation_events: list[tuple[int, str, tuple[str, ...]]] = []
     for fold in folds:
         train = fold_rows[fold_rows["prediction_season"].isin(fold.training_seasons)]
         validation = fold_rows[fold_rows["prediction_season"] == fold.validation_season]
         train = discovery_fit_rows(train, target, predictor.column)
         validation = discovery_fit_rows(validation, target, predictor.column)
-        y, base, trait = _predictions_for_fold(train, validation, target, predictor)
+        y, base, trait, unseen_levels = _predictions_for_fold(
+            train, validation, target, predictor, governed_categorical_levels,
+        )
+        if unseen_levels:
+            validation_events.append((
+                int(fold.validation_season),
+                "governed_level_unseen_in_training",
+                unseen_levels,
+            ))
         observed.extend(y); baseline.extend(base); augmented.extend(trait)
     if not observed:
         raise RuntimeError(f"no expanding-window validation predictions for {predictor.column}/{target.family}")
@@ -1082,7 +1144,9 @@ def incremental_validation(rows, target: TargetDefinition, predictor: PredictorD
             "rmse_improvement": float(np.sqrt(mean_squared_error(y, base)) - np.sqrt(mean_squared_error(y, trait))),
             "out_of_window_r2_improvement": float(r2_score(y, trait) - r2_score(y, base)),
         }
-    return IncrementalResult(target.family, predictor.column, len(folds), metrics)
+    return IncrementalResult(
+        target.family, predictor.column, len(folds), metrics, tuple(validation_events),
+    )
 
 
 def apply_primary_family_fdr(results: Sequence[ModelResult]) -> dict[tuple[Family, str], float]:
@@ -1167,6 +1231,10 @@ def run_phase1(
     model_results: list[ModelResult] = []
     incrementals: list[IncrementalResult] = []
     robustness: list[RobustnessResult] = []
+    governed_categorical_levels = {
+        predictor.column: tuple(sorted(rows[predictor.column].dropna().astype(str).unique()))
+        for predictor in predictors if predictor.kind == "categorical"
+    }
     for predictor in predictors:
         for target in PRIMARY_TARGETS:
             if (target.family, predictor.column) not in fit_pairs:
@@ -1183,7 +1251,12 @@ def run_phase1(
                 progress=progress,
             )
             model_results.append(result)
-            incrementals.append(incremental_validation(fit_rows, target, predictor))
+            incrementals.append(incremental_validation(
+                fit_rows,
+                target,
+                predictor,
+                governed_categorical_levels=governed_categorical_levels.get(predictor.column),
+            ))
             # Literal leave-one-season-out estimates; no unapproved numeric tier.
             fold_estimates = []
             for season in sorted(fit_rows["prediction_season"].unique()):

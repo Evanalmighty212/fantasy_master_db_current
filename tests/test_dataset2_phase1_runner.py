@@ -15,6 +15,7 @@ from lib.dataset2.phase1_runner import (
     EvidenceStatus,
     ModelResult,
     PredictorDefinition,
+    _design,
     _fit_firth,
     _fit_lwi,
     _binary_target_bootstrap_feasibility,
@@ -542,6 +543,58 @@ def test_lwi_incremental_validation_reports_three_descriptive_metrics():
         "mae_improvement", "rmse_improvement", "out_of_window_r2_improvement",
     }
     assert all(np.isfinite(value) for value in result.metrics.values())
+
+
+def test_incremental_validation_records_governed_team_levels_unseen_in_training():
+    rows = _synthetic_rows()
+    rows["depth_team"] = np.where(rows.index % 2 == 0, "CIN", "BUF")
+    rows.loc[rows["prediction_season"].eq(2016) & (rows.index % 4 == 0), "depth_team"] = "LA"
+    rows.loc[rows["prediction_season"].eq(2017) & (rows.index % 4 == 0), "depth_team"] = "LAC"
+    rows.loc[rows["prediction_season"].eq(2020) & (rows.index % 4 == 0), "depth_team"] = "LV"
+    predictor = PredictorDefinition(
+        "depth_team", "categorical", "cluster_team", True, reference_level="CIN",
+    )
+
+    result = incremental_validation(
+        rows,
+        PRIMARY_TARGETS[0],
+        predictor,
+        governed_categorical_levels=("BUF", "CIN", "LA", "LAC", "LV"),
+    )
+
+    assert result.validation_events == (
+        (2016, "governed_level_unseen_in_training", ("LA",)),
+        (2017, "governed_level_unseen_in_training", ("LAC",)),
+        (2020, "governed_level_unseen_in_training", ("LV",)),
+    )
+    training = rows.loc[rows["prediction_season"].between(2010, 2015)]
+    validation = rows.loc[rows["prediction_season"].eq(2016)]
+    _, schema = _design(
+        training,
+        predictor,
+        governed_categorical_levels=("BUF", "CIN", "LA", "LAC", "LV"),
+    )
+    validation_design, _ = _design(validation, predictor, schema)
+    assert not validation_design.loc[
+        validation["depth_team"].eq("LA"), list(schema.predictor_columns)
+    ].to_numpy().any()
+
+
+def test_incremental_validation_rejects_category_outside_governed_discovery_set():
+    rows = _synthetic_rows()
+    rows["depth_team"] = np.where(rows.index % 2 == 0, "CIN", "BUF")
+    rows.loc[rows["prediction_season"].eq(2016) & (rows.index % 4 == 0), "depth_team"] = "MALFORMED"
+    predictor = PredictorDefinition(
+        "depth_team", "categorical", "cluster_team", True, reference_level="CIN",
+    )
+
+    with pytest.raises(ValueError, match="outside governed discovery set.*MALFORMED"):
+        incremental_validation(
+            rows,
+            PRIMARY_TARGETS[0],
+            predictor,
+            governed_categorical_levels=("BUF", "CIN", "LA", "LAC", "LV"),
+        )
 
 
 def test_run_rejects_holdout_before_reading_outcomes():
