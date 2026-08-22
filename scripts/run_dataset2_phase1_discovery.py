@@ -54,7 +54,7 @@ DISCOVERY_CSV_CHUNK_SIZE = 10_000
 GOVERNED_PREFLIGHT_COUNTS = {
     "lwi": {"fit": 142, "excluded_non_estimable": 1},
     "star": {"fit": 143, "excluded_non_estimable": 0},
-    "strict_bust": {"fit": 106, "excluded_non_estimable": 37},
+    "strict_bust": {"fit": 105, "excluded_non_estimable": 38},
 }
 
 
@@ -151,9 +151,16 @@ def run_preflighted_phase1(rows, predictors, whitelist, **kwargs):
 
 
 def preflight_ledger_frame(preflight_ledger) -> pd.DataFrame:
-    return pd.DataFrame([asdict(value) for value in preflight_ledger]).sort_values(
-        ["family", "cluster_id", "predictor_column"], kind="mergesort",
-    )
+    frame = pd.DataFrame([asdict(value) for value in preflight_ledger])
+    for column in (
+        "categorical_contrasts_below_bootstrap_threshold",
+        "categorical_contrast_player_cluster_support",
+        "categorical_contrast_bootstrap_capable_draws",
+    ):
+        frame[column] = frame[column].map(
+            lambda value: stable_json(value) if value is not None else None,
+        )
+    return frame.sort_values(["family", "cluster_id", "predictor_column"], kind="mergesort")
 
 
 def preflight_counts_by_family(preflight_ledger) -> dict[str, dict[str, int]]:

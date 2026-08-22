@@ -1,5 +1,7 @@
 """Synthetic-only safeguards for the governed Phase 1 discovery entry point."""
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -203,6 +205,40 @@ def test_entrypoint_persists_preflight_before_runner_and_verifies_identity(monke
     assert strict["bootstrap_target_signal_attempted_draws"] == 2000
 
 
+def test_entrypoint_persists_categorical_bootstrap_feasibility_fields(monkeypatch, tmp_path):
+    n = 220
+    rows = _analysis_rows([2010 + (i % 11) for i in range(n)])
+    rows["trait"] = [
+        "rare" if i < 2 else ("low" if i % 2 == 0 else "middle") for i in range(n)
+    ]
+    predictor = PredictorDefinition("trait", "categorical", "9", True, reference_level="low")
+    ledger = preflight_phase1_estimability(rows, [predictor], ["trait"])
+    ledger_path = tmp_path / "checkpoints" / "preflight_ledger.csv"
+
+    monkeypatch.setattr(
+        entrypoint, "run_phase1",
+        lambda *_args, **_kwargs: type("Package", (), {"preflight_ledger": ledger})(),
+    )
+    entrypoint.run_preflighted_phase1(
+        rows, [predictor], ["trait"], preflight_ledger_path=ledger_path,
+    )
+
+    persisted = pd.read_csv(ledger_path)
+    star = persisted.loc[persisted["family"].eq("star")].iloc[0]
+    assert star["disposition"] == "excluded_non_estimable"
+    assert star["governed_reason"] == "categorical_predictor_cluster_bootstrap_infeasible"
+    assert json.loads(star["categorical_contrasts_below_bootstrap_threshold"]) == ["trait_rare"]
+    support = dict(json.loads(star["categorical_contrast_player_cluster_support"]))
+    capable = dict(json.loads(star["categorical_contrast_bootstrap_capable_draws"]))
+    assert support["trait_rare"] == 2
+    assert capable["trait_rare"] < 1980
+    assert star["categorical_contrast_bootstrap_attempted_draws"] == 2000
+
+    lwi = persisted.loc[persisted["family"].eq("lwi")].iloc[0]
+    assert lwi["disposition"] == "fit"
+    assert pd.isna(lwi["categorical_contrasts_below_bootstrap_threshold"])
+
+
 def test_entrypoint_rejects_final_ledger_identity_mismatch(monkeypatch, tmp_path):
     rows = _analysis_rows([2010 + (i % 11) for i in range(220)])
     rows["trait"] = np.arange(len(rows), dtype=float)
@@ -234,7 +270,7 @@ def test_entrypoint_persists_ledger_before_governed_count_failure(monkeypatch, t
             expected_preflight_counts={
                 "lwi": {"fit": 142, "excluded_non_estimable": 1},
                 "star": {"fit": 143, "excluded_non_estimable": 0},
-                "strict_bust": {"fit": 106, "excluded_non_estimable": 37},
+                "strict_bust": {"fit": 105, "excluded_non_estimable": 38},
             },
         )
     assert ledger_path.is_file()

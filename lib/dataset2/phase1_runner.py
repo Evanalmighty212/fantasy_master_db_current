@@ -135,6 +135,10 @@ class PreflightRecord:
     binary_class_1_player_cluster_support: int | None = None
     bootstrap_target_signal_capable_draws: int | None = None
     bootstrap_target_signal_attempted_draws: int | None = None
+    categorical_contrasts_below_bootstrap_threshold: tuple[str, ...] | None = None
+    categorical_contrast_player_cluster_support: tuple[tuple[str, int], ...] | None = None
+    categorical_contrast_bootstrap_capable_draws: tuple[tuple[str, int], ...] | None = None
+    categorical_contrast_bootstrap_attempted_draws: int | None = None
 
 
 @dataclass(frozen=True)
@@ -515,6 +519,49 @@ def _binary_target_bootstrap_feasibility(
     return class_support[0], class_support[1], capable, replicates
 
 
+def _categorical_predictor_bootstrap_feasibility(
+    rows: pd.DataFrame,
+    predictor: PredictorDefinition,
+    contrast_columns: tuple[str, ...],
+    *,
+    replicates: int = DATASET2_FIRTH_BOOTSTRAP_REPLICATES,
+    seed: int = DATASET2_PHASE1_RANDOM_SEED,
+) -> tuple[dict[str, int], dict[str, int], int]:
+    """Count exact frozen player-cluster draws retaining every tested contrast.
+
+    Mirrors the target-signal feasibility check but for a categorical
+    predictor's own contrasts: a governed level with too few supporting
+    player clusters can vanish from some resamples even though the full
+    discovery population has ample rows for it, making the bootstrap for
+    the whole (family, predictor) pair structurally unable to meet the
+    frozen 99% success requirement.
+    """
+    levels = rows[predictor.column].astype(str).to_numpy()
+    player_values = rows["player_id"].astype("object").to_numpy()
+    players = pd.Index(pd.Series(player_values, dtype="object").dropna().unique())
+    if players.empty:
+        raise ValueError("bootstrap predictor-contrast feasibility requires player clusters")
+    prefix = f"{predictor.column}_"
+    level_by_column = {column: column[len(prefix):] for column in contrast_columns}
+    presence = np.zeros((len(players), len(contrast_columns)), dtype=bool)
+    for row_index, player in enumerate(players):
+        observed = set(levels[player_values == player])
+        for column_index, column in enumerate(contrast_columns):
+            presence[row_index, column_index] = level_by_column[column] in observed
+    player_cluster_support = {
+        column: int(presence[:, index].sum()) for index, column in enumerate(contrast_columns)
+    }
+    rng = np.random.default_rng(seed)
+    capable_draws = {column: 0 for column in contrast_columns}
+    for _ in range(replicates):
+        draws = rng.choice(len(players), size=len(players), replace=True)
+        present_in_resample = presence[draws].any(axis=0)
+        for column_index, column in enumerate(contrast_columns):
+            if present_in_resample[column_index]:
+                capable_draws[column] += 1
+    return player_cluster_support, capable_draws, replicates
+
+
 def _design(
     rows: pd.DataFrame,
     predictor: PredictorDefinition,
@@ -554,6 +601,9 @@ def preflight_phase1_estimability(
     _validated_seasons(rows)
     resolved, _ = resolve_categorical_references(rows, predictors)
     validate_predictor_definitions(resolved, predictor_whitelist)
+    required_capable = int(np.ceil(
+        DATASET2_FIRTH_BOOTSTRAP_MIN_SUCCESS_RATE * DATASET2_FIRTH_BOOTSTRAP_REPLICATES
+    ))
     records: list[PreflightRecord] = []
     failures: list[str] = []
     for predictor in resolved:
@@ -634,10 +684,6 @@ def preflight_phase1_estimability(
                         *feasibility,
                     ))
                     continue
-                required_capable = int(np.ceil(
-                    DATASET2_FIRTH_BOOTSTRAP_MIN_SUCCESS_RATE
-                    * DATASET2_FIRTH_BOOTSTRAP_REPLICATES
-                ))
                 if (
                     target.family == "strict_bust"
                     and feasibility[2] is not None
@@ -652,11 +698,36 @@ def preflight_phase1_estimability(
                         *feasibility,
                     ))
                     continue
+                categorical_feasibility = (None, None, None, None)
+                if predictor.kind == "categorical" and target.binary:
+                    contrast_columns = tuple(predictor_design.columns)
+                    support, capable, attempted = _categorical_predictor_bootstrap_feasibility(
+                        fit_rows, predictor, contrast_columns,
+                    )
+                    below_threshold = tuple(
+                        column for column in contrast_columns if capable[column] < required_capable
+                    )
+                    categorical_feasibility = (
+                        below_threshold,
+                        tuple(sorted(support.items())),
+                        tuple(sorted(capable.items())),
+                        attempted,
+                    )
+                    if below_threshold:
+                        records.append(PreflightRecord(
+                            target.family, predictor.column, predictor.cluster_id, predictor.kind,
+                            len(target_rows), len(fit_rows), distinct,
+                            int(fit_rows["prediction_season"].nunique()),
+                            "excluded_non_estimable",
+                            "categorical_predictor_cluster_bootstrap_infeasible",
+                            *feasibility, *categorical_feasibility,
+                        ))
+                        continue
                 records.append(PreflightRecord(
                     target.family, predictor.column, predictor.cluster_id, predictor.kind,
                     len(target_rows), len(fit_rows), distinct,
                     int(fit_rows["prediction_season"].nunique()), "fit", None,
-                    *feasibility,
+                    *feasibility, *categorical_feasibility,
                 ))
             except (TypeError, ValueError) as exc:
                 failures.append(f"{context}: {exc}")

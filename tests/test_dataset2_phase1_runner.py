@@ -19,6 +19,7 @@ from lib.dataset2.phase1_runner import (
     _fit_firth,
     _fit_lwi,
     _binary_target_bootstrap_feasibility,
+    _categorical_predictor_bootstrap_feasibility,
     _firth_point_estimates,
     _firth_termination_diagnostics,
     _prepare_firth_bootstrap_design,
@@ -750,6 +751,139 @@ def test_strict_bust_frozen_draw_gate_uses_exact_99_percent_boundary(
     assert strict.governed_reason == (
         None if disposition == "fit" else "binary_target_cluster_bootstrap_infeasible"
     )
+
+
+@pytest.mark.parametrize(
+    ("capable", "disposition"),
+    [(1980, "fit"), (1979, "excluded_non_estimable")],
+)
+def test_categorical_predictor_contrast_gate_uses_exact_99_percent_boundary(
+    monkeypatch, capable, disposition,
+):
+    rows = _synthetic_rows()
+    predictor = _predictor("categorical")
+    monkeypatch.setattr(
+        "lib.dataset2.phase1_runner._categorical_predictor_bootstrap_feasibility",
+        lambda *_args, **_kwargs: (
+            {"trait_category_high": 30, "trait_category_middle": 32},
+            {"trait_category_high": capable, "trait_category_middle": 2000},
+            2000,
+        ),
+    )
+    star = next(
+        record for record in preflight_phase1_estimability(
+            rows, [predictor], [predictor.column],
+        )
+        if record.family == "star"
+    )
+    assert star.disposition == disposition
+    assert star.governed_reason == (
+        None if disposition == "fit" else "categorical_predictor_cluster_bootstrap_infeasible"
+    )
+    if disposition == "excluded_non_estimable":
+        assert star.categorical_contrasts_below_bootstrap_threshold == ("trait_category_high",)
+        assert star.categorical_contrast_bootstrap_capable_draws == (
+            ("trait_category_high", 1979), ("trait_category_middle", 2000),
+        )
+        assert star.categorical_contrast_player_cluster_support == (
+            ("trait_category_high", 30), ("trait_category_middle", 32),
+        )
+        assert star.categorical_contrast_bootstrap_attempted_draws == 2000
+    else:
+        assert star.categorical_contrasts_below_bootstrap_threshold == ()
+
+
+def _rows_with_sparse_categorical_contrast():
+    """A 'rare' team-style level supported by only 2 of 50 player clusters.
+
+    Mirrors the real fam10_depth_chart_team/LV structure closely enough
+    that the exact frozen 2,000-draw sequence genuinely drops below the
+    1,980-capable-draw threshold, not a mocked outcome.
+    """
+    rows = []
+    rng = np.random.default_rng(20260808)
+    for player_number in range(50):
+        level = "rare" if player_number < 2 else ("low" if player_number % 2 == 0 else "middle")
+        for season in range(2010, 2021):
+            rows.append({
+                "prediction_season": season,
+                "player_id": f"player_{player_number:03d}",
+                "position": ("QB", "RB", "WR", "TE")[player_number % 4],
+                "preseason_market_status": "ordinary_market",
+                "adp_round": 1 + player_number % 15,
+                "trait_category": level,
+                "lwi_score": float(player_number % 5) + rng.normal(scale=0.1),
+                "star_by_value_label": int(player_number % 6 == 0),
+                "star_outcome_eligible": True,
+                "bust_strict_below_replacement_label": int(player_number % 7 == 0),
+                "bust_strict_below_replacement_eligible": True,
+            })
+    return pd.DataFrame(rows)
+
+
+def test_preflight_excludes_categorical_predictor_with_sparse_contrast_support():
+    rows = _rows_with_sparse_categorical_contrast()
+    predictor = PredictorDefinition(
+        "trait_category", "categorical", "cluster_001", True, reference_level="low",
+    )
+
+    records = preflight_phase1_estimability(rows, [predictor], [predictor.column])
+    for family in ("star", "strict_bust"):
+        record = next(r for r in records if r.family == family)
+        assert record.disposition == "excluded_non_estimable"
+        assert record.governed_reason == "categorical_predictor_cluster_bootstrap_infeasible"
+        assert record.categorical_contrasts_below_bootstrap_threshold == (
+            "trait_category_rare",
+        )
+        support = dict(record.categorical_contrast_player_cluster_support)
+        capable = dict(record.categorical_contrast_bootstrap_capable_draws)
+        assert support["trait_category_rare"] == 2
+        assert capable["trait_category_rare"] < 1980
+        assert capable["trait_category_middle"] == 2000
+        assert record.categorical_contrast_bootstrap_attempted_draws == 2000
+
+    # LWI never bootstraps, so the same sparse level does not exclude it.
+    lwi_record = next(r for r in records if r.family == "lwi")
+    assert lwi_record.disposition == "fit"
+    assert lwi_record.categorical_contrasts_below_bootstrap_threshold is None
+
+
+def test_preflight_keeps_categorical_predictor_with_ample_contrast_support():
+    rows = _synthetic_rows()
+    predictor = _predictor("categorical")
+
+    records = preflight_phase1_estimability(rows, [predictor], [predictor.column])
+    for family in ("star", "strict_bust"):
+        record = next(r for r in records if r.family == family)
+        assert record.disposition == "fit"
+        assert record.governed_reason is None
+        assert record.categorical_contrasts_below_bootstrap_threshold == ()
+        capable = dict(record.categorical_contrast_bootstrap_capable_draws)
+        assert all(value == 2000 for value in capable.values())
+
+
+def test_categorical_bootstrap_infeasibility_excludes_pair_from_all_result_outputs():
+    rows = _rows_with_sparse_categorical_contrast()
+    predictor = PredictorDefinition(
+        "trait_category", "categorical", "cluster_001", True, reference_level="low",
+    )
+
+    package = run_phase1(
+        rows, [predictor], [predictor.column], bootstrap_replicates=5,
+        minimum_success_rate=0.8, synthetic_test_mode=True,
+    )
+
+    assert set(package.primary_results["family"]) == {"lwi"}
+    assert {value.family for value in package.incremental_results} == {"lwi"}
+    assert {value.family for value in package.robustness_results} == {"lwi"}
+    excluded = {
+        record.family: record.governed_reason
+        for record in package.preflight_ledger if record.disposition == "excluded_non_estimable"
+    }
+    assert excluded == {
+        "star": "categorical_predictor_cluster_bootstrap_infeasible",
+        "strict_bust": "categorical_predictor_cluster_bootstrap_infeasible",
+    }
 
 
 def _rows_with_season_confined_categorical_level():
