@@ -201,7 +201,7 @@ class RobustnessResult:
     family: Family
     predictor_column: str
     full_estimates: tuple[float, ...]
-    leave_one_season_out_estimates: tuple[tuple[int, tuple[float, ...]], ...]
+    leave_one_season_out_estimates: tuple[tuple[int, tuple[float | None, ...]], ...]
     direction_status: tuple[str, ...]
 
 
@@ -1042,14 +1042,23 @@ def _fit_firth(
 
 def _firth_point_estimates(
     rows: pd.DataFrame, target: TargetDefinition, predictor: PredictorDefinition,
-) -> tuple[float, ...]:
-    """Convergence-checked point refit for descriptive LOSO robustness."""
+) -> dict[str, float]:
+    """Convergence-checked point refit for descriptive LOSO robustness.
+
+    Keyed by this fold's own contrast names: a leave-one-season-out fold may
+    omit a governed categorical level entirely absent from its rows, and the
+    caller must align by name rather than assume every fold's contrast count
+    matches the full-population fit.
+    """
     design, schema = _design(rows, predictor)
     X = add_constant(design, has_constant="add")
     fitted = fit_firth_logistic(X.to_numpy(float), rows[target.target_column].astype(float).to_numpy())
     if not fitted.converged:
         raise RuntimeError("leave-one-season-out Firth fit failed to converge")
-    return tuple(float(np.exp(fitted.beta[list(X.columns).index(column)])) for column in schema.predictor_columns)
+    return {
+        column: float(np.exp(fitted.beta[list(X.columns).index(column)]))
+        for column in schema.predictor_columns
+    }
 
 
 def _predictions_for_fold(
@@ -1258,18 +1267,33 @@ def run_phase1(
                 governed_categorical_levels=governed_categorical_levels.get(predictor.column),
             ))
             # Literal leave-one-season-out estimates; no unapproved numeric tier.
+            # A dropped season can remove a categorical predictor's only rows for
+            # one governed level; that fold's contrast is unavailable (None), not
+            # zero, and is excluded from the direction-consistency vote below.
             fold_estimates = []
             for season in sorted(fit_rows["prediction_season"].unique()):
                 subset = fit_rows[fit_rows["prediction_season"] != season]
-                estimates = _fit_lwi(subset, target, predictor, outcome_sd).estimates if target.family == "lwi" else _firth_point_estimates(
-                    subset, target, predictor,
-                )
-                fold_estimates.append((int(season), estimates))
+                if target.family == "lwi":
+                    fold_result = _fit_lwi(subset, target, predictor, outcome_sd)
+                    fold_values_by_name = dict(zip(fold_result.contrast_names, fold_result.estimates))
+                else:
+                    fold_values_by_name = _firth_point_estimates(subset, target, predictor)
+                aligned = tuple(fold_values_by_name.get(name) for name in result.contrast_names)
+                fold_estimates.append((int(season), aligned))
             statuses = []
             for index, full in enumerate(result.estimates):
                 null = 0.0 if target.family == "lwi" else 1.0
-                signs = [np.sign(values[index] - null) == np.sign(full - null) for _, values in fold_estimates]
-                statuses.append("all_folds_same_direction" if all(signs) else "mixed_fold_directions")
+                votes = [
+                    np.sign(values[index] - null) == np.sign(full - null)
+                    for _, values in fold_estimates
+                    if values[index] is not None
+                ]
+                if not votes:
+                    statuses.append("no_estimable_folds")
+                elif all(votes):
+                    statuses.append("all_folds_same_direction")
+                else:
+                    statuses.append("mixed_fold_directions")
             robustness.append(RobustnessResult(target.family, predictor.column, result.estimates, tuple(fold_estimates), tuple(statuses)))
     return Phase1Package(
         assemble_results(model_results),

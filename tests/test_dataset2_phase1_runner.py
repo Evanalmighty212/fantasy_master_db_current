@@ -19,6 +19,7 @@ from lib.dataset2.phase1_runner import (
     _fit_firth,
     _fit_lwi,
     _binary_target_bootstrap_feasibility,
+    _firth_point_estimates,
     _firth_termination_diagnostics,
     _prepare_firth_bootstrap_design,
     _prepare_firth_bootstrap_matrix,
@@ -749,6 +750,128 @@ def test_strict_bust_frozen_draw_gate_uses_exact_99_percent_boundary(
     assert strict.governed_reason == (
         None if disposition == "fit" else "binary_target_cluster_bootstrap_infeasible"
     )
+
+
+def _rows_with_season_confined_categorical_level():
+    """A categorical level ('high') exists only in the final discovery season.
+
+    Mirrors a real governed-team predictor whose level first appears in the
+    last discovery season (e.g. a franchise relocation): omitting that one
+    season in leave-one-season-out robustness removes every row carrying it.
+    """
+    rows = []
+    rng = np.random.default_rng(20260808)
+    for season in range(2010, 2021):
+        for player_number in range(36):
+            trait = rng.normal() + 0.03 * (season - 2010)
+            if season == 2020 and player_number % 4 == 0:
+                category = "high"
+            else:
+                category = "low" if player_number % 2 == 0 else "middle"
+            offset = 6.0 if category == "high" else 0.0
+            rows.append({
+                "prediction_season": season,
+                "player_id": f"player_{player_number:02d}",
+                "position": ("QB", "RB", "WR", "TE")[player_number % 4],
+                "preseason_market_status": "ordinary_market",
+                "adp_round": 1 + player_number % 15,
+                "trait_category": category,
+                "lwi_score": offset + rng.normal(scale=0.4),
+                # Constant so star/strict_bust are excluded at preflight
+                # (binary_target_no_discovery_contrast) rather than left to an
+                # unrelated Firth convergence outcome on a deliberately sparse
+                # categorical cell; this test targets the LWI robustness path.
+                "star_by_value_label": 0,
+                "star_outcome_eligible": True,
+                "bust_strict_below_replacement_label": 0,
+                "bust_strict_below_replacement_eligible": True,
+            })
+    return pd.DataFrame(rows)
+
+
+def test_robustness_marks_season_confined_categorical_contrast_unavailable_not_zero():
+    rows = _rows_with_season_confined_categorical_level()
+    predictor = PredictorDefinition(
+        "trait_category", "categorical", "cluster_001", True, reference_level="low",
+    )
+
+    package = run_phase1(
+        rows, [predictor], [predictor.column], bootstrap_replicates=5,
+        minimum_success_rate=0.8, synthetic_test_mode=True,
+    )
+
+    lwi_row = package.primary_results.loc[package.primary_results["family"].eq("lwi")].iloc[0]
+    high_index = list(lwi_row["contrast_names"]).index("trait_category_high")
+    lwi_robustness = next(r for r in package.robustness_results if r.family == "lwi")
+    fold_by_season = dict(lwi_robustness.leave_one_season_out_estimates)
+
+    assert fold_by_season[2020][high_index] is None
+    assert all(
+        fold_by_season[season][high_index] is not None
+        for season in fold_by_season if season != 2020
+    )
+
+    full = lwi_robustness.full_estimates[high_index]
+    available_signs = [
+        np.sign(values[high_index] - 0.0) == np.sign(full - 0.0)
+        for season, values in lwi_robustness.leave_one_season_out_estimates
+        if values[high_index] is not None
+    ]
+    assert lwi_robustness.direction_status[high_index] == (
+        "all_folds_same_direction" if all(available_signs) else "mixed_fold_directions"
+    )
+    # Proves the fix is not equivalent to treating the unavailable fold as
+    # zero: substituting 0.0 for the omitted season would flip this vote.
+    hypothetical_zero_signs = [
+        np.sign((values[high_index] if values[high_index] is not None else 0.0) - 0.0)
+        == np.sign(full - 0.0)
+        for _, values in lwi_robustness.leave_one_season_out_estimates
+    ]
+    assert not all(hypothetical_zero_signs)
+    assert lwi_robustness.direction_status[high_index] == "all_folds_same_direction"
+    # star/strict_bust are excluded upstream (not silently skipped by a crash).
+    excluded = {
+        record.family: record.governed_reason
+        for record in package.preflight_ledger if record.disposition == "excluded_non_estimable"
+    }
+    assert excluded == {
+        "star": "binary_target_no_discovery_contrast",
+        "strict_bust": "binary_target_no_discovery_contrast",
+    }
+
+
+def test_firth_point_estimates_omits_a_level_missing_from_the_fold_without_crashing():
+    rows = _synthetic_rows()
+    predictor = PredictorDefinition(
+        "trait_category", "categorical", "cluster_001", True, reference_level="low",
+    )
+    target = PRIMARY_TARGETS[1]
+    fit_rows = discovery_fit_rows(rows, target, predictor.column)
+    full_estimates = _firth_point_estimates(fit_rows, target, predictor)
+    assert "trait_category_high" in full_estimates
+
+    fold_without_high = fit_rows.loc[fit_rows["trait_category"] != "high"]
+    fold_estimates = _firth_point_estimates(fold_without_high, target, predictor)
+
+    assert "trait_category_high" not in fold_estimates
+    assert set(fold_estimates) == set(full_estimates) - {"trait_category_high"}
+    assert all(np.isfinite(value) and value > 0 for value in fold_estimates.values())
+
+
+def test_firth_point_estimates_returns_odds_ratios_keyed_by_contrast_name():
+    rows = _synthetic_rows()
+    predictor = PredictorDefinition(
+        "trait_category", "categorical", "cluster_001", True, reference_level="low",
+    )
+    target = PRIMARY_TARGETS[1]
+    fit_rows = discovery_fit_rows(rows, target, predictor.column)
+    _, schema = _design(fit_rows, predictor)
+
+    estimates = _firth_point_estimates(fit_rows, target, predictor)
+
+    assert isinstance(estimates, dict)
+    assert set(estimates) == set(schema.predictor_columns)
+    assert all(np.isfinite(value) and value > 0 for value in estimates.values())
 
 
 def test_phase1_runner_module_has_no_artifact_loader_or_repository_path():
