@@ -351,6 +351,100 @@ pattern-hunting that might not connect to a well-defined target.
 
 ---
 
+## 8. Core inputs, leakage, team-change handling, and feature strategy
+
+**Methodology status: APPROVED by Evan (2026-08-23). Implementation
+status: NOT YET IMPLEMENTED.**
+
+These decisions govern how Dataset 3's eventual feature set is built
+from Dataset 2's confirmed traits (see
+`research/dataset2/DATASET2_PHASE3_SYNTHESIS_2026_08.md` for the
+six-theme organization of what Phase 1 and Phase 2 actually
+validated). They do not select the target, horizon, metric, or split
+-- those remain per sections 1-6 above -- and they do not authorize
+building Dataset 3 itself.
+
+### 8.1 Core inputs
+
+- The core model excludes the two Phase 2 holdout-**contradicted** LWI
+  traits (`fam9_active_final_4_rb_receiving_opportunity`,
+  `fam9_team_final_4_wr_snap_team_offense_total`) and the two Phase 1
+  discovery-**excluded unstable** Star team-identity traits
+  (`fam10_depth_chart_team`, `fam4_nfl_draft_team`) -- see
+  `research/dataset2/DATASET2_PHASE2_METHODOLOGY_FREEZE_2026_08.md`
+  section 1 and `DATASET2_PHASE3_SYNTHESIS_2026_08.md` section 2 for
+  why each was set aside. None of the four may be folded into the core
+  model under any other name or transformation.
+- The two contradicted traits may be evaluated **only** inside a
+  separately labeled sensitivity model, reported and interpreted apart
+  from the core model's results -- never silently merged into it, and
+  never presented as if the core model's headline numbers include
+  them.
+
+### 8.2 Leakage
+
+- Every feature must be available by the relevant preseason/draft
+  cutoff for the season being predicted -- consistent with section 3's
+  preseason-only horizon and with the leakage rule already governing
+  Dataset 2 trait admission (`docs/LEAGUE_WINNER_TRAITS_SPEC.md`,
+  "every input dated before that season's Week 1").
+- The model must never use information that only becomes available
+  later in or after the season being predicted, even where doing so
+  would improve retrospective/backtested performance. Retrospective
+  lift from a leaking feature is not evidence for keeping it; it is
+  evidence the feature must be removed or re-derived from an
+  earlier-available source.
+
+### 8.3 Players changing teams
+
+- The feature set includes a team-change indicator (the Dataset 2
+  Theme F association, `fam44_prior_changed_team`).
+- Neither the player's old team's context nor the new team's context
+  is assumed to be the correct context to attach to a team-change
+  indicator -- this mirrors the explicit caution already recorded in
+  `DATASET2_PHASE3_SYNTHESIS_2026_08.md` section 5, prerequisite 3,
+  which left this exact question open.
+- Old-team context, new-team context, and any team-change interaction
+  term are each separately tested Dataset 3 questions, evaluated on
+  their own merits during feature/model development -- not resolved by
+  this document, and not assumed correct by default in either
+  direction.
+
+### 8.4 Feature strategy
+
+- Feature engineering starts from the broad set of Dataset 2's
+  individually confirmed inputs, where available for a given
+  player-season (the 30 confirmed traits summarized by theme in
+  `DATASET2_PHASE3_SYNTHESIS_2026_08.md` section 1, minus the
+  exclusions in section 8.1 above).
+- Correlated/redundant features (in particular the multiple final-4
+  and final-6-game variants within a theme -- see the synthesis
+  document's Themes C and E) are handled through regularization (e.g.,
+  an L1/L2-penalized or otherwise shrinkage-based model), **not** by
+  manually hand-selecting a single "winning" final-4-or-final-6 variant
+  per theme ahead of time. Manual variant selection would itself be an
+  untested, unreviewed modeling choice; letting regularization handle
+  the correlation keeps that choice inside the model-selection
+  process, where it can be evaluated.
+- A small number of predeclared structural terms are allowed in
+  addition to the regularized Dataset 2 inputs -- specifically
+  rookie-specific inputs (for player-seasons with no season N-1 row,
+  where every Dataset 2 "prior season" trait is structurally null, not
+  a real zero) and team-change terms (section 8.3). These are
+  predeclared, not selected after seeing results, and their inclusion
+  does not exempt them from the leakage rule in section 8.2.
+- Regularization strength and other tuning choices are selected only
+  within rolling historical training windows (consistent with section
+  6's time-based validation protocol). The already-inspected 2021-2025
+  Dataset 2 Phase 2 holdout window must not be used to repeatedly
+  choose or re-tune the model -- doing so would convert that window
+  into a second training/validation set and destroy the purpose it
+  already served for Dataset 2, per the holdout-protection principle in
+  `research/dataset2/DATASET2_TRAIT_ANALYSIS_PIPELINE_PROPOSAL_2026_07.md`
+  section 10.
+
+---
+
 ## Open Dataset 3 decisions (not blockers for Dataset 2 Phase 1)
 
 1. Classification (proposed) vs. regression vs. ordinal/multi-tier
@@ -375,3 +469,6 @@ pattern-hunting that might not connect to a well-defined target.
    separate purpose; its tentative split remains unresolved and must
    be finalized before Dataset 3 model development or evaluation, not
    before Dataset 2 Phase 1.
+6. ~~Core-input exclusions, leakage restatement, team-change handling,
+   and feature/regularization strategy -- previously undecided.~~
+   **RESOLVED 2026-08-23**: see section 8.
