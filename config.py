@@ -890,6 +890,22 @@ DATASET2_PHASE1_SOURCE_PRIMARY_RESULTS_SHA256 = (
     "006d35d7c8b830ab6e1a8cffde6c92c57cfe6bbd741b0798c0a803e33765edb4"
 )
 
+# Discovery-window (2010-2020) LWI outcome standard deviation, frozen so
+# a Phase 2 holdout LWI refit can be expressed as an "adjusted effect"
+# (raw beta / this constant) directly comparable to the pinned Phase 1
+# discovery adjusted_effects column -- the same normalization
+# lib/dataset2/phase1_runner.py's run_phase1() computed internally for
+# the frozen Phase 1 package identified by DATASET2_PHASE1_SOURCE_GIT_HEAD.
+# Computed once, now, from discovery-season (2010-2020) lwi_score rows
+# only via data/exports/dataset2_analysis_view.csv (std(ddof=1) over
+# target-eligible rows) -- never from 2021-2025 holdout rows -- and
+# verified to reproduce that package's own raw/adjusted effect ratio
+# exactly (1.4189610420100425 / 0.07737765844558527 for
+# fam9_team_final_6_active_games). Recomputing this at Phase 2 runtime
+# is unnecessary and is deliberately not done; it is pinned here instead,
+# exactly like the source package identity above.
+DATASET2_PHASE2_DISCOVERY_LWI_OUTCOME_SD = 18.338123309946198
+
 
 def validate_dataset2_phase2_config():
     """Fail loudly if the frozen Phase 2 holdout-confirmation rule drifts."""
@@ -906,6 +922,8 @@ def validate_dataset2_phase2_config():
         "006d35d7c8b830ab6e1a8cffde6c92c57cfe6bbd741b0798c0a803e33765edb4"
     ):
         errors.append("Dataset 2 Phase 2 source Phase 1 primary_results.csv sha256 must remain the frozen value")
+    if DATASET2_PHASE2_DISCOVERY_LWI_OUTCOME_SD != 18.338123309946198:
+        errors.append("Dataset 2 Phase 2 pinned discovery LWI outcome SD must remain the frozen value")
     if errors:
         raise ValueError("Invalid Dataset 2 Phase 2 configuration:\n  - " + "\n  - ".join(errors))
 
