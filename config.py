@@ -865,6 +865,50 @@ def validate_dataset2_phase1_config():
     if errors:
         raise ValueError("Invalid Dataset 2 Phase 1 configuration:\n  - " + "\n  - ".join(errors))
 
+# Dataset 2 Phase 2 (protected 2021-2025 holdout confirmation) -- frozen
+# per research/dataset2/DATASET2_PHASE2_METHODOLOGY_FREEZE_2026_08.md,
+# using only the completed Phase 1 discovery package. Changes no
+# discovery-side Phase 1 methodology; defines only how a Phase-1-
+# supported trait's holdout point estimate is judged. The candidate
+# list and confirmation-rule logic live in
+# lib/dataset2/phase2_confirmation.py.
+DATASET2_PHASE2_METHODOLOGY_VERSION = "dataset2_phase2_holdout_confirmation_v1_2026_08"
+DATASET2_HOLDOUT_MAGNITUDE_RATIO_MIN = 1.0 / 3.0
+DATASET2_HOLDOUT_MAGNITUDE_RATIO_MAX = 3.0
+
+# Identity of the exact Phase 1 discovery package that
+# PHASE2_CANDIDATE_TRAITS (lib/dataset2/phase2_confirmation.py) was
+# derived from -- the git HEAD that produced it, and the sha256 of its
+# primary_results.csv (from that run's outputs.sha256 manifest, itself
+# verified against the file at freeze time). A future Phase 2 runner
+# must call verify_phase1_source_package() with the git HEAD and
+# primary_results.csv checksum of whatever Phase 1 package it is
+# pointed at, and refuse to proceed on any mismatch -- the candidate
+# list is not guaranteed to reflect a different package's findings.
+DATASET2_PHASE1_SOURCE_GIT_HEAD = "0e6a67014901456b15341eff9ab06bc563cbce74"
+DATASET2_PHASE1_SOURCE_PRIMARY_RESULTS_SHA256 = (
+    "006d35d7c8b830ab6e1a8cffde6c92c57cfe6bbd741b0798c0a803e33765edb4"
+)
+
+
+def validate_dataset2_phase2_config():
+    """Fail loudly if the frozen Phase 2 holdout-confirmation rule drifts."""
+    errors = []
+    if DATASET2_HOLDOUT_MAGNITUDE_RATIO_MIN != 1.0 / 3.0:
+        errors.append("Dataset 2 Phase 2 holdout magnitude ratio floor must remain the exact 1/3")
+    if DATASET2_HOLDOUT_MAGNITUDE_RATIO_MAX != 3.0:
+        errors.append("Dataset 2 Phase 2 holdout magnitude ratio ceiling must remain 3.0")
+    if DATASET2_HOLDOUT_MAGNITUDE_RATIO_MIN >= DATASET2_HOLDOUT_MAGNITUDE_RATIO_MAX:
+        errors.append("Dataset 2 Phase 2 holdout magnitude ratio floor must be below its ceiling")
+    if DATASET2_PHASE1_SOURCE_GIT_HEAD != "0e6a67014901456b15341eff9ab06bc563cbce74":
+        errors.append("Dataset 2 Phase 2 source Phase 1 git HEAD must remain 0e6a67014901456b15341eff9ab06bc563cbce74")
+    if DATASET2_PHASE1_SOURCE_PRIMARY_RESULTS_SHA256 != (
+        "006d35d7c8b830ab6e1a8cffde6c92c57cfe6bbd741b0798c0a803e33765edb4"
+    ):
+        errors.append("Dataset 2 Phase 2 source Phase 1 primary_results.csv sha256 must remain the frozen value")
+    if errors:
+        raise ValueError("Invalid Dataset 2 Phase 2 configuration:\n  - " + "\n  - ".join(errors))
+
 # ADP-round buckets for Dataset 2 stratified analysis, first used
 # descriptively in research/dataset2/DATASET2_TRAIT_ROADMAP.md §3j's
 # bust-definition investigation, now the standard Dataset 2
