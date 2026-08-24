@@ -34,6 +34,8 @@ snapshot-selection concern, not touched by this change) -- see that
 module's own docstring.
 """
 
+import argparse
+import hashlib
 import sys
 from pathlib import Path
 
@@ -43,6 +45,13 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 sys.path.append(str(Path(__file__).resolve().parent))
 from lib.player_season_authority import resolved_canonical_position_population
 from lib.dataset2.canonical_predictor_table import build_canonical_predictor_table
+from lib.dataset2.common import week1_kickoff_by_team
+from lib.dataset2.future_season_spine import (
+    ROSTER_SNAPSHOT_REQUIRED_COLUMNS,
+    RosterSpineResult,
+    build_future_season_roster_spine,
+    roster_status_provenance_frame,
+)
 import nflverse_source
 
 MASTER_POPULATION_PATH = "data/master/master_historical_db_with_lwi_2006_2025.csv"
@@ -188,7 +197,207 @@ def _load_schedules() -> pd.DataFrame:
     return nflverse_source.fetch_schedules()
 
 
+# --- --live-2026-spine: opt-in governed live-2026 future-season spine ---
+#
+# Off by default. Loading any of this machinery, or touching
+# players.csv/games.csv's manifest at all, is gated behind
+# args.live_2026_spine in main() below -- the default (no-flag) build
+# path never imports or calls any of it, so it cannot change the
+# default build's behavior even by accident.
+
+LIVE_SPINE_INCLUDED_PATH = OUTPUT_DIR / "dataset2_future_season_roster_spine.csv"
+LIVE_SPINE_EXCLUDED_PATH = OUTPUT_DIR / "dataset2_future_season_roster_spine_excluded.csv"
+LIVE_SPINE_SIDECAR_PATH = OUTPUT_DIR / "dataset2_future_season_roster_status_sidecar.csv"
+LIVE_SPINE_HASH_MANIFEST_PATH = OUTPUT_DIR / "dataset2_future_season_roster_spine.sha256"
+
+
+class LiveSpineProvenanceError(RuntimeError):
+    """A live-2026 build's snapshot provenance could not be verified
+    safely -- a missing/checksum-invalid governed source, or a snapshot
+    that is not strictly before the earliest real Week 1 kickoff.
+    Always raised BEFORE any roster spine is built or any row of the
+    canonical table is touched."""
+
+
+def _earliest_week1_kickoff_utc_date(schedule_df: pd.DataFrame, season: int) -> pd.Timestamp:
+    """Earliest real per-team Week 1 REG kickoff date for `season`,
+    normalized to a timezone-AWARE UTC midnight Timestamp.
+
+    nflverse's `gameday` carries no time-of-day or timezone at all --
+    only a bare calendar-date string (confirmed directly:
+    lib.dataset2.common.week1_kickoff_by_team() parses it with a plain
+    `pd.to_datetime(row["gameday"])`, which produces a timezone-NAIVE
+    Timestamp). Calendar-date precision is therefore the most this can
+    honestly claim -- comparing at finer granularity would assert a
+    precision the source data doesn't actually have.
+    """
+    kickoffs = week1_kickoff_by_team(schedule_df, season)
+    if not kickoffs:
+        raise LiveSpineProvenanceError(
+            f"No real Week 1 REG kickoff games found in schedule data for season {season} -- "
+            "cannot verify a snapshot cutoff without at least one real game."
+        )
+    dates = []
+    for value in kickoffs.values():
+        ts = pd.Timestamp(value)
+        ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+        dates.append(ts.normalize())
+    return min(dates)
+
+
+def _verify_snapshot_before_cutoff(retrieved_at: str, earliest_kickoff_utc_date: pd.Timestamp) -> None:
+    """Fails loudly, by name (LiveSpineProvenanceError, never a bare
+    ValueError/AssertionError), unless `retrieved_at`'s own UTC
+    calendar date is strictly earlier than `earliest_kickoff_utc_date`.
+
+    Refuses to compare a timezone-naive `retrieved_at` at all --
+    guessing UTC for an unlabeled timestamp is exactly the kind of
+    silent assumption this project's leakage rule exists to prevent.
+    A snapshot dated the SAME calendar day as kickoff is rejected, not
+    accepted -- "strictly before," not "on or before."
+    """
+    retrieved = pd.Timestamp(retrieved_at)
+    if retrieved.tzinfo is None:
+        raise LiveSpineProvenanceError(
+            f"players.csv manifest retrieved_at {retrieved_at!r} has no timezone -- refusing to "
+            "assume UTC for a cutoff-safety check this important."
+        )
+    retrieved_utc_date = retrieved.tz_convert("UTC").normalize()
+    if retrieved_utc_date >= earliest_kickoff_utc_date:
+        raise LiveSpineProvenanceError(
+            f"players.csv snapshot retrieved_at={retrieved_at} (UTC date "
+            f"{retrieved_utc_date.date()}) is not strictly before the earliest real Week 1 "
+            f"kickoff date {earliest_kickoff_utc_date.date()} -- refusing to build a spine that "
+            "could reflect in-season information."
+        )
+
+
+def load_live_2026_spine_inputs(prediction_season: int):
+    """Verifies and loads the already-governed players/schedules source
+    artifacts through nflverse_source's existing fetch/manifest
+    machinery -- never a new fetch mechanism -- then verifies the
+    players snapshot's provenance timestamp against
+    `prediction_season`'s earliest real Week 1 kickoff BEFORE returning
+    anything. Raises LiveSpineProvenanceError, never a bare/generic
+    exception, on any missing manifest entry, checksum failure, or
+    cutoff violation -- always before any roster spine row is built.
+
+    Returns (players_df, schedule_df, retrieved_at, earliest_kickoff_utc_date).
+    """
+    manifest = nflverse_source._load_manifest()
+    if manifest.get("players") is None:
+        raise LiveSpineProvenanceError(
+            "players.csv has no entry in the nflverse source manifest -- cannot build a live "
+            "spine without governed provenance. Register it deliberately (GitHub Actions only; "
+            "see nflverse_source.register_players_manifest_entry()) before retrying."
+        )
+    if manifest.get("schedules") is None:
+        raise LiveSpineProvenanceError(
+            "schedules (games.csv) has no entry in the nflverse source manifest -- cannot "
+            "verify the Week 1 cutoff without it."
+        )
+
+    # Explicit local-cache guard, checked BEFORE calling either fetch_*_raw()
+    # helper. Those helpers only skip their own network-download branch when
+    # the local cache file already exists -- correct for their own contract,
+    # but relying on that silently would make "no live network here" an
+    # accident of this sandbox's network policy rather than a real guarantee
+    # of this code. This check makes "never attempt a download in a local
+    # run" true by construction: if either cache file is missing, this raises
+    # our own named, specific error before fetch_players_raw()/
+    # fetch_schedules_raw() are ever called, so neither can reach its
+    # download fallback.
+    if not nflverse_source.PLAYERS_CACHE_PATH.exists():
+        raise LiveSpineProvenanceError(
+            f"players.csv is not present locally at {nflverse_source.PLAYERS_CACHE_PATH} -- refusing to "
+            "let fetch_players_raw() attempt a network download from a local run. Restore the "
+            "governed local cache file (it should already be committed/present in this "
+            "environment) before retrying; a live-2026-spine build must never trigger a real "
+            "fetch outside GitHub Actions."
+        )
+    if not nflverse_source.SCHEDULES_CACHE_PATH.exists():
+        raise LiveSpineProvenanceError(
+            f"schedules (games.csv) is not present locally at {nflverse_source.SCHEDULES_CACHE_PATH} -- "
+            "refusing to let fetch_schedules_raw() attempt a network download from a local run. "
+            "Restore the governed local cache file before retrying; a live-2026-spine build must "
+            "never trigger a real fetch outside GitHub Actions."
+        )
+
+    try:
+        players_path = nflverse_source.fetch_players_raw()
+    except RuntimeError as exc:
+        raise LiveSpineProvenanceError(f"players.csv provenance verification failed: {exc}") from exc
+    try:
+        schedules_path = nflverse_source.fetch_schedules_raw()
+    except RuntimeError as exc:
+        raise LiveSpineProvenanceError(f"schedules provenance verification failed: {exc}") from exc
+
+    schedule_df = pd.read_csv(schedules_path, low_memory=False)
+    earliest_kickoff = _earliest_week1_kickoff_utc_date(schedule_df, prediction_season)
+    retrieved_at = manifest["players"]["retrieved_at"]
+    _verify_snapshot_before_cutoff(retrieved_at, earliest_kickoff)
+
+    players_df = pd.read_csv(players_path, low_memory=False)
+    return players_df, schedule_df, retrieved_at, earliest_kickoff
+
+
+def build_governed_live_2026_spine(
+    players_df: pd.DataFrame, prediction_season: int, retrieved_at: str, earliest_kickoff_utc_date: pd.Timestamp,
+) -> RosterSpineResult:
+    """Thin adapter from real players.csv's own columns to the already-
+    committed, already-tested core (lib.dataset2.future_season_spine).
+    No eligibility/cutoff logic lives here -- this function only shapes
+    the real input to that core's contract."""
+    snapshot = players_df[list(ROSTER_SNAPSHOT_REQUIRED_COLUMNS)]
+    retrieved_ts = pd.Timestamp(retrieved_at)
+    return build_future_season_roster_spine(snapshot, prediction_season, retrieved_ts, earliest_kickoff_utc_date)
+
+
+def write_live_spine_outputs(spine_result: RosterSpineResult) -> None:
+    """Writes the included spine, the excluded-row ledger, and the
+    future-only roster-status sidecar as three SEPARATE files -- never
+    merged into predictor_table/CSV_PATH/PARQUET_PATH, and never passed
+    back into build_canonical_predictor_table(). This is the only place
+    in this script that touches roster_status_provenance_frame()."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    spine_result.included.to_csv(LIVE_SPINE_INCLUDED_PATH, index=False)
+    spine_result.excluded.to_csv(LIVE_SPINE_EXCLUDED_PATH, index=False)
+    sidecar = roster_status_provenance_frame(spine_result.included)
+    sidecar.to_csv(LIVE_SPINE_SIDECAR_PATH, index=False)
+
+    paths = [LIVE_SPINE_INCLUDED_PATH, LIVE_SPINE_EXCLUDED_PATH, LIVE_SPINE_SIDECAR_PATH]
+    lines = [f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}" for path in paths]
+    LIVE_SPINE_HASH_MANIFEST_PATH.write_text("\n".join(lines) + "\n")
+
+
+def resolve_live_2026_spine(live_2026_requested: bool, master_population: pd.DataFrame) -> RosterSpineResult | None:
+    """THE testable seam between main()'s CLI parsing and the live-spine
+    machinery: returns None immediately, touching nothing else, unless
+    `live_2026_requested` is True -- this is what proves the no-flag
+    default path never loads load_live_2026_spine_inputs/
+    build_governed_live_2026_spine at all, not just that it happens to
+    produce the same output."""
+    if not live_2026_requested:
+        return None
+    print("\n--live-2026-spine requested: verifying governed provenance before any future row is built...")
+    prediction_season = int(master_population["season"].max()) + 1
+    live_players_df, live_schedule_df, retrieved_at, earliest_kickoff = load_live_2026_spine_inputs(prediction_season)
+    print(f"  players.csv retrieved_at={retrieved_at}, earliest real Week 1 kickoff (UTC date)={earliest_kickoff.date()}")
+    spine_result = build_governed_live_2026_spine(live_players_df, prediction_season, retrieved_at, earliest_kickoff)
+    print(f"  governed roster spine: {len(spine_result.included)} included, {len(spine_result.excluded)} excluded")
+    return spine_result
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--live-2026-spine", action="store_true",
+        help="Opt-in: extend the canonical table with a governed live 2026 future-season roster "
+        "spine (players.csv + schedules.csv provenance verified before any row is built). Off "
+        "by default -- omitting this flag reproduces the exact same historical-only output as "
+        "before this flag existed, and never loads any roster-snapshot machinery at all.",
+    )
+    args = parser.parse_args()
     print("Loading real source data...")
     master_population = _load_master_population()
     players_df = _load_players()
@@ -205,9 +414,13 @@ def main():
     print(f"  depth_charts (pre-2025 only): {len(depth_chart_pre2025)} rows")
     print(f"  schedules: {len(schedule_df)} rows, seasons {schedule_df['season'].min()}-{schedule_df['season'].max()}")
 
+    live_spine_result = resolve_live_2026_spine(args.live_2026_spine, master_population)
+    future_season_roster_spine = live_spine_result.included if live_spine_result is not None else None
+
     print("\nBuilding canonical predictor table...")
     predictor_table, column_registry, deferred_families = build_canonical_predictor_table(
         master_population, players_df, weekly_all, weekly_reg_only, snap_counts_all, depth_chart_pre2025, schedule_df,
+        future_season_roster_spine=future_season_roster_spine,
     )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -215,9 +428,17 @@ def main():
     predictor_table.to_csv(CSV_PATH, index=False)
     column_registry.to_csv(DICTIONARY_PATH, index=False)
 
+    if live_spine_result is not None:
+        write_live_spine_outputs(live_spine_result)
+        print(
+            f"  wrote {LIVE_SPINE_INCLUDED_PATH}, {LIVE_SPINE_EXCLUDED_PATH}, "
+            f"{LIVE_SPINE_SIDECAR_PATH} (never merged into the canonical table above)"
+        )
+
     # --- Determinism check: rebuild once, compare byte-for-byte CSV output ---
     predictor_table_2, column_registry_2, _ = build_canonical_predictor_table(
         master_population, players_df, weekly_all, weekly_reg_only, snap_counts_all, depth_chart_pre2025, schedule_df,
+        future_season_roster_spine=future_season_roster_spine,
     )
     csv_1 = predictor_table.to_csv(index=False)
     csv_2 = predictor_table_2.to_csv(index=False)

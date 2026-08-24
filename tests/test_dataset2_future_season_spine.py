@@ -75,9 +75,121 @@ class TestGovernedIncludeExcludeStatuses:
         assert result.excluded["exclusion_reason"].notna().all()
 
     def test_ungoverned_status_raises_rather_than_guessing(self):
-        snapshot = _snapshot([_snapshot_row("p1", "RSN")])
+        # ZZZ is a synthetic status that will never be real -- RSN is no
+        # longer usable as "the unknown example" now that it is governed
+        # (see TestRsnRecencyRule).
+        snapshot = _snapshot([_snapshot_row("p1", "ZZZ")])
         with pytest.raises(ValueError, match="ungoverned roster status"):
             build_future_season_roster_spine(snapshot, PREDICTION_SEASON, VALID_SNAPSHOT_TIME, WEEK1_KICKOFF)
+
+    def test_ungoverned_status_error_names_the_status_and_player(self):
+        snapshot = _snapshot([_snapshot_row("player_xyz", "ZZZ")])
+        with pytest.raises(ValueError) as exc_info:
+            build_future_season_roster_spine(snapshot, PREDICTION_SEASON, VALID_SNAPSHOT_TIME, WEEK1_KICKOFF)
+        message = str(exc_info.value)
+        assert "ZZZ" in message
+        assert "player_xyz" in message
+
+
+class TestUdfUnconditionalInclusion:
+    def test_udf_is_included_regardless_of_last_season(self):
+        # UDF (undrafted free agent) has no recency gate -- see
+        # GOVERNED_INCLUDE_STATUSES' own comment: every real UDF row is
+        # inherently current by construction, unlike NWT/RSN/RSR.
+        snapshot = _snapshot([_snapshot_row("p1", "UDF", last_season=PREDICTION_SEASON)])
+        result = build_future_season_roster_spine(snapshot, PREDICTION_SEASON, VALID_SNAPSHOT_TIME, WEEK1_KICKOFF)
+        assert len(result.included) == 1
+        assert result.included.iloc[0]["inclusion_reason"] == "included_status_UDF"
+
+    def test_udf_is_included_even_with_no_last_season(self):
+        snapshot = _snapshot([_snapshot_row("p1", "UDF", last_season=None)])
+        result = build_future_season_roster_spine(snapshot, PREDICTION_SEASON, VALID_SNAPSHOT_TIME, WEEK1_KICKOFF)
+        assert len(result.included) == 1
+        assert result.excluded.empty
+
+
+class TestRsnRecencyRule:
+    def test_recent_rsn_is_included_with_status_specific_reason(self):
+        snapshot = _snapshot([_snapshot_row("p1", "RSN", last_season=PREDICTION_SEASON - 1)])
+        result = build_future_season_roster_spine(snapshot, PREDICTION_SEASON, VALID_SNAPSHOT_TIME, WEEK1_KICKOFF)
+        assert len(result.included) == 1
+        assert result.included.iloc[0]["inclusion_reason"] == "included_rsn_recent"
+
+    def test_stale_rsn_is_excluded_with_status_specific_reason(self):
+        # Real, verified case this rule protects: Joe Mixon (RB), a
+        # genuinely current, fantasy-relevant veteran, is real RSN status
+        # -- but this fixture uses a synthetic stale case to prove the
+        # OTHER side of the rule (149 of 154 real RSN rows are stale).
+        snapshot = _snapshot([_snapshot_row("p1", "RSN", last_season=PREDICTION_SEASON - 5)])
+        result = build_future_season_roster_spine(snapshot, PREDICTION_SEASON, VALID_SNAPSHOT_TIME, WEEK1_KICKOFF)
+        assert result.included.empty
+        assert result.excluded.iloc[0]["exclusion_reason"] == "rsn_stale_last_season_excluded"
+
+    def test_rsn_with_no_last_season_is_excluded_not_guessed(self):
+        snapshot = _snapshot([_snapshot_row("p1", "RSN", last_season=None)])
+        result = build_future_season_roster_spine(snapshot, PREDICTION_SEASON, VALID_SNAPSHOT_TIME, WEEK1_KICKOFF)
+        assert result.included.empty
+        assert result.excluded.iloc[0]["exclusion_reason"] == "rsn_no_last_season_excluded"
+
+    def test_rsn_exactly_at_the_recency_boundary_is_included(self):
+        snapshot = _snapshot([_snapshot_row("p1", "RSN", last_season=PREDICTION_SEASON - 1)])
+        result = build_future_season_roster_spine(snapshot, PREDICTION_SEASON, VALID_SNAPSHOT_TIME, WEEK1_KICKOFF)
+        assert len(result.included) == 1
+
+
+class TestRsrRecencyRule:
+    def test_recent_rsr_is_included_with_status_specific_reason(self):
+        snapshot = _snapshot([_snapshot_row("p1", "RSR", last_season=PREDICTION_SEASON - 1)])
+        result = build_future_season_roster_spine(snapshot, PREDICTION_SEASON, VALID_SNAPSHOT_TIME, WEEK1_KICKOFF)
+        assert len(result.included) == 1
+        assert result.included.iloc[0]["inclusion_reason"] == "included_rsr_recent"
+
+    def test_stale_rsr_is_excluded_with_status_specific_reason(self):
+        snapshot = _snapshot([_snapshot_row("p1", "RSR", last_season=PREDICTION_SEASON - 5)])
+        result = build_future_season_roster_spine(snapshot, PREDICTION_SEASON, VALID_SNAPSHOT_TIME, WEEK1_KICKOFF)
+        assert result.included.empty
+        assert result.excluded.iloc[0]["exclusion_reason"] == "rsr_stale_last_season_excluded"
+
+    def test_rsr_with_no_last_season_is_excluded_not_guessed(self):
+        snapshot = _snapshot([_snapshot_row("p1", "RSR", last_season=None)])
+        result = build_future_season_roster_spine(snapshot, PREDICTION_SEASON, VALID_SNAPSHOT_TIME, WEEK1_KICKOFF)
+        assert result.included.empty
+        assert result.excluded.iloc[0]["exclusion_reason"] == "rsr_no_last_season_excluded"
+
+
+class TestRecencyGatedReasonsAreDistinctPerStatus:
+    """Protects the auditability requirement: NWT/RSN/RSR share one
+    recency mechanism internally, but must never collapse into one
+    ambiguous 'stale' bucket in the excluded ledger."""
+
+    def test_nwt_rsn_rsr_stale_reasons_are_all_distinct(self):
+        snapshot = _snapshot([
+            _snapshot_row("p_nwt", "NWT", last_season=PREDICTION_SEASON - 5),
+            _snapshot_row("p_rsn", "RSN", last_season=PREDICTION_SEASON - 5),
+            _snapshot_row("p_rsr", "RSR", last_season=PREDICTION_SEASON - 5),
+        ])
+        result = build_future_season_roster_spine(snapshot, PREDICTION_SEASON, VALID_SNAPSHOT_TIME, WEEK1_KICKOFF)
+        reasons = dict(zip(result.excluded["player_id"], result.excluded["exclusion_reason"]))
+        assert reasons == {
+            "p_nwt": "nwt_stale_last_season_excluded",
+            "p_rsn": "rsn_stale_last_season_excluded",
+            "p_rsr": "rsr_stale_last_season_excluded",
+        }
+        assert len(set(reasons.values())) == 3
+
+    def test_nwt_rsn_rsr_included_reasons_are_all_distinct(self):
+        snapshot = _snapshot([
+            _snapshot_row("p_nwt", "NWT", last_season=PREDICTION_SEASON - 1),
+            _snapshot_row("p_rsn", "RSN", last_season=PREDICTION_SEASON - 1),
+            _snapshot_row("p_rsr", "RSR", last_season=PREDICTION_SEASON - 1),
+        ])
+        result = build_future_season_roster_spine(snapshot, PREDICTION_SEASON, VALID_SNAPSHOT_TIME, WEEK1_KICKOFF)
+        reasons = dict(zip(result.included["player_id"], result.included["inclusion_reason"]))
+        assert reasons == {
+            "p_nwt": "included_nwt_recent",
+            "p_rsn": "included_rsn_recent",
+            "p_rsr": "included_rsr_recent",
+        }
 
 
 class TestNwtRecencyRule:

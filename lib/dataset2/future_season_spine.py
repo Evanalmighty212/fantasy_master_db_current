@@ -70,8 +70,14 @@ ROSTER_SNAPSHOT_REQUIRED_COLUMNS = ("gsis_id", "position", "latest_team", "statu
 # Statuses that, on their own, represent a real preseason roster/reserve
 # presence -- included in the spine unconditionally. SUS is included
 # per explicit instruction: a suspended player is still a real
-# preseason fantasy decision, not a non-entity.
-GOVERNED_INCLUDE_STATUSES = frozenset({"ACT", "RES", "DEV", "PUP", "SUS"})
+# preseason fantasy decision, not a non-entity. UDF (undrafted free
+# agent) added 2026-08-24: nflreadr's own dictionary_roster_status does
+# not define this code at all, but every real UDF row in the committed
+# players.csv snapshot has last_season equal to the current roster
+# cycle and zero years of experience -- a genuinely current, unstale
+# population by construction, so no recency gate is needed the way it
+# is for NWT/RSN/RSR below.
+GOVERNED_INCLUDE_STATUSES = frozenset({"ACT", "RES", "DEV", "PUP", "SUS", "UDF"})
 
 # Statuses that represent genuinely out-of-scope players (released,
 # retired, on an exempt/reserve/left list unrelated to football
@@ -79,11 +85,27 @@ GOVERNED_INCLUDE_STATUSES = frozenset({"ACT", "RES", "DEV", "PUP", "SUS"})
 # governed reason, never a silent drop.
 GOVERNED_EXCLUDE_STATUSES = frozenset({"CUT", "RET", "EXE", "RLS", "INA"})
 
-# "Not With Team" is not itself a governed include or exclude decision
-# -- see the module-level NWT eligibility rule below. Any OTHER status
-# value this project has not explicitly adjudicated is a fail-loud
-# condition (see _classify_status), never a guess.
-_NWT_STATUS = "NWT"
+# Statuses that are NOT themselves a governed include/exclude decision
+# -- each requires the same recency check (see _classify_status) before
+# admitting a player, rather than a blanket call. Confirmed 2026-08-24
+# against nflreadr's own dictionary_roster_status
+# (https://nflreadr.nflverse.com/articles/dictionary_roster_status.html,
+# the actual maintainers of this data): NWT = "Rarely used, tends to
+# indicate a waived player"; RSN = "Rarely used, tends to indicate a
+# player is on the non-football injured reserve list"; RSR = "Rarely
+# used, tends to indicate a player released from being on the injured
+# reserve list". All three are real, rostered-or-recently-rostered
+# designations, but the "rarely used" caveat matches what the real
+# committed players.csv shows for each: the large majority of rows
+# under all three codes are stale by years (NWT: 117 of 120 stale,
+# verified 2026-08-23; RSN/RSR: comparable stale-majority pattern,
+# verified 2026-08-24, including one real, current, fantasy-relevant
+# player -- Joe Mixon, RSN, last_season 2025 -- among the stale
+# majority), so a blanket include/exclude for any of the three would
+# get real players wrong in one direction or the other. Any OTHER
+# status value this project has not explicitly adjudicated is a
+# fail-loud condition (see _classify_status), never a guess.
+_RECENCY_GATED_STATUSES = frozenset({"NWT", "RSN", "RSR"})
 
 
 @dataclass(frozen=True)
@@ -92,31 +114,32 @@ class RosterSpineResult:
     excluded: pd.DataFrame
 
 
-def _classify_status(status: str, last_season, prediction_season: int) -> tuple[bool, str]:
+def _classify_status(status: str, last_season, prediction_season: int, player_id: str) -> tuple[bool, str]:
     """Returns (included, reason). Raises on any status this project
-    has not explicitly adjudicated -- never a silent guess."""
+    has not explicitly adjudicated -- never a silent guess. `player_id`
+    is included in the raised error purely for operator diagnosis (so a
+    real live run's failure names exactly who tripped it, not just
+    which code) -- it plays no role in the classification itself."""
     if status in GOVERNED_INCLUDE_STATUSES:
         return True, f"included_status_{status}"
     if status in GOVERNED_EXCLUDE_STATUSES:
         return False, f"excluded_status_{status}"
-    if status == _NWT_STATUS:
-        # Empirically verified against the real nflverse players
-        # reference file (2026-08-23): of 120 real NWT rows, 117 have a
-        # last_season from years-to-decades ago (players long out of
-        # the league who were never formally marked RET) and only 3
-        # have a last_season within the last real season -- genuinely
-        # recent free agents/holdouts. This threshold is what
-        # distinguishes the two, not a guess.
+    if status in _RECENCY_GATED_STATUSES:
+        # Same recency mechanism for all three (see _RECENCY_GATED_STATUSES'
+        # own comment for why), but the reason string stays status-specific
+        # so the excluded ledger is auditable per real status code, not
+        # collapsed into one ambiguous "stale" bucket.
+        status_lower = status.lower()
         if pd.isna(last_season):
-            return False, "nwt_no_last_season_excluded"
+            return False, f"{status_lower}_no_last_season_excluded"
         if int(last_season) >= prediction_season - 1:
-            return True, "included_nwt_recent"
-        return False, "nwt_stale_last_season_excluded"
+            return True, f"included_{status_lower}_recent"
+        return False, f"{status_lower}_stale_last_season_excluded"
     raise ValueError(
-        f"ungoverned roster status {status!r} has no approved include/exclude decision -- "
-        "add it to GOVERNED_INCLUDE_STATUSES or GOVERNED_EXCLUDE_STATUSES explicitly, or extend "
-        "the NWT-style recency rule for it; this module must never silently guess a policy for "
-        "an unrecognized status value"
+        f"ungoverned roster status {status!r} for player_id {player_id!r} has no approved "
+        "include/exclude decision -- add it to GOVERNED_INCLUDE_STATUSES or "
+        "GOVERNED_EXCLUDE_STATUSES explicitly, or extend the NWT-style recency rule for it; "
+        "this module must never silently guess a policy for an unrecognized status value"
     )
 
 
@@ -165,7 +188,7 @@ def build_future_season_roster_spine(
     included_rows = []
     excluded_rows = []
     for row in working.itertuples(index=False):
-        included, reason = _classify_status(row.status, row.last_season, prediction_season)
+        included, reason = _classify_status(row.status, row.last_season, prediction_season, row.gsis_id)
         target = included_rows if included else excluded_rows
         target.append({
             "prediction_season": prediction_season,
