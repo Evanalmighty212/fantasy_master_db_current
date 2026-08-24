@@ -280,6 +280,290 @@ class TestGrainAudits:
         assert len(out[(out["prediction_season"] == 2017) & (out["player_id"] == "P2")]) == 1
 
 
+def _roster_spine(prediction_season, rows):
+    """rows: (player_id, position, team, roster_status). Matches the
+    shape of future_season_spine.build_future_season_roster_spine()'s
+    own `included` output -- constructed directly here since this
+    module's tests exercise integration with build_canonical_predictor_table,
+    not the spine-eligibility rules themselves (see
+    tests/test_dataset2_future_season_spine.py for those)."""
+    return pd.DataFrame([
+        {
+            "prediction_season": prediction_season, "player_id": pid, "position": pos,
+            "team": team, "roster_status": status, "inclusion_reason": f"included_status_{status}",
+        }
+        for pid, pos, team, status in rows
+    ])
+
+
+class TestFutureSeasonRosterSpine:
+    """Protects the approved Option 3 repair: lib.dataset2.future_season_spine's
+    governed roster spine, wired into build_canonical_predictor_table()
+    via the optional future_season_roster_spine parameter. See that
+    module's own docstring/tests for the eligibility-rule unit tests --
+    this class proves the INTEGRATION: population extension, family #9
+    superset verification, spine-driven row universe, provenance
+    metadata attachment, and -- most importantly -- that omitting the
+    parameter leaves every historical row untouched.
+    """
+
+    def test_omitting_the_parameter_matches_explicit_none(self):
+        pop = _population((2025, "P1", "RB", "AAA", 16, 10.0, 20, 5))
+        players = _players(("P1", "PfrP1", "1998-01-01", 2020, 70, 210, 2020, 3, 80, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2025, "P1", AAA_2015_WEEKS, "AAA"))
+        implicit, implicit_reg, _ = _build(pop, players, weekly)
+        explicit, explicit_reg, _ = build_canonical_predictor_table(
+            pop, players, weekly, weekly, _snap_counts([]), _depth_chart([]), _schedule([]),
+            window_ns=(4,), future_season_roster_spine=None,
+        )
+        pd.testing.assert_frame_equal(implicit, explicit)
+        pd.testing.assert_frame_equal(implicit_reg, explicit_reg)
+
+    def test_historical_rows_are_byte_identical_with_or_without_a_spine(self):
+        # Two SAME-POSITION historical players with different body-size
+        # values -- required so the position-pooled z-score columns
+        # (experience_position_z, age_position_z,
+        # fam88_body_size_position_z) resolve to real, non-null numbers
+        # in the baseline, not the degenerate single-row-group null a
+        # one-player fixture would give. A single-player fixture cannot
+        # actually exercise the contamination this test guards against
+        # -- both real bugs this round (experience_position_z/
+        # age_position_z, then fam88_body_size_position_z) needed a
+        # 2-same-position fixture to surface at all.
+        pop = _population(
+            (2025, "P1", "RB", "AAA", 16, 10.0, 20, 5),
+            (2025, "P2", "RB", "AAA", 16, 8.0, 40, 12),
+        )
+        players = _players(
+            ("P1", "PfrP1", "1998-01-01", 2020, 70, 210, 2020, 3, 80, "AAA"),
+            ("P2", "PfrP2", "1994-01-01", 2015, 71, 225, 2015, 5, 150, "AAA"),  # different weight -> different BMI
+        )
+        weekly = _weekly(
+            _rb_weekly_rows(2025, "P1", AAA_2015_WEEKS, "AAA") + _rb_weekly_rows(2025, "P2", AAA_2015_WEEKS, "AAA")
+        )
+        # A real Week-1 game, not the empty default -- age_position_z
+        # (unlike experience/BMI) is null for every row with no
+        # resolvable real kickoff date, and this fixture needs it real
+        # and non-null to actually exercise its own pooling.
+        schedule = _schedule([(2025, 1, "2025-09-04", "AAA", "XXX")])
+        without_spine, _, _ = _build(pop, players, weekly, schedule=schedule)
+        spine = _roster_spine(2026, [("P1", "RB", "AAA", "ACT"), ("P2", "RB", "AAA", "ACT")])
+        with_spine, _, _ = build_canonical_predictor_table(
+            pop, players, weekly, weekly, _snap_counts([]), _depth_chart([]), schedule,
+            window_ns=(4,), future_season_roster_spine=spine,
+        )
+        # Schema equality FIRST, separately from value equality: proves
+        # the spine never changes the historical export's column set,
+        # not merely its values (real bug found and fixed this round --
+        # future_season_roster_status was originally merged onto `out`
+        # as an all-null column for historical rows, which changes
+        # schema even with every value unchanged; see
+        # lib/dataset2/future_season_spine.py's module docstring).
+        assert list(without_spine.columns) == list(with_spine.columns)
+
+        historical_without = without_spine[without_spine["prediction_season"] <= 2025].reset_index(drop=True)
+        historical_with = with_spine[with_spine["prediction_season"] <= 2025].reset_index(drop=True)
+
+        # Explicit, named checks on the three real position-pooled
+        # z-score columns this fixture exists to exercise -- not just
+        # relying on the blanket frame-equality assertion below to
+        # happen to cover them.
+        for column in ("fam1_experience_position_z", "fam2_age_position_z", "fam88_body_size_position_z"):
+            pd.testing.assert_series_equal(
+                historical_without[column], historical_with[column], check_names=False,
+            )
+            assert historical_without[column].notna().all(), f"{column} unexpectedly null in the 2-player baseline"
+
+        # check_dtype=False: an already-registry-documented dtype
+        # instability (fam1_experience_years is disclosed as "Int64/
+        # float64" in its own registry row) -- adding the extra future
+        # row removes the only null pandas was inferring float64 from,
+        # producing plain int64 for the SAME real value (5 == 5.0), not
+        # a changed value. Verified directly before writing this
+        # tolerance in, not assumed.
+        pd.testing.assert_frame_equal(historical_without, historical_with, check_dtype=False)
+
+    def test_spine_populates_lag_joined_families_for_the_future_row(self):
+        pop = _population((2025, "P1", "RB", "AAA", 16, 10.0, 20, 5))
+        players = _players(("P1", "PfrP1", "1998-01-01", 2020, 70, 210, 2020, 3, 80, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2025, "P1", AAA_2015_WEEKS, "AAA"))
+        spine = _roster_spine(2026, [("P1", "RB", "AAA", "ACT")])
+        out, _, _ = build_canonical_predictor_table(
+            pop, players, weekly, weekly, _snap_counts([]), _depth_chart([]), _schedule([]),
+            window_ns=(4,), future_season_roster_spine=spine,
+        )
+        future = out[out["prediction_season"] == 2026].iloc[0]
+        # Real 2025 values (ppg_ppr=10.0, overall_finish_ppr=20) now
+        # correctly lag-joined forward -- previously null (see
+        # test_future_prediction_season_row_retained_when_no_outcome_exists_yet
+        # above, which proves the PRE-repair null behavior still holds
+        # when no spine is supplied).
+        assert future["fam7_prior_ppg"] == 10.0
+        assert future["fam7_prior_overall_finish"] == 20
+        assert not pd.isna(future["fam1_experience_years"])
+        assert future["fam44_prior_changed_team"] == False  # noqa: E712 -- same team both years
+
+    def test_player_with_no_population_or_weekly_history_still_gets_a_future_row_via_the_spine(self):
+        # The exact case the governed spine (vs. family #9 alone) exists
+        # for: a player with NO real master_population row at any real
+        # season (e.g. was out of the league, a recent NWT-eligible
+        # signing) and therefore no weekly game log for family #9 to
+        # derive a future row from either -- population's own real-row
+        # scoping (which family #9's observation-wide builder already
+        # uses even without real weekly stats -- see
+        # test_no_phantom_future_row_for_a_player_whose_own_last_season_predates_dataset_max's
+        # single-real-row sibling behavior) never reaches this player at
+        # all. Without the spine, they are silently absent, not merely
+        # null. P1 (real 2025 population + weekly data) is included
+        # purely so the fixture has a real max_season=2025 to anchor
+        # "future" against.
+        pop = _population((2025, "P1", "RB", "AAA", 16, 10.0, 20, 5))
+        players = _players(
+            ("P1", "PfrP1", "1998-01-01", 2020, 70, 210, 2020, 3, 80, "AAA"),
+            ("P3", "PfrP3", "1996-01-01", 2018, 73, 195, 2018, 4, 100, "SEA"),
+        )
+        weekly = _weekly(_rb_weekly_rows(2025, "P1", AAA_2015_WEEKS, "AAA"))
+        without_spine, _, _ = _build(pop, players, weekly)
+        assert len(without_spine[without_spine["player_id"] == "P3"]) == 0  # absent entirely, not null
+
+        spine = _roster_spine(2026, [("P1", "RB", "AAA", "ACT"), ("P3", "WR", "SEA", "PUP")])
+        with_spine, _, _ = build_canonical_predictor_table(
+            pop, players, weekly, weekly, _snap_counts([]), _depth_chart([]), _schedule([]),
+            window_ns=(4,), future_season_roster_spine=spine,
+        )
+        future = with_spine[(with_spine["player_id"] == "P3") & (with_spine["prediction_season"] == 2026)]
+        assert len(future) == 1
+        assert not pd.isna(future.iloc[0]["fam1_experience_years"])  # real, birth/draft-derived
+        assert pd.isna(future.iloc[0]["fam7_prior_ppg"])  # genuinely no prior real season -- never guessed
+
+    def test_roster_status_never_becomes_a_column_on_the_canonical_table(self):
+        # Revised design (2026-08-23, after review): roster status is a
+        # SIDECAR the caller builds separately from
+        # lib.dataset2.future_season_spine.roster_status_provenance_frame(),
+        # never a column build_canonical_predictor_table() itself
+        # returns -- in any form, on any row, even with a spine
+        # supplied. A DataFrame's column set is schema; this table's
+        # schema must never depend on whether a spine was passed.
+        pop = _population((2025, "P1", "RB", "AAA", 16, 10.0, 20, 5))
+        players = _players(("P1", "PfrP1", "1998-01-01", 2020, 70, 210, 2020, 3, 80, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2025, "P1", AAA_2015_WEEKS, "AAA"))
+        spine = _roster_spine(2026, [("P1", "RB", "AAA", "SUS")])
+        out, registry, _ = build_canonical_predictor_table(
+            pop, players, weekly, weekly, _snap_counts([]), _depth_chart([]), _schedule([]),
+            window_ns=(4,), future_season_roster_spine=spine,
+        )
+        assert "future_season_roster_status" not in out.columns
+        assert "future_season_roster_status" not in set(registry["canonical_column"])
+
+        from lib.dataset2.future_season_spine import roster_status_provenance_frame
+        sidecar = roster_status_provenance_frame(spine)
+        assert list(sidecar.columns) == ["prediction_season", "player_id", "future_season_roster_status"]
+        assert sidecar.iloc[0]["future_season_roster_status"] == "SUS"
+
+    def test_wrong_prediction_season_in_spine_raises(self):
+        pop = _population((2025, "P1", "RB", "AAA", 16, 10.0, 20, 5))
+        players = _players(("P1", "PfrP1", "1998-01-01", 2020, 70, 210, 2020, 3, 80, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2025, "P1", AAA_2015_WEEKS, "AAA"))
+        spine = _roster_spine(2027, [("P1", "RB", "AAA", "ACT")])  # should be 2026
+        with pytest.raises(ValueError, match="prediction_season=2026"):
+            build_canonical_predictor_table(
+                pop, players, weekly, weekly, _snap_counts([]), _depth_chart([]), _schedule([]),
+                window_ns=(4,), future_season_roster_spine=spine,
+            )
+
+    def test_pooled_position_zscore_is_never_contaminated_by_the_future_row(self):
+        # Real bug found and fixed this round: experience_position_z/
+        # age_position_z (lib/dataset2/experience_age_draft.py) are
+        # pooled z-scores grouped by POSITION ONLY, not
+        # (season, position) -- adding a future-season row for the
+        # SAME position silently changed a historical row's own
+        # z-score value the moment that position group gained a member
+        # (e.g. going from a single-row group, where the z-score is
+        # correctly null, to a two-row group, where it suddenly
+        # resolves to a real number). This directly tests that specific
+        # class of leakage, not just the general historical-invariance
+        # case already covered above.
+        pop = _population(
+            (2025, "P1", "RB", "AAA", 16, 10.0, 20, 5),
+            (2025, "P2", "RB", "AAA", 16, 8.0, 40, 12),
+        )
+        players = _players(
+            ("P1", "PfrP1", "1998-01-01", 2020, 70, 210, 2020, 3, 80, "AAA"),
+            ("P2", "PfrP2", "1994-01-01", 2015, 71, 215, 2015, 5, 150, "AAA"),
+        )
+        weekly = _weekly(
+            _rb_weekly_rows(2025, "P1", AAA_2015_WEEKS, "AAA") + _rb_weekly_rows(2025, "P2", AAA_2015_WEEKS, "AAA")
+        )
+        without_spine, _, _ = _build(pop, players, weekly)
+        without_z = without_spine[without_spine["prediction_season"] == 2025].set_index("player_id")[
+            "fam1_experience_position_z"
+        ].to_dict()
+        assert not pd.isna(without_z["P1"])  # real z-score: two RBs already in the same-season pool
+
+        spine = _roster_spine(2026, [("P1", "RB", "AAA", "ACT"), ("P2", "RB", "AAA", "ACT")])
+        with_spine, _, _ = build_canonical_predictor_table(
+            pop, players, weekly, weekly, _snap_counts([]), _depth_chart([]), _schedule([]),
+            window_ns=(4,), future_season_roster_spine=spine,
+        )
+        with_z = with_spine[with_spine["prediction_season"] == 2025].set_index("player_id")["fam1_experience_position_z"]
+        assert with_z["P1"] == without_z["P1"]
+        assert with_z["P2"] == without_z["P2"]
+
+    def test_fam88_body_size_position_z_is_never_contaminated_by_the_future_row(self):
+        # Second real bug found and fixed this round, one call deeper
+        # than the one above: fam88_body_size_position_z
+        # (lib/dataset2/fragility_traits.py::build_durability_risk_traits,
+        # called from _build_fam88_layer) is ALSO a position-only pooled
+        # z-score, computed from exp_age_draft_raw's own body_size_bmi
+        # column -- but as a SEPARATE, downstream re-pooling of that
+        # frame, splicing exp_age_draft_raw alone (the fix for the test
+        # above) does NOT protect it. Confirmed directly against the
+        # naive single-computation version before this fix: P1's real
+        # value was 0.707107 both with and without a spine before the
+        # bug, drifted to 0.866025 with the naive future-inclusive
+        # recomputation, and is back to matching (0.707107 == 0.707107)
+        # under the repaired durability_risk-level splice below.
+        pop = _population(
+            (2025, "P1", "RB", "AAA", 16, 10.0, 20, 5),
+            (2025, "P2", "RB", "AAA", 16, 8.0, 40, 12),
+        )
+        players = _players(
+            ("P1", "PfrP1", "1998-01-01", 2020, 70, 210, 2020, 3, 80, "AAA"),
+            ("P2", "PfrP2", "1994-01-01", 2015, 71, 225, 2015, 5, 150, "AAA"),  # different weight -> different BMI
+        )
+        weekly = _weekly(
+            _rb_weekly_rows(2025, "P1", AAA_2015_WEEKS, "AAA") + _rb_weekly_rows(2025, "P2", AAA_2015_WEEKS, "AAA")
+        )
+        without_spine, _, _ = _build(pop, players, weekly)
+        without_z = without_spine[without_spine["prediction_season"] == 2025].set_index("player_id")[
+            "fam88_body_size_position_z"
+        ].to_dict()
+        assert not pd.isna(without_z["P1"])  # real z-score: two RBs with different BMI already in the pool
+
+        spine = _roster_spine(2026, [("P1", "RB", "AAA", "ACT"), ("P2", "RB", "AAA", "ACT")])
+        with_spine, _, _ = build_canonical_predictor_table(
+            pop, players, weekly, weekly, _snap_counts([]), _depth_chart([]), _schedule([]),
+            window_ns=(4,), future_season_roster_spine=spine,
+        )
+        with_z = with_spine[with_spine["prediction_season"] == 2025].set_index("player_id")["fam88_body_size_position_z"]
+        assert with_z["P1"] == without_z["P1"]
+        assert with_z["P2"] == without_z["P2"]
+
+    def test_spine_missing_a_real_family9_future_row_raises(self):
+        # P1 has real 2025 weekly data, so family #9 will independently
+        # derive a real prediction_season=2026 row for them -- a spine
+        # that omits P1 fails the superset check, exactly as designed.
+        pop = _population((2025, "P1", "RB", "AAA", 16, 10.0, 20, 5))
+        players = _players(("P1", "PfrP1", "1998-01-01", 2020, 70, 210, 2020, 3, 80, "AAA"))
+        weekly = _weekly(_rb_weekly_rows(2025, "P1", AAA_2015_WEEKS, "AAA"))
+        spine = _roster_spine(2026, [("P2", "WR", "AAA", "ACT")])  # missing P1 entirely
+        with pytest.raises(ValueError, match="missing"):
+            build_canonical_predictor_table(
+                pop, players, weekly, weekly, _snap_counts([]), _depth_chart([]), _schedule([]),
+                window_ns=(4,), future_season_roster_spine=spine,
+            )
+
+
 class TestLeakage:
     def test_no_same_season_value_enters_a_lagged_predictor_column(self):
         # Season 2015's own overall_finish_ppr (15) must never appear as

@@ -166,6 +166,7 @@ from lib.dataset2.common import apply_source_coverage_null_mask, validate_column
 from lib.dataset2.depth_chart_traits import build_depth_chart_traits
 from lib.dataset2.experience_age_draft import build_experience_age_draft_traits
 from lib.dataset2.fragility_traits import build_durability_risk_traits, build_volume_fragility_traits, build_workload_core_traits
+from lib.dataset2.future_season_spine import extend_population_with_future_spine, verify_family9_superset
 from lib.dataset2.receiving_efficiency_traits import build_receiving_efficiency_traits
 from lib.dataset2.partial_season_canonical import (
     DEFAULT_WINDOW_NS,
@@ -314,6 +315,35 @@ def _registry_row(canonical_column, family_number, family_name, source, earliest
         "observation_type": observation_type,
         "source_raw_column": raw_column or canonical_column,
     }
+
+
+def _splice_future_only_rows(
+    historical: pd.DataFrame, future_inclusive: pd.DataFrame, key_columns=("season", "player_id"),
+) -> pd.DataFrame:
+    """`historical` unchanged, plus only the rows in `future_inclusive`
+    whose key isn't already in `historical`.
+
+    The general repair pattern for any POPULATION-POOLED statistic in
+    this module (a value computed by grouping across multiple players
+    -- e.g. lib.dataset2.common.within_group_zscore -- as opposed to a
+    per-row lag-join against that same player's own prior season).
+    Recomputing such a statistic against a population that includes a
+    not-yet-real future spine row would otherwise silently change a
+    HISTORICAL row's own value the moment that row's group gains a
+    member, not merely add a new row. Callers compute the SAME builder
+    twice -- once against the original population, once against the
+    future-extended one -- and use this helper to keep only the
+    original computation's historical rows plus the future
+    computation's genuinely new row(s). See
+    tests/test_dataset2_canonical_predictor_table.py::TestFutureSeasonRosterSpine
+    for the two real, previously-contaminated columns this protects
+    (experience_position_z/age_position_z and
+    fam88_body_size_position_z) and their dedicated regression tests.
+    """
+    existing_keys = pd.MultiIndex.from_frame(historical[list(key_columns)])
+    future_keys = pd.MultiIndex.from_frame(future_inclusive[list(key_columns)])
+    new_rows = future_inclusive[~future_keys.isin(existing_keys)]
+    return pd.concat([historical, new_rows], ignore_index=True)
 
 
 def _build_fam1_4_6_layer(exp_age_draft_raw: pd.DataFrame, min_season: int, max_season: int):
@@ -609,7 +639,7 @@ def _build_fam10_86_layer(population: pd.DataFrame, depth_chart_pre2025_df: pd.D
     return fam10_out, fam86_out, registry
 
 
-def _build_fam88_layer(experience_age_draft_raw: pd.DataFrame, srcA_preseason: pd.DataFrame, min_season: int, max_season: int):
+def _build_fam88_layer(durability_risk_raw: pd.DataFrame, srcA_preseason: pd.DataFrame, min_season: int, max_season: int):
     """Family #88 -- age/frame portion (`fam88_body_size_position_z`,
     unchanged) MERGED with the compact PRIOR-SEASON workload core added
     2026-07 (`fam88_prior_season_touches`/`fam88_prior_season_heavy_touch_workload`,
@@ -617,8 +647,18 @@ def _build_fam88_layer(experience_age_draft_raw: pd.DataFrame, srcA_preseason: p
     own docstring for the full real design and what's deliberately NOT
     built this round). `srcA_preseason` must be `_build_srcA_layer()`'s
     own un-prefixed `preseason` return value (plain `prior_season_*`
-    names) -- built ONCE and shared, never recomputed a second time."""
-    raw = build_durability_risk_traits(experience_age_draft_raw)
+    names) -- built ONCE and shared, never recomputed a second time.
+
+    `durability_risk_raw` must already be build_durability_risk_traits()'s
+    own real output -- built ONCE by the caller (build_canonical_predictor_table),
+    NOT recomputed here, because that caller is responsible for
+    protecting `fam88_body_size_position_z` (a population-pooled,
+    position-grouped z-score, not a per-row lag-join) from a future
+    spine row contaminating any historical row's value -- see that
+    caller's own splice logic and
+    tests/test_dataset2_canonical_predictor_table.py::TestFutureSeasonRosterSpine
+    ::test_fam88_body_size_position_z_is_never_contaminated_by_the_future_row."""
+    raw = durability_risk_raw
     age_frame_out = raw[["season", "player_id", "body_size_position_z"]].rename(
         columns={"body_size_position_z": "fam88_body_size_position_z"}
     )
@@ -794,6 +834,7 @@ def build_canonical_predictor_table(
     depth_chart_pre2025_df: pd.DataFrame,
     schedule_df: pd.DataFrame,
     window_ns=DEFAULT_WINDOW_NS,
+    future_season_roster_spine: pd.DataFrame | None = None,
 ):
     """
     Builds the canonical PRESEASON PREDICTOR table -- one row per
@@ -832,6 +873,35 @@ def build_canonical_predictor_table(
     postseason game silently entering what's meant to be a regular-
     season split.
 
+    `future_season_roster_spine`, if supplied, must be the `included`
+    frame from lib.dataset2.future_season_spine.build_future_season_roster_spine()
+    -- one row per player admitted to the governed roster universe for
+    prediction_season = master_population's own max season + 1, with
+    columns prediction_season/player_id/position/team/roster_status/
+    inclusion_reason. When supplied: (1) every lag-joined family that
+    currently computes nothing for that season (fam1/2/4/6, fam7,
+    fam8/39/44, fam10/86, fam88, fam18, srcA, srcB) gets a real,
+    non-fabricated value wherever a real prior-season row exists to
+    look back at; (2) the roster spine is verified to be a superset of
+    family #9's own independently-derived future-row set, and the
+    final table's row universe for that season is the GOVERNED roster
+    spine, not just family #9's real-game-log-only rows -- so a
+    veteran with no prior-season game action (injury, holdout) still
+    gets a row. `future_season_roster_spine`'s own `roster_status`
+    column is deliberately NEVER attached to this function's return
+    value in any form -- not even as an all-null column on historical
+    rows -- because a DataFrame's column set is part of its schema, and
+    adding one would make this table's historical export schema-unequal
+    to its pre-repair form even with every value identical. A caller
+    that needs the future season's roster status calls
+    lib.dataset2.future_season_spine.roster_status_provenance_frame()
+    directly on the same spine, entirely separately from this table.
+    Omitting this parameter (the default) leaves every historical
+    prediction_season row, and this function's entire behavior,
+    byte-for-byte identical to before this parameter existed -- see
+    tests/test_dataset2_canonical_predictor_table.py's
+    TestFutureSeasonRosterSpine for the regression proof.
+
     Returns (predictor_table, column_registry, deferred_families):
     `predictor_table` sorted by (prediction_season, player_id) with a
     fixed column order (determinism, see module docstring);
@@ -862,31 +932,91 @@ def build_canonical_predictor_table(
     min_season = int(population["season"].min())
     max_season = int(population["season"].max())
 
+    # future_population/future_max_season feed every lag-joined family
+    # below (fam1/2/4/6, fam7, fam8/39/44, fam10/86, fam88, fam18,
+    # srcA, srcB). `population`/`max_season` themselves are NEVER
+    # reassigned -- family #9's own calls further down, and the
+    # spine-assembly block's existing fam9-derived extra_keys path,
+    # keep using the original, unextended values exactly as before.
+    # When future_season_roster_spine is None, future_population IS
+    # population (no copy, no behavior change whatsoever).
+    if future_season_roster_spine is not None:
+        expected_future_season = max_season + 1
+        if (future_season_roster_spine["prediction_season"] != expected_future_season).any():
+            raise ValueError(
+                f"future_season_roster_spine must be entirely prediction_season={expected_future_season} "
+                "(master_population's own max real season + 1)"
+            )
+        future_population = extend_population_with_future_spine(
+            population, future_season_roster_spine, MASTER_POPULATION_REQUIRED_COLUMNS,
+        )
+        future_max_season = expected_future_season
+    else:
+        future_population = population
+        future_max_season = max_season
+
     registry_rows = []
 
     # Built ONCE against the real schedule_df and shared by both the
     # fam1/2/4/6 layer and fam88's body-size-position-z (which only
     # needs the BMI columns, not age itself, but takes the same raw
     # frame rather than recomputing it a second time).
-    exp_age_draft_raw = build_experience_age_draft_traits(population, players_df, schedule_df)
+    #
+    # `_historical` is computed against the ORIGINAL, unextended
+    # `population`, never `future_population` -- experience_position_z/
+    # age_position_z are pooled z-scores grouped by POSITION ONLY
+    # (lib.dataset2.common.within_group_zscore, no season in the group
+    # key), unlike every lag-joined family below. Feeding it the
+    # future-extended population would silently change a HISTORICAL
+    # row's own z-score value (not just add a row) the moment that
+    # player's position group gains a second member -- confirmed
+    # directly against a real synthetic case before this guard was
+    # added, not assumed. `exp_age_draft_raw` (the spliced, final
+    # version used by every layer below) keeps `_historical`'s rows
+    # unchanged and adds only the genuinely new future-season row(s)
+    # from a SEPARATE future-extended computation.
+    exp_age_draft_raw_historical = build_experience_age_draft_traits(population, players_df, schedule_df)
+    if future_season_roster_spine is not None:
+        exp_age_draft_raw_future = build_experience_age_draft_traits(future_population, players_df, schedule_df)
+        exp_age_draft_raw = _splice_future_only_rows(exp_age_draft_raw_historical, exp_age_draft_raw_future)
+    else:
+        exp_age_draft_raw = exp_age_draft_raw_historical
 
-    fam1_4_6, reg = _build_fam1_4_6_layer(exp_age_draft_raw, min_season, max_season)
+    # fam88_body_size_position_z (build_durability_risk_traits) is a
+    # SECOND, independent population-pooled position z-score,
+    # downstream of exp_age_draft_raw -- splicing exp_age_draft_raw
+    # above does NOT protect it, because build_durability_risk_traits
+    # re-pools whatever frame it's given a second time. Confirmed
+    # directly: without this same historical/future-inclusive split
+    # applied here too, a historical row's fam88_body_size_position_z
+    # value changes the moment a future spine row joins that position
+    # group, exactly like the bug above but one call deeper. Same
+    # pattern, same helper, applied at the point where the pooling
+    # actually happens rather than one level higher where it doesn't.
+    durability_risk_historical = build_durability_risk_traits(exp_age_draft_raw_historical)
+    if future_season_roster_spine is not None:
+        durability_risk_future = build_durability_risk_traits(exp_age_draft_raw_future)
+        durability_risk = _splice_future_only_rows(durability_risk_historical, durability_risk_future)
+    else:
+        durability_risk = durability_risk_historical
+
+    fam1_4_6, reg = _build_fam1_4_6_layer(exp_age_draft_raw, min_season, future_max_season)
     registry_rows += reg
-    fam7, reg = _build_fam7_layer(population, min_season, max_season)
+    fam7, reg = _build_fam7_layer(future_population, min_season, future_max_season)
     registry_rows += reg
-    fam8_39_44, reg = _build_fam8_39_44_layer(population, min_season, max_season)
+    fam8_39_44, reg = _build_fam8_39_44_layer(future_population, min_season, future_max_season)
     registry_rows += reg
-    srcA, srcA_preseason, reg = _build_srcA_layer(population, weekly_all_season_types, min_season, max_season)
+    srcA, srcA_preseason, reg = _build_srcA_layer(future_population, weekly_all_season_types, min_season, future_max_season)
     registry_rows += reg
-    srcB, raw_matched_snaps, reg = _build_srcB_layer(population, snap_counts_all, players_df, min_season, max_season)
+    srcB, raw_matched_snaps, reg = _build_srcB_layer(future_population, snap_counts_all, players_df, min_season, future_max_season)
     registry_rows += reg
-    fam10, fam86, reg = _build_fam10_86_layer(population, depth_chart_pre2025_df, min_season, max_season)
+    fam10, fam86, reg = _build_fam10_86_layer(future_population, depth_chart_pre2025_df, min_season, future_max_season)
     registry_rows += reg
 
-    fam88, reg = _build_fam88_layer(exp_age_draft_raw, srcA_preseason, min_season, max_season)
+    fam88, reg = _build_fam88_layer(durability_risk, srcA_preseason, min_season, future_max_season)
     registry_rows += reg
 
-    fam18, reg = _build_fam18_layer(srcA_preseason, min_season, max_season)
+    fam18, reg = _build_fam18_layer(srcA_preseason, min_season, future_max_season)
     registry_rows += reg
 
     # Family #9's own raw_snaps expects matched, renamed rows -- reuse
@@ -920,6 +1050,12 @@ def build_canonical_predictor_table(
             "N/A (build metadata)", "fam9_prediction_season_outcome_unavailable",
         )
     )
+
+    if future_season_roster_spine is not None:
+        future_fam9_keys = fam9_preseason.loc[
+            fam9_preseason["prediction_season"] > max_season, ["prediction_season", "player_id"]
+        ]
+        verify_family9_superset(future_season_roster_spine, future_fam9_keys)
 
     # --- Spine: master population's own keys, UNIONED with family #9's real future rows ---
     #
@@ -962,6 +1098,30 @@ def build_canonical_predictor_table(
         prior_authority[["prediction_season", "player_id"] + authority_columns],
         on=["prediction_season", "player_id"], how="left",
     )
+
+    if future_season_roster_spine is not None:
+        # The governed roster spine is authoritative for the future
+        # season's row UNIVERSE, not just family #9's real-game-log-only
+        # rows -- already verified above to be a superset of fam9_keys,
+        # so this only ever ADDS keys fam9's own mechanism didn't have
+        # (e.g. an injured veteran with no 2025 game action), never
+        # removes or overrides anything the existing fam9-derived path
+        # already produced.
+        governed_extra_keys = future_season_roster_spine[["prediction_season", "player_id", "position"]].merge(
+            pd.concat([spine[["prediction_season", "player_id"]], extra_keys[["prediction_season", "player_id"]]], ignore_index=True),
+            on=["prediction_season", "player_id"], how="left", indicator=True,
+        )
+        governed_extra_keys = governed_extra_keys[governed_extra_keys["_merge"] == "left_only"][
+            ["prediction_season", "player_id", "position"]
+        ].drop_duplicates(subset=["prediction_season", "player_id"])
+        governed_extra_keys = governed_extra_keys.merge(
+            prior_authority[["prediction_season", "player_id"] + authority_columns],
+            on=["prediction_season", "player_id"], how="left",
+        )
+        extra_keys = pd.concat([extra_keys, governed_extra_keys], ignore_index=True).drop_duplicates(
+            subset=["prediction_season", "player_id"]
+        )
+
     spine = pd.concat([spine, extra_keys], ignore_index=True).drop_duplicates(subset=["prediction_season", "player_id"])
 
     out = spine.copy()
@@ -1007,6 +1167,20 @@ def build_canonical_predictor_table(
     )
     out = out[identity_columns + [c for c in column_order if c not in identity_columns]]
     out = out.sort_values(["prediction_season", "player_id"]).reset_index(drop=True)
+
+    # Deliberately NOT attaching future_season_roster_status (or any
+    # other roster-spine-derived column) to `out` here, in any form --
+    # not even as an all-null column on historical rows. A DataFrame's
+    # column set is part of its schema; adding a column changes every
+    # historical row's schema even when every historical VALUE in it is
+    # null, which would make this table's historical export byte-
+    # UNEQUAL to its pre-repair form despite every existing value being
+    # identical. Callers who need the future season's roster status
+    # call lib.dataset2.future_season_spine.roster_status_provenance_frame()
+    # themselves, directly on the same future_season_roster_spine they
+    # already hold -- entirely outside this function, joined only to
+    # whatever live 2026 prediction output consumes it, never to this
+    # table or any Dataset 2 historical export/Dataset 3 training input.
 
     # --- Source A targets/receiving_air_yards coverage remediation ---
     # ONE centralized, auditable mask -- see SOURCE_A_TARGETS_UNRELIABLE_SRC_COLUMNS/
