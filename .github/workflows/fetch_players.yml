@@ -1,0 +1,46 @@
+name: Fetch Players (candidate snapshot, review artifact only)
+
+# Manual trigger only -- click "Run workflow" on the Actions tab.
+# Mirrors this project's established fetch-workflow convention
+# (fetch_adp.yml, fetch_mfl_historical.yml, ci_fetch_schedules.py's own
+# job in fetch_schedules_and_firth_crosscheck.yml): never scheduled,
+# never triggered on push, never auto-commits. Runs ONLY
+# scripts/ci_fetch_players.py -- the players registration/fetch path,
+# nothing else. Produces a downloadable artifact (candidate
+# players.csv + candidate manifest + summary) for deliberate local
+# review; this workflow itself never writes to the repository, so
+# `permissions: contents: read` is sufficient -- there is no write
+# token, git push, or git commit step anywhere below.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-players:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests pandas
+
+      - name: Fetch and pin candidate players.csv
+        run: python scripts/ci_fetch_players.py
+
+      - name: Upload candidate snapshot as review artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: players-candidate-snapshot-and-manifest
+          path: |
+            data/raw/nflverse/reference/players.csv
+            data/raw/nflverse/reference/players_fetch_summary.json
+            scripts/nflverse_source_manifest.json
+          retention-days: 14
